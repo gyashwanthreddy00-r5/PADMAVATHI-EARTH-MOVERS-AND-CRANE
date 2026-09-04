@@ -1,0 +1,856 @@
+<html xmlns:o="urn:schemas-microsoft-com:office:office"
+xmlns:w="urn:schemas-microsoft-com:office:word"
+xmlns="http://www.w3.org/TR/REC-html40">
+<head>
+<meta charset="utf-8">
+<title>Crane &amp; JCB ERP System - Overview</title>
+<!--[if gte mso 9]><xml>
+<w:WordDocument>
+<w:View>Print</w:View>
+<w:Zoom>100</w:Zoom>
+<w:DoNotOptimizeForBrowser/>
+</w:WordDocument>
+</xml><![endif]-->
+<style>
+@page {
+  size: A4;
+  margin: 1in 1in 1in 1in;
+}
+body {
+  font-family: 'Calibri', 'Segoe UI', Arial, sans-serif;
+  font-size: 11pt;
+  line-height: 1.6;
+  color: #1e293b;
+}
+h1 {
+  font-size: 26pt;
+  color: #1e3a5f;
+  margin-bottom: 4pt;
+  border-bottom: 3px solid #2563eb;
+  padding-bottom: 8pt;
+}
+h2 {
+  font-size: 16pt;
+  color: #1e3a5f;
+  margin-top: 28pt;
+  margin-bottom: 8pt;
+  border-bottom: 1px solid #cbd5e1;
+  padding-bottom: 4pt;
+}
+h3 {
+  font-size: 13pt;
+  color: #2563eb;
+  margin-top: 18pt;
+  margin-bottom: 6pt;
+}
+h4 {
+  font-size: 11pt;
+  color: #475569;
+  margin-top: 12pt;
+  margin-bottom: 4pt;
+  font-weight: bold;
+}
+p {
+  margin-bottom: 8pt;
+}
+ul {
+  margin-top: 4pt;
+  margin-bottom: 8pt;
+}
+li {
+  margin-bottom: 4pt;
+}
+table {
+  border-collapse: collapse;
+  width: 100%;
+  margin-top: 8pt;
+  margin-bottom: 12pt;
+}
+th {
+  background-color: #1e3a5f;
+  color: white;
+  font-size: 10pt;
+  font-weight: bold;
+  padding: 6pt 8pt;
+  text-align: left;
+  border: 1px solid #1e3a5f;
+}
+td {
+  padding: 6pt 8pt;
+  font-size: 10pt;
+  border: 1px solid #cbd5e1;
+  vertical-align: top;
+}
+tr:nth-child(even) td {
+  background-color: #f1f5f9;
+}
+.cover {
+  text-align: center;
+  padding-top: 120pt;
+}
+.cover h1 {
+  font-size: 32pt;
+  border: none;
+  margin-bottom: 8pt;
+}
+.cover .subtitle {
+  font-size: 14pt;
+  color: #64748b;
+  margin-bottom: 40pt;
+}
+.cover .company {
+  font-size: 12pt;
+  color: #2563eb;
+  font-weight: bold;
+}
+.cover .date {
+  font-size: 11pt;
+  color: #94a3b8;
+  margin-top: 60pt;
+}
+.feature-box {
+  background-color: #eff6ff;
+  border-left: 4px solid #2563eb;
+  padding: 10pt 14pt;
+  margin: 10pt 0;
+}
+.highlight-box {
+  background-color: #fef3c7;
+  border-left: 4px solid #f59e0b;
+  padding: 10pt 14pt;
+  margin: 10pt 0;
+}
+.section-break {
+  page-break-before: always;
+}
+.toc-item {
+  margin-bottom: 4pt;
+}
+.toc-item a {
+  color: #2563eb;
+  text-decoration: none;
+}
+</style>
+</head>
+<body>
+
+<!-- COVER PAGE -->
+<div class="cover">
+  <h1>Crane &amp; JCB ERP System</h1>
+  <p class="subtitle">Complete Business Management Platform<br>for Crane &amp; JCB Rental Operations</p>
+  <p class="company">Padmavathi Earth Movers and Crane Services</p>
+  <p class="date">System Overview &amp; Feature Documentation<br>August 2026</p>
+</div>
+
+<!-- TABLE OF CONTENTS -->
+<div class="section-break">
+<h2>Table of Contents</h2>
+<p class="toc-item">1. Introduction</p>
+<p class="toc-item">2. System Dashboard</p>
+<p class="toc-item">3. Master Data Management</p>
+<p style="margin-left: 20pt;" class="toc-item">3.1 Crane/Vehicle Master</p>
+<p style="margin-left: 20pt;" class="toc-item">3.2 Employee Master</p>
+<p style="margin-left: 20pt;" class="toc-item">3.3 Rate Master (Versioned)</p>
+<p style="margin-left: 20pt;" class="toc-item">3.4 Customer Master</p>
+<p style="margin-left: 20pt;" class="toc-item">3.5 Monthly Contracts</p>
+<p class="toc-item">4. Daily Operations</p>
+<p style="margin-left: 20pt;" class="toc-item">4.1 Trip Entries</p>
+<p style="margin-left: 20pt;" class="toc-item">4.2 Diesel Entry</p>
+<p style="margin-left: 20pt;" class="toc-item">4.3 Attendance</p>
+<p style="margin-left: 20pt;" class="toc-item">4.4 Maintenance</p>
+<p style="margin-left: 20pt;" class="toc-item">4.5 EMI Management</p>
+<p style="margin-left: 20pt;" class="toc-item">4.6 Salary Advance Management</p>
+<p class="toc-item">5. Billing &amp; Invoicing</p>
+<p style="margin-left: 20pt;" class="toc-item">5.1 Cash Bills</p>
+<p style="margin-left: 20pt;" class="toc-item">5.2 Customer Invoices (GST)</p>
+<p class="toc-item">6. Reports &amp; Analytics</p>
+<p class="toc-item">7. Settings &amp; Configuration</p>
+<p class="toc-item">8. Multi-Language Support</p>
+<p class="toc-item">9. Security &amp; User Roles</p>
+<p class="toc-item">10. Technology &amp; Infrastructure</p>
+<p class="toc-item">11. Future Roadmap</p>
+</div>
+
+<!-- 1. INTRODUCTION -->
+<div class="section-break">
+<h2>1. Introduction</h2>
+<p>
+The Crane &amp; JCB ERP System is a comprehensive, cloud-based business management platform
+designed specifically for crane rental and JCB operations companies. It handles every aspect
+of the business &mdash; from vehicle and driver management to trip logging, billing, invoicing,
+diesel tracking, maintenance, EMI management, salary advances, attendance, and financial reporting.
+</p>
+<p>
+The system replaces manual ledgers, Excel spreadsheets, and disconnected tools with a single,
+unified platform that works across desktop computers, tablets, and mobile phones. All data is
+stored securely in the cloud and updates in real-time across all devices.
+</p>
+
+<div class="feature-box">
+<h4>Key Benefits at a Glance</h4>
+<ul>
+<li><b>Real-time visibility</b> &mdash; Know exactly which vehicles are working, available, or under maintenance at any moment</li>
+<li><b>Automated billing</b> &mdash; Generate cash bills and GST-compliant invoices directly from trip entries with zero double-entry</li>
+<li><b>Versioned rate master</b> &mdash; Rate changes are tracked with effective dates, so old trips retain the rates that were active at the time</li>
+<li><b>Financial reporting</b> &mdash; Profit &amp; loss, monthly summaries, diesel costs, and salary statements at your fingertips</li>
+<li><b>Bilingual</b> &mdash; Full English and Telugu language support with a single click</li>
+<li><b>Secure &amp; role-based</b> &mdash; Admin, Manager, and Operator roles with appropriate access controls</li>
+</ul>
+</div>
+</div>
+
+<!-- 2. DASHBOARD -->
+<div class="section-break">
+<h2>2. System Dashboard</h2>
+<p>
+The Dashboard is the first screen users see after logging in. It provides a real-time snapshot
+of the entire business with live-updating KPI cards and summary tables.
+</p>
+
+<h3>Vehicle Status Overview</h3>
+<table>
+<tr><th>Metric</th><th>Description</th></tr>
+<tr><td>Total Vehicles</td><td>Count of all vehicles in the system</td></tr>
+<tr><td>Active Vehicles</td><td>Vehicles currently marked as active</td></tr>
+<tr><td>Available</td><td>Vehicles ready for assignment (not currently on a trip)</td></tr>
+<tr><td>Working</td><td>Vehicles currently on an active trip/job</td></tr>
+<tr><td>Under Maintenance</td><td>Vehicles undergoing repairs or servicing</td></tr>
+<tr><td>Inactive</td><td>Vehicles not in active fleet rotation</td></tr>
+</table>
+
+<h3>Today's Operations Summary</h3>
+<table>
+<tr><th>Metric</th><th>Description</th></tr>
+<tr><td>Today's Trips</td><td>Number of trips logged for the current date</td></tr>
+<tr><td>Today's Revenue</td><td>Total rental + batha amount from today's trips</td></tr>
+<tr><td>Today's Diesel Cost</td><td>Total diesel expenses logged today</td></tr>
+<tr><td>Today's Maintenance</td><td>Maintenance costs incurred today</td></tr>
+<tr><td>Today's Batha</td><td>Total operator batha from today's trips</td></tr>
+<tr><td>Today's Cash Collection</td><td>Cash payments collected today</td></tr>
+<tr><td>Today's Online Collection</td><td>Online/bank transfer payments collected today</td></tr>
+<tr><td>Pending Customer Amount</td><td>Unpaid amounts from today's trips</td></tr>
+<tr><td>EMI Due / Overdue</td><td>Vehicle loan EMI alerts</td></tr>
+</table>
+
+<h3>Monthly Summary</h3>
+<table>
+<tr><th>Metric</th><th>Description</th></tr>
+<tr><td>Monthly Revenue</td><td>Total revenue for the current month</td></tr>
+<tr><td>Monthly Expenses</td><td>Diesel + Batha + Maintenance costs for the month</td></tr>
+<tr><td>Monthly Profit/Loss</td><td>Revenue minus expenses, with profit or loss indicator</td></tr>
+</table>
+
+<h3>Today's Vehicle Summary Table</h3>
+<p>
+A live table showing each vehicle that has a trip today, with customizable columns.
+Users can choose which fields to display (date, vehicle, driver, customer, hours, rental, batha,
+total, payment status, etc.) and the selection is remembered automatically.
+</p>
+
+<div class="highlight-box">
+<h4>EMI Alerts</h4>
+<p>
+The dashboard automatically displays alerts for upcoming and overdue vehicle EMI payments,
+ensuring you never miss a loan installment.
+</p>
+</div>
+</div>
+
+<!-- 3. MASTER DATA -->
+<div class="section-break">
+<h2>3. Master Data Management</h2>
+<p>
+Master data forms the foundation of the system. These are the core records that all daily
+operations and billing reference.
+</p>
+
+<h3>3.1 Crane/Vehicle Master</h3>
+<p>
+A complete registry of all cranes and JCBs in the fleet. Each vehicle record captures:
+</p>
+<table>
+<tr><th>Field</th><th>Description</th></tr>
+<tr><td>Serial Number</td><td>Internal serial number for the vehicle</td></tr>
+<tr><td>Registration Number</td><td>Official RTO registration number</td></tr>
+<tr><td>Model</td><td>Vehicle model/make (e.g., Tata, Bharat Benz)</td></tr>
+<tr><td>Type</td><td>Crane or JCB</td></tr>
+<tr><td>Capacity / Tons</td><td>Crane capacity in tons (e.g., 15 Tons) or JCB designation</td></tr>
+<tr><td>Hourly Rate</td><td>Default first-hour rate (used as fallback if Rate Master is not configured)</td></tr>
+<tr><td>Daily Rate</td><td>Default full-day rate</td></tr>
+<tr><td>Status</td><td>Available, Working, Maintenance, or Inactive</td></tr>
+<tr><td>EMI Status</td><td>Whether this vehicle has an active EMI (loan installment)</td></tr>
+<tr><td>EMI Amount &amp; Due Date</td><td>Monthly EMI amount and next due date</td></tr>
+<tr><td>Active</td><td>Whether the vehicle is part of the active fleet</td></tr>
+</table>
+
+<h3>3.2 Employee Master</h3>
+<p>
+A registry of all employees &mdash; drivers, operators, helpers, and other staff. Each record includes:
+</p>
+<table>
+<tr><th>Field</th><th>Description</th></tr>
+<tr><td>Name</td><td>Full name of the employee</td></tr>
+<tr><td>Role</td><td>Driver, Operator, Helper, or Other</td></tr>
+<tr><td>Phone</td><td>Contact number</td></tr>
+<tr><td>Salary</td><td>Monthly salary amount</td></tr>
+<tr><td>License Number</td><td>Driving license number</td></tr>
+<tr><td>License Expiry</td><td>License renewal date (for compliance tracking)</td></tr>
+<tr><td>Advance Salary</td><td>Outstanding salary advance amount</td></tr>
+<tr><td>Active</td><td>Whether the employee is currently employed</td></tr>
+</table>
+
+<div class="feature-box">
+<h4>Employee Smart Features</h4>
+<ul>
+<li><b>License expiry alerts</b> &mdash; Expired licenses are flagged in red; licenses expiring within 30 days show a warning indicator</li>
+<li><b>Role-based filtering</b> &mdash; Filter the employee list by role (Driver, Operator, Helper, Other) or status (Active, Inactive)</li>
+<li><b>Safe deletion</b> &mdash; If an employee has attendance or trip records, the system deactivates them instead of deleting, preserving all historical data</li>
+<li><b>Excel export</b> &mdash; Export the full employee master with company branding and applied filters</li>
+<li><b>License fields conditional</b> &mdash; License number and expiry fields appear only for Driver and Operator roles</li>
+</ul>
+</div>
+
+<h3>3.3 Rate Master (Versioned)</h3>
+<p>
+The Rate Master is one of the most powerful features of the system. It allows you to define
+rental rates for different vehicle categories (e.g., 15 Ton Crane, JCB) with full version control:
+</p>
+<table>
+<tr><th>Field</th><th>Description</th></tr>
+<tr><td>Vehicle Category</td><td>Category name (e.g., "15 Ton", "JCB")</td></tr>
+<tr><td>Vehicle Type</td><td>Crane or JCB</td></tr>
+<tr><td>Capacity / Tons</td><td>Capacity in tons for cranes</td></tr>
+<tr><td>Rate Type</td><td>Hourly, Daily, Both, Couple Hours, or Monthly</td></tr>
+<tr><td>1st Hour Rate</td><td>Charge for the first hour</td></tr>
+<tr><td>2nd Hour Rate</td><td>Charge for the second hour</td></tr>
+<tr><td>3rd, 4th, 5th Hour Rates</td><td>Progressive hourly rates</td></tr>
+<tr><td>Couple Hours Rate</td><td>Special rate for 2-hour jobs</td></tr>
+<tr><td>Daily Rate</td><td>Full-day rental rate</td></tr>
+<tr><td>Monthly Rate</td><td>Monthly contract rate</td></tr>
+<tr><td>Batha</td><td>Standard operator batha amount</td></tr>
+<tr><td>Effective From / To</td><td>Date range when this rate version is active</td></tr>
+<tr><td>Status</td><td>Active, Inactive, or Closed</td></tr>
+<tr><td>Version Number</td><td>Auto-incremented version for audit trail</td></tr>
+</table>
+
+<div class="feature-box">
+<h4>How Versioned Rates Work</h4>
+<p>
+When a trip is logged, the system automatically looks up the correct Rate Master entry based
+on the vehicle type, capacity, and trip date. The rates are "snapshotted" (saved permanently)
+on the trip record. This means if you change rates tomorrow, all past trips retain the rates
+that were active when the trip was created &mdash; ensuring historical accuracy for billing and audits.
+</p>
+</div>
+
+<h3>3.4 Customer Master</h3>
+<p>
+A complete database of all customers with billing and shipping details:
+</p>
+<table>
+<tr><th>Field</th><th>Description</th></tr>
+<tr><td>Name</td><td>Customer or company name</td></tr>
+<tr><td>Address</td><td>Billing address</td></tr>
+<tr><td>Phone &amp; Email</td><td>Contact information</td></tr>
+<tr><td>GSTIN</td><td>GST identification number (for GST invoices)</td></tr>
+<tr><td>State &amp; State Code</td><td>State and GST state code (for intra-state vs inter-state GST)</td></tr>
+<tr><td>Payment Terms</td><td>Default payment terms (e.g., 30 days)</td></tr>
+<tr><td>Shipping Address</td><td>Delivery/ship-to address (if different from billing)</td></tr>
+<tr><td>Active</td><td>Whether the customer is currently active</td></tr>
+</table>
+
+<h3>3.5 Monthly Contracts</h3>
+<p>
+For customers on monthly billing arrangements, the system supports monthly contracts with:
+</p>
+<table>
+<tr><th>Field</th><th>Description</th></tr>
+<tr><td>Company Name</td><td>Name of the contract company</td></tr>
+<tr><td>Address</td><td>Company address</td></tr>
+<tr><td>Billing Details</td><td>Specific billing instructions or terms</td></tr>
+<tr><td>Allocated Vehicle</td><td>Vehicle assigned to this contract</td></tr>
+<tr><td>Start Date</td><td>Contract start date</td></tr>
+<tr><td>End Date</td><td>Contract end date (optional for open-ended contracts)</td></tr>
+<tr><td>Budget</td><td>Contract budget amount</td></tr>
+<tr><td>Total Monthly Amount</td><td>Monthly billing amount</td></tr>
+<tr><td>Status</td><td>Active, Completed, Expired, or Cancelled</td></tr>
+</table>
+
+<div class="feature-box">
+<h4>Contract Management Features</h4>
+<ul>
+<li><b>Full CRUD</b> &mdash; Create, edit, and delete contracts with confirmation prompts</li>
+<li><b>Vehicle assignment</b> &mdash; Link a specific vehicle from the fleet to each contract</li>
+<li><b>Searchable list</b> &mdash; Search contracts by company name</li>
+<li><b>Status tracking</b> &mdash; Visual status badges for Active, Completed, Expired, and Cancelled contracts</li>
+</ul>
+</div>
+</div>
+
+<!-- 4. DAILY OPERATIONS -->
+<div class="section-break">
+<h2>4. Daily Operations</h2>
+
+<h3>4.1 Trip Entries</h3>
+<p>
+The Trip Entry is the heart of the system. Every job &mdash; whether it's a crane rental or a JCB
+assignment &mdash; is recorded as a trip. The system automatically calculates rental amounts based
+on the Rate Master, vehicle type, and hours worked.
+</p>
+
+<h4>What a Trip Entry Captures</h4>
+<table>
+<tr><th>Field</th><th>Description</th></tr>
+<tr><td>Trip Number</td><td>Auto-generated unique trip ID (never null, never duplicated)</td></tr>
+<tr><td>Trip Date</td><td>Date of the job</td></tr>
+<tr><td>Vehicle</td><td>Selected from active fleet (filtered by tons/capacity)</td></tr>
+<tr><td>Driver / Operator</td><td>Assigned driver or operator</td></tr>
+<tr><td>Customer</td><td>Customer for this trip (optional)</td></tr>
+<tr><td>Place of Work</td><td>Job location</td></tr>
+<tr><td>Rate Type</td><td>Hourly, Full Day, Couple Hours, or Monthly</td></tr>
+<tr><td>In Time / Out Time</td><td>Start and end time of the job</td></tr>
+<tr><td>Opening / Closing Hour Meter</td><td>Meter readings (auto-suggests last closing as opening)</td></tr>
+<tr><td>Total Hours</td><td>Auto-calculated from meter readings or time entries</td></tr>
+<tr><td>Rental Amount</td><td>Auto-calculated from Rate Master or vehicle rates</td></tr>
+<tr><td>Batha</td><td>Auto-filled from Rate Master (editable if needed)</td></tr>
+<tr><td>Total Amount</td><td>Rental + Batha (auto-calculated)</td></tr>
+<tr><td>Bill Status</td><td>Paid or Pending (toggle with one click)</td></tr>
+<tr><td>Payment Mode</td><td>Cash, Online, Bank Transfer, or Other</td></tr>
+<tr><td>Payment Date</td><td>Date when payment was received</td></tr>
+<tr><td>Remarks</td><td>Any additional notes</td></tr>
+</table>
+
+<div class="feature-box">
+<h4>Smart Rate Calculation</h4>
+<p>
+The system automatically determines the rental amount using this priority:
+</p>
+<ol>
+<li><b>Rate Master</b> (highest priority) &mdash; looks up the active rate version matching the vehicle type, capacity, and trip date</li>
+<li><b>Legacy Rate Table</b> &mdash; falls back to the older rates table if no Rate Master match is found</li>
+<li><b>Vehicle Default Rates</b> &mdash; falls back to the vehicle's own hourly/daily rate</li>
+</ol>
+<p>
+For hourly jobs, the system calculates: 1st hour at the 1st-hour rate, 2nd hour at the 2nd-hour
+rate, and subsequent hours at the applicable progressive rate. For full-day jobs, the daily rate
+is applied. For couple-hour jobs, the special couple-hours rate is used.
+</p>
+</div>
+
+<h4>Trip Entry Features</h4>
+<ul>
+<li><b>Vehicle filtering by tons</b> &mdash; Select the crane capacity first, then only matching vehicles appear</li>
+<li><b>Auto meter carry-forward</b> &mdash; The opening meter auto-fills with the last trip's closing meter</li>
+<li><b>Live billing preview</b> &mdash; See the rental calculation breakdown before saving</li>
+<li><b>Payment status toggle</b> &mdash; Mark trips as Paid/Pending right from the entry form</li>
+<li><b>Customizable table columns</b> &mdash; Choose which fields to show and export</li>
+<li><b>Excel export</b> &mdash; Export all trips with company branding and selected fields</li>
+<li><b>Payment totals dashboard</b> &mdash; Total amount, paid, pending, and trip counts at a glance</li>
+</ul>
+
+<h3>4.2 Diesel Entry</h3>
+<p>
+Track all diesel/fuel purchases for each vehicle with full payment tracking:
+</p>
+<table>
+<tr><th>Field</th><th>Description</th></tr>
+<tr><td>Date</td><td>Date of diesel purchase</td></tr>
+<tr><td>Pump Name</td><td>Name of the fuel station</td></tr>
+<tr><td>Vehicle</td><td>Vehicle that received the fuel</td></tr>
+<tr><td>Quantity (Liters)</td><td>Amount of diesel purchased</td></tr>
+<tr><td>Rate per Liter</td><td>Price per liter</td></tr>
+<tr><td>Total Amount</td><td>Auto-calculated (quantity x rate)</td></tr>
+<tr><td>Paid Amount</td><td>Amount paid at the time of purchase</td></tr>
+<tr><td>Pending Amount</td><td>Outstanding balance (auto-calculated)</td></tr>
+<tr><td>Payment Status</td><td>Paid, Pending, or Partially Paid</td></tr>
+<tr><td>Remarks</td><td>Additional notes</td></tr>
+</table>
+
+<h3>4.3 Attendance</h3>
+<p>
+Daily attendance tracking for all employees:
+</p>
+<ul>
+<li>Mark employees as Present, Absent, or Holiday for any date</li>
+<li>Bulk attendance entry for a selected date</li>
+<li>View attendance history per employee</li>
+<li>Integrates with salary calculations</li>
+</ul>
+
+<h3>4.4 Maintenance</h3>
+<p>
+Track all vehicle maintenance and repair expenses:
+</p>
+<table>
+<tr><th>Field</th><th>Description</th></tr>
+<tr><td>Date</td><td>Date of maintenance</td></tr>
+<tr><td>Vehicle</td><td>Vehicle that underwent maintenance</td></tr>
+<tr><td>Type</td><td>Tyre, Repair, or Others</td></tr>
+<tr><td>Amount</td><td>Cost of maintenance</td></tr>
+<tr><td>Description</td><td>Details of the work performed</td></tr>
+</table>
+
+<h3>4.5 EMI Management</h3>
+<p>
+Track vehicle loan EMIs with status tracking:
+</p>
+<ul>
+<li>Record EMI amount, due date, and payment status for each vehicle</li>
+<li>Status: Upcoming, Due, Paid, or Overdue</li>
+<li>Dashboard alerts for due and overdue EMIs</li>
+<li>Payment mode tracking (Cash, Online, Bank Transfer)</li>
+</ul>
+
+<h3>4.6 Salary Advance Management</h3>
+<p>
+The system includes a dedicated Salary Advance module to track employee advances and recoveries:
+</p>
+<table>
+<tr><th>Field</th><th>Description</th></tr>
+<tr><td>Advance Date</td><td>Date the advance was given</td></tr>
+<tr><td>Advance Reference</td><td>Reference number or identifier for the advance</td></tr>
+<tr><td>Advance Amount</td><td>Amount given as advance</td></tr>
+<tr><td>Reason</td><td>Purpose of the advance</td></tr>
+<tr><td>Payment Mode</td><td>Cash, Bank Transfer, UPI, or Other</td></tr>
+<tr><td>Reference Number</td><td>Transaction reference number</td></tr>
+<tr><td>Status</td><td>Outstanding, Partially Recovered, or Fully Recovered</td></tr>
+</table>
+
+<h4>Recovery Tracking</h4>
+<p>
+When an employee's salary is processed, advance recoveries can be recorded against outstanding
+advances. Each recovery tracks:
+</p>
+<ul>
+<li>Recovery date and salary month</li>
+<li>Recovery amount</li>
+<li>Linked to the original advance record</li>
+<li>Remarks for audit trail</li>
+</ul>
+
+<div class="feature-box">
+<h4>Salary Statement Report</h4>
+<p>
+The Salary Statement report combines base salary, advances taken, recoveries made, and attendance
+data to calculate the net payable amount for each employee per month. This gives a complete picture
+of payroll obligations at any time.
+</p>
+</div>
+</div>
+
+<!-- 5. BILLING -->
+<div class="section-break">
+<h2>5. Billing &amp; Invoicing</h2>
+
+<h3>5.1 Cash Bills</h3>
+<p>
+Cash Bills are simple, non-GST bills generated from completed trip entries. They are ideal for
+walk-in customers or jobs that don't require a GST invoice.
+</p>
+
+<h4>How It Works</h4>
+<ol>
+<li>Select a customer (or leave blank for walk-in customers)</li>
+<li>The system shows all pending (un-invoiced) trips for that customer</li>
+<li>Select one or more trips to include in the cash bill</li>
+<li>Preview the bill with all details (vehicle type, trip date, hours, rental, batha, total)</li>
+<li>Generate and print the cash bill</li>
+</ol>
+
+<h4>Cash Bill Contents</h4>
+<table>
+<tr><th>Section</th><th>Details</th></tr>
+<tr><td>Company Header</td><td>Company name, address, phone, GSTIN</td></tr>
+<tr><td>Bill Number</td><td>Auto-generated sequential number</td></tr>
+<tr><td>Bill Date</td><td>Date of bill generation</td></tr>
+<tr><td>Customer Details</td><td>Name and address</td></tr>
+<tr><td>Vehicle Info</td><td>Vehicle number, type (e.g., "15 Tons" for cranes, "JCB" for JCBs)</td></tr>
+<tr><td>Trip Details</td><td>Date, place of work, hours, driver name</td></tr>
+<tr><td>Amounts</td><td>Rental amount, batha, total amount</td></tr>
+<tr><td>Amount in Words</td><td>Total amount converted to words</td></tr>
+</table>
+
+<div class="feature-box">
+<h4>Vehicle Type Display</h4>
+<p>
+The system intelligently displays vehicle types:
+</p>
+<ul>
+<li><b>Cranes</b> &mdash; shown as "15 Tons" (or whatever the capacity is)</li>
+<li><b>JCBs</b> &mdash; shown as "JCB"</li>
+</ul>
+<p>This display is consistent across cash bills, customer invoices, and all reports.</p>
+</div>
+
+<h3>5.2 Customer Invoices (GST)</h3>
+<p>
+Customer Invoices are full, GST-compliant tax invoices designed for B2B billing. They support
+both intra-state (CGST + SGST) and inter-state (IGST) GST calculations.
+</p>
+
+<h4>How It Works</h4>
+<ol>
+<li>Select a customer from the customer master</li>
+<li>The system displays all pending trips for that customer (trips not yet linked to an invoice)</li>
+<li>Select one or more trips to include in the invoice</li>
+<li>The system auto-generates line items from the selected trips, including:
+  <ul>
+    <li>Description with vehicle type, trip date, vehicle number, place, and hours</li>
+    <li>HSN/SAC code (configurable in settings)</li>
+    <li>Quantity, rate, and amount per trip</li>
+    <li>Operator batha as a separate line item (consolidated)</li>
+  </ul>
+</li>
+<li>Choose GST type: Intra-State (CGST + SGST) or Inter-State (IGST)</li>
+<li>Adjust GST percentages if needed (defaults from settings)</li>
+<li>Add consignee (ship-to) details if different from bill-to</li>
+<li>Add invoice metadata: destination, terms of payment, buyer's order no, reference no, dispatch doc no, delivery note date</li>
+<li>Preview the invoice in a print-ready format</li>
+<li>Generate the invoice &mdash; the system auto-generates an invoice number and marks all selected trips as "Invoiced"</li>
+</ol>
+
+<h4>Invoice Contents</h4>
+<table>
+<tr><th>Section</th><th>Details</th></tr>
+<tr><td>Company Header</td><td>Company name, address, phone, email, GSTIN</td></tr>
+<tr><td>Invoice Number</td><td>Auto-generated with configurable prefix (e.g., PCS-2026-001)</td></tr>
+<tr><td>Invoice Date</td><td>Date of invoice generation</td></tr>
+<tr><td>Financial Year</td><td>Auto-calculated (e.g., 2026-27)</td></tr>
+<tr><td>Bill To (Customer)</td><td>Name, address, GSTIN, state, state code</td></tr>
+<tr><td>Ship To (Consignee)</td><td>Same as bill-to or separate consignee details</td></tr>
+<tr><td>Line Items</td><td>One row per trip with description, HSN/SAC, qty, rate, amount</td></tr>
+<tr><td>Operator Batha</td><td>Consolidated batha as a separate line item</td></tr>
+<tr><td>Taxable Amount</td><td>Sum of rental amounts + batha</td></tr>
+<tr><td>CGST &amp; SGST</td><td>For intra-state (each 9% by default, configurable)</td></tr>
+<tr><td>IGST</td><td>For inter-state (18% by default, configurable)</td></tr>
+<tr><td>Grand Total</td><td>Taxable amount + total GST</td></tr>
+<tr><td>Amount in Words</td><td>Grand total converted to words</td></tr>
+<tr><td>Bank Details</td><td>Bank name, account name, account number, branch, IFSC</td></tr>
+<tr><td>Declaration</td><td>Configurable declaration text</td></tr>
+<tr><td>Authorized Signatory</td><td>Name and signature/stamp</td></tr>
+<tr><td>Terms of Payment</td><td>Payment terms (e.g., 30 days)</td></tr>
+<tr><td>Additional Fields</td><td>Destination, delivery note, buyer's order no, reference no, dispatch doc no</td></tr>
+</table>
+
+<h4>Invoice Management</h4>
+<ul>
+<li><b>View</b> &mdash; Open any invoice in a print-ready preview</li>
+<li><b>Print</b> &mdash; Print directly to any connected printer</li>
+<li><b>Excel Export</b> &mdash; Export invoice details to Excel with company branding</li>
+<li><b>Record Payment</b> &mdash; Record partial or full payments against an invoice</li>
+<li><b>Payment History</b> &mdash; View all payments made against an invoice</li>
+<li><b>Cancel Invoice</b> &mdash; Cancel an invoice (keeps it for audit, marks trips as billable again)</li>
+<li><b>Delete Invoice</b> &mdash; Permanently delete (admin only), unlinks trips for re-billing</li>
+<li><b>Status Tracking</b> &mdash; Draft, Generated, Paid, Partially Paid, Cancelled</li>
+</ul>
+
+<div class="highlight-box">
+<h4>Invoice-Trip Linkage</h4>
+<p>
+When an invoice is generated, the system <b>updates the existing trip records</b> to link them
+to the invoice. It does NOT create new trips or overwrite trip data. This ensures data integrity:
+the original trip entry (with its auto-generated trip number, meter readings, and rate snapshot)
+remains unchanged. The invoice simply references the trips by their IDs.
+</p>
+</div>
+</div>
+
+<!-- 6. REPORTS -->
+<div class="section-break">
+<h2>6. Reports &amp; Analytics</h2>
+<p>
+The system provides a comprehensive suite of reports, all with date-range filtering and
+Excel export with company branding:
+</p>
+
+<table>
+<tr><th>Report</th><th>What It Shows</th></tr>
+<tr><td>Trip Report</td><td>All trips within a date range with vehicle, driver, customer, hours, rental, batha, total, and payment status</td></tr>
+<tr><td>Diesel Report</td><td>All diesel entries with pump name, vehicle, quantity, rate, total, paid, pending, and payment status</td></tr>
+<tr><td>Attendance Report</td><td>Employee attendance records with present/absent/holiday status</td></tr>
+<tr><td>Maintenance Report</td><td>All maintenance records with vehicle, type, amount, and description</td></tr>
+<tr><td>EMI Report</td><td>Vehicle EMI records with status, due dates, and payment tracking</td></tr>
+<tr><td>Salary Statement</td><td>Employee salary details including advances, recoveries, and net payable</td></tr>
+<tr><td>Daily Vehicle Report</td><td>Day-by-day breakdown per vehicle showing trips, diesel, and maintenance</td></tr>
+<tr><td>Monthly Report</td><td>Month-by-month summary of revenue, diesel, maintenance, batha, and profit</td></tr>
+<tr><td>Profit &amp; Loss</td><td>Revenue vs. expenses (diesel + batha + maintenance) for any date range, showing net profit or loss</td></tr>
+<tr><td>Cash Bill Report</td><td>All cash bills generated within a date range</td></tr>
+</table>
+
+<div class="feature-box">
+<h4>Excel Export Features</h4>
+<p>
+All reports can be exported to Excel/CSV format with:
+</p>
+<ul>
+<li>Company name, address, and contact details as header</li>
+<li>Date range and generation date</li>
+<li>Properly formatted columns with currency formatting</li>
+<li>Summary/totals row where applicable</li>
+</ul>
+</div>
+</div>
+
+<!-- 7. SETTINGS -->
+<div class="section-break">
+<h2>7. Settings &amp; Configuration</h2>
+
+<h3>Company Profile</h3>
+<ul>
+<li>Company name, address, phone, email</li>
+<li>GSTIN and PAN</li>
+<li>State and state code</li>
+<li>Company logo URL</li>
+<li>Authorized signatory name</li>
+<li>Signature/stamp image URL</li>
+</ul>
+
+<h3>Bank Details</h3>
+<ul>
+<li>Account holder name</li>
+<li>Bank name, account number, branch</li>
+<li>IFSC code</li>
+</ul>
+
+<h3>Rental Settings</h3>
+<ul>
+<li>Invoice prefix (e.g., PCS)</li>
+<li>Invoice start number</li>
+</ul>
+
+<h3>Invoice Settings</h3>
+<ul>
+<li>HSN/SAC code (default: 997319)</li>
+<li>Default payment terms (e.g., 30 days)</li>
+<li>Terms of delivery</li>
+<li>Default CGST, SGST percentages</li>
+<li>Whether to add GST by default</li>
+<li>Customizable declaration text</li>
+</ul>
+
+<h3>Diesel Settings</h3>
+<ul>
+<li>Current diesel rate (used as default in diesel entries)</li>
+</ul>
+
+<h3>GST Settings</h3>
+<ul>
+<li>Enable/disable GST</li>
+<li>Default CGST, SGST, IGST percentages</li>
+</ul>
+
+<h3>Language</h3>
+<ul>
+<li>Switch between English and Telugu</li>
+</ul>
+</div>
+
+<!-- 8. MULTI-LANGUAGE -->
+<div class="section-break">
+<h2>8. Multi-Language Support</h2>
+<p>
+The entire system supports two languages:
+</p>
+<ul>
+<li><b>English</b> &mdash; Full interface in English</li>
+<li><b>Telugu</b> (&#3108;&#3142;&#3122;&#3137;&#3108;&#3149;&#3122;&#3137;) &mdash; Full interface in Telugu</li>
+</ul>
+<p>
+Users can switch languages instantly with a single click from the top navigation bar.
+The language preference is remembered across sessions.
+</p>
+</div>
+
+<!-- 9. SECURITY -->
+<div class="section-break">
+<h2>9. Security &amp; User Roles</h2>
+
+<h3>User Authentication</h3>
+<ul>
+<li>Secure login with username and password</li>
+<li>Passwords are securely hashed and stored (never in plain text)</li>
+<li>Session management with automatic logout</li>
+</ul>
+
+<h3>Role-Based Access</h3>
+<table>
+<tr><th>Role</th><th>Access Level</th></tr>
+<tr><td>Admin</td><td>Full access to all features including delete operations, user management, and settings</td></tr>
+<tr><td>Manager</td><td>Access to most operations and reports, but cannot delete records or manage users</td></tr>
+<tr><td>Operator</td><td>Limited access to daily operations like trip entry, diesel entry, and attendance</td></tr>
+</table>
+
+<h3>Data Security</h3>
+<ul>
+<li>All data is stored in a secure, cloud-based PostgreSQL database (Supabase)</li>
+<li>Row-level security policies ensure users can only access data they are authorized for</li>
+<li>All communication between the app and the database is encrypted (HTTPS/TLS)</li>
+<li>Soft deletes &mdash; records are marked as cancelled rather than permanently deleted, preserving audit trails</li>
+</ul>
+</div>
+
+<!-- 10. TECHNOLOGY -->
+<div class="section-break">
+<h2>10. Technology &amp; Infrastructure</h2>
+
+<h3>Frontend</h3>
+<ul>
+<li><b>React</b> &mdash; Modern, fast, component-based user interface</li>
+<li><b>TypeScript</b> &mdash; Type-safe code for reliability and fewer bugs</li>
+<li><b>Tailwind CSS</b> &mdash; Responsive, mobile-friendly design that works on all screen sizes</li>
+<li><b>Vite</b> &mdash; Lightning-fast build tool for instant page loads</li>
+</ul>
+
+<h3>Backend &amp; Database</h3>
+<ul>
+<li><b>Supabase (PostgreSQL)</b> &mdash; Enterprise-grade, cloud-hosted database</li>
+<li><b>Real-time updates</b> &mdash; Dashboard and data update automatically as new entries are made</li>
+<li><b>Row-Level Security (RLS)</b> &mdash; Database-level security policies</li>
+<li><b>Automated backups</b> &mdash; Database is backed up automatically by the cloud provider</li>
+</ul>
+
+<h3>Deployment</h3>
+<ul>
+<li>Cloud-hosted &mdash; accessible from any device with a web browser</li>
+<li>Responsive design &mdash; works on desktop, tablet, and mobile</li>
+<li>No installation required &mdash; just open in a browser</li>
+</ul>
+</div>
+
+<!-- 11. ROADMAP -->
+<div class="section-break">
+<h2>11. Future Roadmap</h2>
+<p>
+The system is designed to grow with the business. Potential future enhancements include:
+</p>
+<ul>
+<li><b>Mobile App</b> &mdash; Native mobile apps for Android and iOS for field operators</li>
+<li><b>WhatsApp Integration</b> &mdash; Send invoices and cash bills directly via WhatsApp</li>
+<li><b>SMS Alerts</b> &mdash; Automated SMS for EMI due dates, payment confirmations, and trip assignments</li>
+<li><b>GPS Tracking</b> &mdash; Real-time vehicle location tracking integration</li>
+<li><b>Customer Portal</b> &mdash; Self-service portal for customers to view their invoices and payment history</li>
+<li><b>Automated Recurring Invoices</b> &mdash; Auto-generate monthly invoices for contract customers</li>
+<li><b>Expense Management</b> &mdash; Track additional business expenses beyond diesel and maintenance</li>
+<li><b>Document Management</b> &mdash; Upload and store vehicle documents (RC, insurance, fitness, permits)</li>
+<li><b>Driver Performance Analytics</b> &mdash; Track driver hours, trip counts, and productivity metrics</li>
+<li><b>Multi-Company Support</b> &mdash; Manage multiple business entities from a single system</li>
+</ul>
+
+<div class="feature-box">
+<h4>Summary</h4>
+<p>
+The Crane &amp; JCB ERP System is a complete, production-ready business management platform that
+handles every aspect of crane and JCB rental operations. From the moment a vehicle leaves for a
+job to the moment payment is received, every transaction is tracked, calculated, and reported.
+The system eliminates manual paperwork, reduces billing errors, provides real-time business
+visibility, and scales as the business grows.
+</p>
+</div>
+
+<p style="margin-top: 40pt; text-align: center; color: #94a3b8; font-size: 9pt;">
+Document generated August 2026<br>
+Crane &amp; JCB ERP System &mdash; Padmavathi Earth Movers and Crane Services
+</p>
+
+</body>
+</html>
