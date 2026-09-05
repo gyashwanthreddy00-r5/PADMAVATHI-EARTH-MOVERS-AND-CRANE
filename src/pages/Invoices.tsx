@@ -13,12 +13,8 @@ import {
 import {
   formatCurrency, formatDate, amountInWords, todayISO, buildInvoiceLineDescription,
 } from '@/lib/utils';
-let html2pdfLoader: Promise<typeof import('html2pdf.js')['default']> | null = null;
-async function getHtml2pdf() {
-  if (!html2pdfLoader) html2pdfLoader = import('html2pdf.js').then(m => (m as typeof import('html2pdf.js')).default);
-  return html2pdfLoader;
-}
 import { invoiceDocHTML, type PrintCopyType } from '@/components/InvoiceDocument';
+import { generateInvoicePdfFromData } from '@/lib/invoicePdf';
 import { calculateDiscount, validateDiscountPercentage } from '@/lib/discountCalc';
 import { useAuth } from '@/context/AuthContext';
 import { TripEntryForm, type MultiVehicleTripFormData, type VehicleEntryData } from '@/components/TripEntryForm';
@@ -672,14 +668,22 @@ export default function Invoices({ initialTab = 'list' }: InvoicesProps = {}) {
     };
   };
 
+  const combineInvoiceCopiesHTML = (docs: string[]): string => {
+    const head = docs[0].match(/<head>[\s\S]*?<\/head>/)?.[0] ?? '<head></head>';
+    const bodies = docs.map(html => html.match(/<body>([\s\S]*?)<\/body>/)?.[1] ?? '');
+    const pages = bodies
+      .map((body, idx) => `<div style="${idx < bodies.length - 1 ? 'page-break-after: always; break-after: page;' : ''}">${body}</div>`)
+      .join('');
+    return `<!DOCTYPE html><html>${head}<body>${pages}</body></html>`;
+  };
+
   const doPrint = (inv: InvoiceWithRelations, items: InvoiceItem[], copyType: PrintCopyType) => {
     if (copyType === 'all') {
-      (['master', 'duplicate', 'extra'] as const).forEach((ct, idx) => {
-        setTimeout(() => {
-          const html = invoiceDocHTML(inv, items, settings, invoiceSettings, ct);
-          printInIframe(html);
-        }, idx * 800);
-      });
+      const docs = (['master', 'duplicate', 'extra'] as const).map(ct =>
+        invoiceDocHTML(inv, items, settings, invoiceSettings, ct)
+      );
+      const combinedHtml = combineInvoiceCopiesHTML(docs);
+      printInIframe(combinedHtml);
     } else {
       const html = invoiceDocHTML(inv, items, settings, invoiceSettings, copyType);
       printInIframe(html);
@@ -687,66 +691,19 @@ export default function Invoices({ initialTab = 'list' }: InvoicesProps = {}) {
   };
 
   const generateInvoicePdfBase64 = async (inv: InvoiceWithRelations, items: InvoiceItem[]): Promise<string> => {
-    const html = invoiceDocHTML(inv, items, settings, invoiceSettings, 'master');
-    const iframe = document.createElement('iframe');
-    iframe.style.position = 'fixed';
-    iframe.style.left = '-9999px';
-    iframe.style.top = '0';
-    iframe.style.width = '190mm';
-    iframe.style.height = '277mm';
-    iframe.style.border = 'none';
-    document.body.appendChild(iframe);
-
-    const iframeDoc = iframe.contentWindow?.document;
-    if (!iframeDoc) {
-      if (iframe.parentNode) document.body.removeChild(iframe);
-      throw new Error('Unable to create PDF document');
+    // Drawn directly with pdf-lib from the same prepared invoice data the Master
+    // Copy print view renders (see src/lib/invoiceDocData.ts) — this is the only
+    // PDF generation source for invoices, so the email attachment always matches
+    // the print Master Copy exactly, instead of a separate (and previously stale)
+    // html2pdf.js screenshot pipeline.
+    const bytes = await generateInvoicePdfFromData(inv, items, settings, invoiceSettings, 'master');
+    let binary = '';
+    const chunkSize = 8192;
+    for (let i = 0; i < bytes.length; i += chunkSize) {
+      const chunk = bytes.subarray(i, i + chunkSize);
+      binary += String.fromCharCode(...chunk);
     }
-
-    iframeDoc.open();
-    iframeDoc.write(html);
-    iframeDoc.close();
-
-    const emailStyles = iframeDoc.createElement('style');
-    emailStyles.textContent = `
-      html, body { width: 718px !important; min-width: 718px !important; margin: 0 !important; }
-      .inv { width: 718px !important; max-width: 718px !important; margin: 0 !important; }
-      .tax-break, .sign, .bot { break-inside: avoid; page-break-inside: avoid; }
-    `;
-    iframeDoc.head.appendChild(emailStyles);
-
-    await new Promise(resolve => { iframe.onload = resolve; });
-    await new Promise(resolve => setTimeout(resolve, 500));
-    try {
-      await (iframe.contentWindow as any).document.fonts.ready;
-    } catch { /* fonts API unavailable, proceed */ }
-    await new Promise(resolve => setTimeout(resolve, 500));
-
-    const target = iframeDoc.body;
-    const opt = {
-      margin: [10, 10, 10, 10] as [number, number, number, number],
-      filename: `Invoice_${inv.invoice_number ?? 'draft'}.pdf`,
-      image: { type: 'png', quality: 1.0 },
-      html2canvas: { scale: 2, width: 718, windowWidth: 718, useCORS: true, logging: false, backgroundColor: '#ffffff' },
-      pagebreak: { mode: ['css', 'legacy'] as const },
-      jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' as const },
-    };
-
-    try {
-      const html2pdf = await getHtml2pdf();
-      const blob: Blob = await html2pdf().set(opt).from(target).outputPdf('blob');
-      const arrayBuffer = await blob.arrayBuffer();
-      const bytes = new Uint8Array(arrayBuffer);
-      let binary = '';
-      const chunkSize = 8192;
-      for (let i = 0; i < bytes.length; i += chunkSize) {
-        const chunk = bytes.subarray(i, i + chunkSize);
-        binary += String.fromCharCode(...chunk);
-      }
-      return btoa(binary);
-    } finally {
-      if (iframe.parentNode) document.body.removeChild(iframe);
-    }
+    return btoa(binary);
   };
 
   const sendEmail = async (inv: InvoiceWithRelations) => {
@@ -803,8 +760,9 @@ export default function Invoices({ initialTab = 'list' }: InvoicesProps = {}) {
     }
     setReminderSending(true);
     try {
+      const pdfBase64 = await generateInvoicePdfBase64(inv, inv.items ?? []);
       const { data, error } = await supabase.functions.invoke('process-reminders', {
-        body: { action: 'send_manual', invoiceId: inv.id, reminderStage: stage },
+        body: { action: 'send_manual', invoiceId: inv.id, reminderStage: stage, pdfBase64 },
       });
       if (error) {
         let msg = 'Unable to send reminder. Please try again.';

@@ -33,6 +33,7 @@ async function sendReminderEmail(
   adminClient: ReturnType<typeof createClient>,
   reminder: ReminderRow,
   reminderSettings: Record<string, unknown>,
+  pdfBase64Override?: string,
 ): Promise<{ success: boolean; error?: string }> {
   const resendApiKey = Deno.env.get("RESEND_API_KEY");
   if (!resendApiKey) {
@@ -183,9 +184,17 @@ ${textBody.split("\n").map((l) => l.trim() === "" ? "<br/>" : `<p style="margin:
 </table>
 </div>`;
 
-  // Generate PDF attachment
-  const pdfBytes = await generateInvoicePdfBytes(invoice, items ?? [], settings, invoiceSettings, totalReceived, balanceAmount);
-  const pdfBase64 = sharedToBase64(pdfBytes);
+  // Generate PDF attachment — prefer the browser-generated PDF (identical to the
+  // invoice email attachment, drawn from the same print-matching source) when the
+  // manual "Send Reminder" button supplied one; fall back to server-side generation
+  // for automated/scheduled reminders where no browser session is available.
+  let pdfBase64: string;
+  if (pdfBase64Override) {
+    pdfBase64 = pdfBase64Override;
+  } else {
+    const pdfBytes = await generateInvoicePdfBytes(invoice, items ?? [], settings, invoiceSettings, totalReceived, balanceAmount);
+    pdfBase64 = sharedToBase64(pdfBytes);
+  }
 
   const senderEmail = Deno.env.get("RESEND_FROM_EMAIL") ?? "invoices@coreone-demo.in";
 
@@ -248,10 +257,11 @@ Deno.serve(async (req: Request) => {
 
     // Parse request body
     const body = await req.json().catch(() => ({}));
-    const { action, invoiceId, reminderStage } = body as {
+    const { action, invoiceId, reminderStage, pdfBase64 } = body as {
       action?: string;
       invoiceId?: string;
       reminderStage?: number;
+      pdfBase64?: string;
     };
 
     // Load reminder settings
@@ -363,7 +373,7 @@ Deno.serve(async (req: Request) => {
         reminder.status = "pending";
       }
 
-      const result = await sendReminderEmail(adminClient, reminder, reminderSettings);
+      const result = await sendReminderEmail(adminClient, reminder, reminderSettings, pdfBase64);
 
       if (result.success) {
         await adminClient.from("invoice_reminders").update({

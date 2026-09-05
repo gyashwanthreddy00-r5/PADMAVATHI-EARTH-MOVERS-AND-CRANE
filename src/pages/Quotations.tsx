@@ -512,7 +512,17 @@ export default function Quotations() {
         },
       });
       if (error) {
-        throw new Error(error.message || 'Failed to send email');
+        // supabase-js's `error.message` for a non-2xx response is just the generic
+        // "Edge Function returned a non-2xx status code" — the actual server-provided
+        // reason lives in the response body, reachable via error.context.
+        let msg = error.message || 'Failed to send email';
+        if (error.context && typeof error.context.json === 'function') {
+          try {
+            const errBody = await error.context.json();
+            if (errBody?.error) msg = errBody.error;
+          } catch { /* fall through to default */ }
+        }
+        throw new Error(msg);
       }
       const result = data as { error?: string; success?: boolean };
       if (result?.error) {
