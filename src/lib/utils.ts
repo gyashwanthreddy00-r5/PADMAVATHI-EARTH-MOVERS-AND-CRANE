@@ -343,7 +343,8 @@ export function buildInvoiceLineDescription(tr: Pick<Trip,
   'weekly_rate_snapshot' | 'daily_rate_snapshot' | 'monthly_rate_snapshot'
 > & {
   vehicle?: { registration_number?: string | null; type?: string | null; capacity?: string | number | null } | null;
-  sessions?: { session_number: number; duration_hours: number; duration_minutes?: number; session_amount?: number }[] | null;
+  sessions?: { session_number: number; duration_hours: number; duration_minutes?: number; session_amount?: number; in_time?: string | null }[] | null;
+  work_date?: string | null;
 }): InvoiceLineDesc {
   const rateType = tr.rate_type;
   const vType = tr.vehicle?.type;
@@ -358,14 +359,14 @@ export function buildInvoiceLineDescription(tr: Pick<Trip,
     typeLabel = vType;
   }
 
-  const tripDateStr = formatDate(tr.trip_date);
+  const tripDateStr = formatDate(tr.work_date || tr.trip_date);
   const placeStr = tr.place_of_work ?? '';
   const hoursStr = tr.total_hours != null && Number(tr.total_hours) > 0 ? formatDuration(Number(tr.total_hours)) : '';
   const vehicleStr = tr.vehicle?.registration_number ?? '';
   const sessions = tr.sessions;
   const sessionCount = sessions && sessions.length > 0 ? sessions.length : 1;
   const sessionStr = sessionCount > 1 ? `${sessionCount} Sessions` : '';
-  const metaStr = [tripDateStr, vehicleStr, placeStr, hoursStr, sessionStr].filter(Boolean).join(' | ');
+  const metaStr = [tripDateStr, vehicleStr, hoursStr, sessionStr].filter(Boolean).join(' | ');
 
   const rentalAmount = Number(tr.rental_amount) || 0;
   const r1 = Number(tr.first_hour_rate) || 0;
@@ -379,7 +380,7 @@ export function buildInvoiceLineDescription(tr: Pick<Trip,
   if (rateType === 'Daily') {
     return {
       description,
-      calculation_details: `Full Day Rate = ${formatCurrency(dailyRate || rentalAmount)} = ${formatCurrency(rentalAmount)}`,
+      calculation_details: `Rental Amount = ${formatCurrency(rentalAmount)}`,
     };
   }
   if (rateType === 'Monthly') {
@@ -425,13 +426,14 @@ export function buildInvoiceLineDescription(tr: Pick<Trip,
     } else {
       const fullHours = Math.floor(totalMinutes / 60);
       const remainingMinutes = totalMinutes % 60;
-      const subParts: string[] = [`1st Hr = ${formatCurrency(r1)}`];
-      if (fullHours > 1) {
-        subParts.push(`${fullHours - 1} Hr × ${formatCurrency(r2)} = ${formatCurrency(round2((fullHours - 1) * r2))}`);
+      const extraHours = fullHours > 1 ? fullHours - 1 : 0;
+      const minutesAmount = remainingMinutes > 0 ? round2(remainingMinutes * r2 / 60) : 0;
+      const subParts: string[] = [`1st Hr ${formatCurrency(r1)}`];
+      if (extraHours > 0) {
+        subParts.push(`${extraHours} Hr ${formatCurrency(r2)}`);
       }
       if (remainingMinutes > 0) {
-        const perMin = r2 / 60;
-        subParts.push(`${remainingMinutes} Min × (${formatCurrency(r2)}/60) = ${formatCurrency(round2(remainingMinutes * perMin))}`);
+        subParts.push(`${remainingMinutes} Min ${formatCurrency(minutesAmount)}`);
       }
       subParts.push(`= ${formatCurrency(amount)}`);
       parts.push(subParts.join(' + '));

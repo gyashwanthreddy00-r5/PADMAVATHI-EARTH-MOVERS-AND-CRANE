@@ -85,7 +85,7 @@ export default function Quotations() {
     setLoading(true);
     const { data } = await supabase
       .from('quotations')
-      .select('*')
+      .select('*, customer:customers!quotations_customer_id_fkey(id, name, email, phone)')
       .order('created_at', { ascending: false });
     const qs = (data ?? []) as Quotation[];
     setQuotations(qs);
@@ -172,7 +172,7 @@ export default function Quotations() {
     setForm({
       quotation_number: quoNum,
       quotation_date: todayISO(),
-      valid_until: '',
+      valid_until: addDays(todayISO(), quoFormatSettings?.default_validity_days ?? 30),
       customer_id: '',
       customer_name: '',
       customer_address: '',
@@ -194,7 +194,6 @@ export default function Quotations() {
       discount_percent: 0,
       terms_and_conditions: quoFormatSettings?.terms_and_conditions ?? '',
       payment_terms: quoFormatSettings?.default_payment_terms ?? '',
-      valid_until: addDays(todayISO(), quoFormatSettings?.default_validity_days ?? 30),
       status: 'Draft',
     });
   };
@@ -459,7 +458,8 @@ export default function Quotations() {
   };
 
   const openEmailModal = async (q: Quotation) => {
-    if (!q.customer_email) {
+    const liveEmail = q.customer?.email ?? q.customer_email;
+    if (!liveEmail) {
       show('Customer email address is not available.', 'error');
       return;
     }
@@ -468,8 +468,8 @@ export default function Quotations() {
     const companyName = settings?.company_name ?? '';
     const vars: Record<string, string> = {
       quotation_number: q.quotation_number,
-      customer_name: q.customer_name ?? '',
-      customer_email: q.customer_email ?? '',
+      customer_name: q.customer?.name ?? q.customer_name ?? '',
+      customer_email: liveEmail,
       quotation_date: q.quotation_date ? formatDate(q.quotation_date) : '',
       valid_until: q.valid_until ? formatDate(q.valid_until) : '',
       grand_total: formatCurrency(q.discount_enabled ? (q.final_payable_amount ?? q.grand_total) : q.grand_total),
@@ -484,7 +484,7 @@ export default function Quotations() {
       ? Object.entries(vars).reduce((s, [k, v]) => s.split(`{{${k}}}`).join(v), emailSet.email_body)
       : `Dear ${q.customer_name ?? ''},\n\nPlease find attached our quotation ${q.quotation_number}.\n\nRegards,\n${companyName}`;
     setEmailForm({
-      recipient: q.customer_email,
+      recipient: liveEmail,
       cc: emailSet?.cc_email ?? '',
       bcc: emailSet?.bcc_email ?? '',
       subject,
@@ -501,31 +501,32 @@ export default function Quotations() {
     }
     setEmailSending(true);
     try {
-      const { data: session } = await supabase.auth.getSession();
-      const token = session.session?.access_token;
-      if (!token) {
-        show('Authentication required to send email.', 'error');
-        setEmailSending(false);
-        return;
-      }
-      const response = await fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/send-quotation-email`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`,
-        },
-        body: JSON.stringify({
+      const { data, error } = await supabase.functions.invoke('send-quotation-email', {
+        body: {
           quotationId: emailQuotation.id,
           recipientEmail: emailForm.recipient,
           ccEmail: emailForm.cc || undefined,
           bccEmail: emailForm.bcc || undefined,
           emailSubject: emailForm.subject,
           emailBody: emailForm.body,
-        }),
+        },
       });
-      const result = await response.json();
-      if (!response.ok) {
-        throw new Error(result.error || 'Failed to send email');
+      if (error) {
+        // supabase-js's `error.message` for a non-2xx response is just the generic
+        // "Edge Function returned a non-2xx status code" — the actual server-provided
+        // reason lives in the response body, reachable via error.context.
+        let msg = error.message || 'Failed to send email';
+        if (error.context && typeof error.context.json === 'function') {
+          try {
+            const errBody = await error.context.json();
+            if (errBody?.error) msg = errBody.error;
+          } catch { /* fall through to default */ }
+        }
+        throw new Error(msg);
+      }
+      const result = data as { error?: string; success?: boolean };
+      if (result?.error) {
+        throw new Error(result.error);
       }
       show('Quotation email sent successfully.', 'success');
       setEmailModalOpen(false);

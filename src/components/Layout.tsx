@@ -160,7 +160,7 @@ export function Layout({ currentPath, onNavigate, children }: LayoutProps) {
       {/* Logo / Company Name */}
       <div className={classNames('flex items-center border-b border-slate-800 flex-shrink-0 h-16', collapsed ? 'justify-center px-2' : 'gap-3 px-5')}>
         <div className="w-9 h-9 rounded-lg flex items-center justify-center flex-shrink-0 overflow-hidden bg-white">
-          <img src={settings?.logo_url ?? '/coreone.png'} alt="Logo" className="w-full h-full object-contain" />
+          <img src="/coreone_icon_.png" alt="Logo" className="w-full h-full object-contain" />
         </div>
         {!collapsed && (
           <div className="min-w-0 overflow-hidden">

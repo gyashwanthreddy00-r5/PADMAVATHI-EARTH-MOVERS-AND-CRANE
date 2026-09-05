@@ -458,6 +458,7 @@ export interface InvoiceVehicleSession {
   closing_hour_meter: number | null;
   duration_minutes: number;
   remarks: string | null;
+  rate_type: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -673,6 +674,7 @@ export interface Quotation {
   updated_at: string;
   quotation_amount: number;
   service_amount_enabled: boolean;
+  customer?: Pick<Customer, 'id' | 'name' | 'email' | 'phone'> | null;
 }
 
 export interface QuotationEquipment {

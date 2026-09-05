@@ -7,14 +7,14 @@ import { DataTable, type Column } from '@/components/ui/DataTable';
 import { Modal, ConfirmDialog, StatusBadge, Button, Field, inputClass, LoadingSpinner } from '@/components/ui/common';
 import {
   Plus, Printer, Eye, FileText,
-  CheckCircle2, ArrowLeft, FileSpreadsheet, IndianRupee, X, Trash2,
+  CheckCircle2, ArrowLeft, IndianRupee, X, Trash2,
   Search, Mail, Bell, Send, RotateCw, Zap, ChevronRight,
 } from 'lucide-react';
 import {
-  formatCurrency, formatDate, amountInWords, todayISO, exportToExcelWithCompany, buildInvoiceLineDescription,
+  formatCurrency, formatDate, amountInWords, todayISO, buildInvoiceLineDescription,
 } from '@/lib/utils';
-import { exportToExcelProfessional } from '@/lib/excelExport';
 import { invoiceDocHTML, type PrintCopyType } from '@/components/InvoiceDocument';
+import { generateInvoicePdfFromData } from '@/lib/invoicePdf';
 import { calculateDiscount, validateDiscountPercentage } from '@/lib/discountCalc';
 import { useAuth } from '@/context/AuthContext';
 import { TripEntryForm, type MultiVehicleTripFormData, type VehicleEntryData } from '@/components/TripEntryForm';
@@ -390,11 +390,15 @@ export default function Invoices({ initialTab = 'list' }: InvoicesProps = {}) {
       // Recalculate line items for GST
       const rebuiltLineItems: { sl_no: number; description: string; hsn_sac: string; quantity: number; rate: number; unit: string; amount: number; batha: number; calculation_details: string }[] = [];
       formData.vehicles.forEach((ve, idx) => {
+        const firstSessionDate = ve.sessions && ve.sessions.length > 0 && ve.sessions[0].in_time
+          ? ve.sessions[0].in_time
+          : formData.trip_date;
         const tr = {
           rate_type: ve.rate_type,
           total_hours: ve.total_hours,
           rental_amount: ve.rental_amount,
           trip_date: formData.trip_date,
+          work_date: firstSessionDate,
           place_of_work: ve.place_of_work || formData.place_of_work,
           capacity_tons: ve.capacity_tons,
           first_hour_rate: ve.first_hour_rate,
@@ -627,36 +631,92 @@ export default function Invoices({ initialTab = 'list' }: InvoicesProps = {}) {
     setPrintCopyItems(items);
   };
 
+  const printInIframe = (html: string) => {
+    const iframe = document.createElement('iframe');
+    iframe.style.position = 'fixed';
+    iframe.style.right = '0';
+    iframe.style.bottom = '0';
+    iframe.style.width = '0';
+    iframe.style.height = '0';
+    iframe.style.border = 'none';
+    iframe.style.visibility = 'hidden';
+    document.body.appendChild(iframe);
+
+    const doc = iframe.contentWindow?.document;
+    if (!doc) {
+      document.body.removeChild(iframe);
+      show('Unable to open print dialog', 'error');
+      return;
+    }
+
+    doc.open();
+    doc.write(html);
+    doc.close();
+
+    iframe.onload = () => {
+      setTimeout(() => {
+        try {
+          iframe.contentWindow?.focus();
+          iframe.contentWindow?.print();
+        } catch {
+          show('Unable to open print dialog', 'error');
+        }
+        setTimeout(() => {
+          if (iframe.parentNode) document.body.removeChild(iframe);
+        }, 1000);
+      }, 350);
+    };
+  };
+
+  const combineInvoiceCopiesHTML = (docs: string[]): string => {
+    const head = docs[0].match(/<head>[\s\S]*?<\/head>/)?.[0] ?? '<head></head>';
+    const bodies = docs.map(html => html.match(/<body>([\s\S]*?)<\/body>/)?.[1] ?? '');
+    const pages = bodies
+      .map((body, idx) => `<div style="${idx < bodies.length - 1 ? 'page-break-after: always; break-after: page;' : ''}">${body}</div>`)
+      .join('');
+    return `<!DOCTYPE html><html>${head}<body>${pages}</body></html>`;
+  };
+
   const doPrint = (inv: InvoiceWithRelations, items: InvoiceItem[], copyType: PrintCopyType) => {
     if (copyType === 'all') {
-      (['master', 'duplicate', 'extra'] as const).forEach((ct, idx) => {
-        setTimeout(() => {
-          const win = window.open('', '_blank');
-          if (!win) { show('Please allow popups to print', 'error'); return; }
-          const html = invoiceDocHTML(inv, items, settings, invoiceSettings, ct);
-          win.document.write(html.replace('</body></html>', '<script>window.onload = () => { window.print(); }</script></body></html>'));
-          win.document.close();
-        }, idx * 500);
-      });
+      const docs = (['master', 'duplicate', 'extra'] as const).map(ct =>
+        invoiceDocHTML(inv, items, settings, invoiceSettings, ct)
+      );
+      const combinedHtml = combineInvoiceCopiesHTML(docs);
+      printInIframe(combinedHtml);
     } else {
-      const win = window.open('', '_blank');
-      if (!win) { show('Please allow popups to print', 'error'); return; }
       const html = invoiceDocHTML(inv, items, settings, invoiceSettings, copyType);
-      win.document.write(html.replace('</body></html>', '<script>window.onload = () => { window.print(); }</script></body></html>'));
-      win.document.close();
+      printInIframe(html);
     }
   };
 
+  const generateInvoicePdfBase64 = async (inv: InvoiceWithRelations, items: InvoiceItem[]): Promise<string> => {
+    // Drawn directly with pdf-lib from the same prepared invoice data the Master
+    // Copy print view renders (see src/lib/invoiceDocData.ts) — this is the only
+    // PDF generation source for invoices, so the email attachment always matches
+    // the print Master Copy exactly, instead of a separate (and previously stale)
+    // html2pdf.js screenshot pipeline.
+    const bytes = await generateInvoicePdfFromData(inv, items, settings, invoiceSettings, 'master');
+    let binary = '';
+    const chunkSize = 8192;
+    for (let i = 0; i < bytes.length; i += chunkSize) {
+      const chunk = bytes.subarray(i, i + chunkSize);
+      binary += String.fromCharCode(...chunk);
+    }
+    return btoa(binary);
+  };
+
   const sendEmail = async (inv: InvoiceWithRelations) => {
-    const email = inv.customer_email ?? inv.customer?.email;
+    const email = inv.customer?.email ?? inv.customer_email;
     if (!email) {
       show('This customer does not have an email address configured. Please add an email in Customer Master.', 'error');
       return;
     }
     setEmailSending(true);
     try {
+      const pdfBase64 = await generateInvoicePdfBase64(inv, inv.items ?? []);
       const { data, error } = await supabase.functions.invoke('send-invoice-email', {
-        body: { invoiceId: inv.id },
+        body: { invoiceId: inv.id, pdfBase64 },
       });
       if (error) {
         let msg = 'Unable to send invoice. Please try again.';
@@ -693,15 +753,16 @@ export default function Invoices({ initialTab = 'list' }: InvoicesProps = {}) {
   };
 
   const sendReminder = async (inv: InvoiceWithRelations, stage: number) => {
-    const email = inv.customer_email ?? inv.customer?.email;
+    const email = inv.customer?.email ?? inv.customer_email;
     if (!email) {
       show('Customer email address is missing. Please add an email in Customer Master.', 'error');
       return;
     }
     setReminderSending(true);
     try {
+      const pdfBase64 = await generateInvoicePdfBase64(inv, inv.items ?? []);
       const { data, error } = await supabase.functions.invoke('process-reminders', {
-        body: { action: 'send_manual', invoiceId: inv.id, reminderStage: stage },
+        body: { action: 'send_manual', invoiceId: inv.id, reminderStage: stage, pdfBase64 },
       });
       if (error) {
         let msg = 'Unable to send reminder. Please try again.';
@@ -736,51 +797,6 @@ export default function Invoices({ initialTab = 'list' }: InvoicesProps = {}) {
         body: { action: 'schedule', invoiceId },
       });
     } catch { /* non-blocking */ }
-  };
-
-  const exportInvoiceExcel = (inv: InvoiceWithRelations, items: InvoiceItem[]) => {
-    const headers = [
-      'Invoice Number', 'Invoice Date', 'Reference No.', 'Customer', 'GSTIN',
-      'Trip Date', 'Vehicle Type', 'Vehicle Number', 'Session Count', 'Driver',
-      'Place of Work', 'Description', 'HSN/SAC',
-      'Quantity', 'Rate', 'Amount', 'Operator Batha',
-      'Taxable Amount', 'CGST', 'SGST', 'IGST', 'Total Tax', 'Grand Total',
-      'Received Amount', 'Balance Amount',
-    ];
-    const rentalItem = items.find(it => !it.description?.toUpperCase().includes('BATHA')) ?? items[0];
-    const bathaItem = items.find(it => it.description?.toUpperCase().includes('BATHA'));
-    const bathaAmt = bathaItem ? Number(bathaItem.amount) : (Number(inv.batha) || 0);
-    const rentalAmt = Number(rentalItem?.amount) || 0;
-    const rebuilt = rentalItem?.trip ? buildInvoiceLineDescription(rentalItem.trip) : null;
-    const rows: (string | number)[][] = [[
-      inv.invoice_number ?? '-', formatDate(inv.invoice_date), inv.reference_no ?? '',
-      inv.customer_name ?? inv.customer?.name ?? '', inv.customer_gstin ?? inv.customer?.gstin ?? '',
-      formatDate(inv.trip_date ?? inv.invoice_date),
-      (inv.invoiceVehicles ?? []).map(v => v.vehicle_type).filter(Boolean).join(', ') || (inv.vehicle_type ?? ''),
-      inv.motor_vehicle_numbers ?? '',
-      (inv.items?.length ?? 1) > 1 ? inv.items!.length : 1,
-      inv.driver_name ?? '',
-      inv.place_of_work ?? '',
-      rebuilt ? rebuilt.description : (rentalItem?.description ?? ''), rentalItem?.hsn_sac ?? '997319',
-      rentalItem?.quantity ?? 1, rentalAmt, rentalAmt, bathaAmt,
-      inv.taxable_amount, inv.cgst_amount, inv.sgst_amount, inv.igst_amount, inv.total_gst, inv.grand_total,
-      inv.amount_received, Math.max(0, Number(inv.grand_total) - Number(inv.amount_received)),
-    ]];
-    rows.push([
-      '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '',
-      inv.taxable_amount, inv.cgst_amount, inv.sgst_amount, inv.igst_amount, inv.total_gst, inv.grand_total,
-      inv.amount_received, Math.max(0, Number(inv.grand_total) - Number(inv.amount_received)),
-    ]);
-    exportToExcelProfessional(
-      `Invoice_${inv.invoice_number ?? 'draft'}.xls`, 'GST Tax Invoice',
-      settings ? { company_name: settings.company_name, address: settings.address, phone: settings.phone, email: settings.email, gstin: settings.gstin } : { company_name: 'Crane ERP' },
-      formatDate(inv.invoice_date), headers, rows,
-      [inv.taxable_amount, inv.cgst_amount, inv.sgst_amount, inv.igst_amount, inv.total_gst, inv.grand_total,
-       inv.amount_received, Math.max(0, Number(inv.grand_total) - Number(inv.amount_received))],
-      [13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24],
-      [],
-      [8],
-    );
   };
 
   const viewInvoiceData = useMemo(() => {
@@ -832,7 +848,6 @@ export default function Invoices({ initialTab = 'list' }: InvoicesProps = {}) {
             ) : (
               <>
                 <button onClick={() => openPrintCopyModal(i, i.items ?? [])} className="p-1.5 text-slate-500 hover:text-blue-600 hover:bg-blue-50 rounded-md" title="Print"><Printer className="w-4 h-4" /></button>
-                <button onClick={() => exportInvoiceExcel(i, i.items ?? [])} className="p-1.5 text-slate-500 hover:text-emerald-600 hover:bg-emerald-50 rounded-md" title="Excel"><FileSpreadsheet className="w-4 h-4" /></button>
                 <button onClick={() => sendEmail(i)} className="p-1.5 text-slate-500 hover:text-purple-600 hover:bg-purple-50 rounded-md" title="Email"><Mail className="w-4 h-4" /></button>
                 <button onClick={() => { setReminderStageModal(i); setReminderConfirmStage(null); }} className="p-1.5 text-slate-500 hover:text-amber-600 hover:bg-amber-50 rounded-md" title="Send Reminder"><Bell className="w-4 h-4" /></button>
                 {i.invoice_status !== 'Cancelled' && i.invoice_status !== 'Paid' && (
@@ -1095,9 +1110,6 @@ export default function Invoices({ initialTab = 'list' }: InvoicesProps = {}) {
                     <Button variant="outline" onClick={() => openPrintCopyModal(viewInvoiceData.invoice, viewInvoiceData.items)}>
                       <Printer className="w-4 h-4" />{t('print')}
                     </Button>
-                    <Button variant="outline" onClick={() => exportInvoiceExcel(viewInvoiceData.invoice, viewInvoiceData.items)}>
-                      <FileSpreadsheet className="w-4 h-4" />{t('export')}
-                    </Button>
                     <Button variant="outline" onClick={() => sendEmail(viewInvoiceData.invoice)} disabled={emailSending}>
                       <Mail className="w-4 h-4" />{emailSending ? 'Sending...' : 'Email'}
                     </Button>
@@ -1157,38 +1169,6 @@ export default function Invoices({ initialTab = 'list' }: InvoicesProps = {}) {
               <div><span className="text-slate-500 font-medium">Vehicles: </span><span className="font-medium text-slate-700">{getVehicleDisplay(viewInvoiceData.invoice)}</span></div>
               <div><span className="text-slate-500 font-medium">Place of Work: </span><span className="font-medium text-slate-700">{viewInvoiceData.invoice.place_of_work ?? '-'}</span></div>
             </div>
-
-            {/* Vehicle details table */}
-            {(viewInvoiceData.invoice.invoiceVehicles ?? []).length > 0 && (
-              <div className="overflow-x-auto">
-                <table className="w-full text-sm border border-slate-200">
-                  <thead>
-                    <tr className="bg-slate-100 text-xs uppercase text-slate-600">
-                      <th className="text-left px-3 py-2 border-b border-slate-200">Vehicle</th>
-                      <th className="text-left px-3 py-2 border-b border-slate-200">Driver</th>
-                      <th className="text-center px-3 py-2 border-b border-slate-200">Sessions</th>
-                      <th className="text-right px-3 py-2 border-b border-slate-200">Hours</th>
-                      <th className="text-right px-3 py-2 border-b border-slate-200">Rental</th>
-                      <th className="text-right px-3 py-2 border-b border-slate-200">Batha</th>
-                      <th className="text-right px-3 py-2 border-b border-slate-200">Total</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {(viewInvoiceData.invoice.invoiceVehicles ?? []).map(v => (
-                      <tr key={v.id}>
-                        <td className="px-3 py-2 border-b border-slate-100">{v.vehicle_type ?? ''} {v.vehicle_number ?? '-'}</td>
-                        <td className="px-3 py-2 border-b border-slate-100">{v.driver_name ?? '-'}</td>
-                        <td className="text-center px-3 py-2 border-b border-slate-100">{v.sessions?.length ?? 0}</td>
-                        <td className="text-right px-3 py-2 border-b border-slate-100">{v.total_hours ? formatDurationShort(Number(v.total_hours)) : '-'}</td>
-                        <td className="text-right px-3 py-2 border-b border-slate-100">{formatCurrency(Number(v.rental_amount))}</td>
-                        <td className="text-right px-3 py-2 border-b border-slate-100">{formatCurrency(Number(v.batha))}</td>
-                        <td className="text-right px-3 py-2 border-b border-slate-100 font-medium">{formatCurrency(Number(v.vehicle_total))}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            )}
 
             {viewReminders.length > 0 && (
               <details className="text-sm">
@@ -1448,7 +1428,7 @@ export default function Invoices({ initialTab = 'list' }: InvoicesProps = {}) {
       >
         {reminderStageModal && (
           <div className="space-y-3">
-            <p className="text-sm text-slate-600">Select a reminder stage to send to <strong>{reminderStageModal.customer_email ?? reminderStageModal.customer?.email ?? 'No email on file'}</strong>.</p>
+            <p className="text-sm text-slate-600">Select a reminder stage to send to <strong>{reminderStageModal.customer?.email ?? reminderStageModal.customer_email ?? 'No email on file'}</strong>.</p>
             {reminderConfirmStage == null ? (
               <div className="space-y-2">
                 {[1, 10, 20].map(stage => (
@@ -1464,7 +1444,7 @@ export default function Invoices({ initialTab = 'list' }: InvoicesProps = {}) {
               </div>
             ) : (
               <div className="p-3 bg-amber-50 rounded-lg border border-amber-100 text-sm">
-                <p>Send Day {reminderConfirmStage} reminder to <strong>{reminderStageModal.customer_email ?? reminderStageModal.customer?.email ?? 'No email on file'}</strong>?</p>
+                <p>Send Day {reminderConfirmStage} reminder to <strong>{reminderStageModal.customer?.email ?? reminderStageModal.customer_email ?? 'No email on file'}</strong>?</p>
               </div>
             )}
           </div>

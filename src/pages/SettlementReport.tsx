@@ -13,6 +13,12 @@ import {
 } from '@/lib/utils';
 import { DatePicker } from '@/components/ui/DatePicker';
 import { invoiceDocHTML } from '@/components/InvoiceDocument';
+
+let html2pdfLoader: Promise<typeof import('html2pdf.js')['default']> | null = null;
+async function getHtml2pdf() {
+  if (!html2pdfLoader) html2pdfLoader = import('html2pdf.js').then(m => (m as typeof import('html2pdf.js')).default);
+  return html2pdfLoader;
+}
 import type {
   InvoiceWithRelations, InvoiceItem, InvoicePayment,
   InvoiceSettings, PaymentMode, InvoiceStatus,
@@ -171,7 +177,7 @@ export default function SettlementReport() {
         last_payment_date: lastPaymentDate,
         payments: sortedPayments,
         items,
-        customer_email: inv.customer_email ?? inv.customer?.email ?? null,
+        customer_email: inv.customer?.email ?? inv.customer_email ?? null,
         customer: inv.customer
           ? { name: inv.customer.name, email: inv.customer.email ?? null }
           : null,
@@ -343,17 +349,81 @@ export default function SettlementReport() {
     win.document.close();
   };
 
+  const generateInvoicePdfBase64 = async (inv: InvoiceWithRelations, items: InvoiceItem[]): Promise<string> => {
+    const html = invoiceDocHTML(inv, items, settings, invoiceSettings, 'master');
+    const iframe = document.createElement('iframe');
+    iframe.style.position = 'fixed';
+    iframe.style.left = '-9999px';
+    iframe.style.top = '0';
+    iframe.style.width = '190mm';
+    iframe.style.height = '277mm';
+    iframe.style.border = 'none';
+    document.body.appendChild(iframe);
+
+    const iframeDoc = iframe.contentWindow?.document;
+    if (!iframeDoc) {
+      if (iframe.parentNode) document.body.removeChild(iframe);
+      throw new Error('Unable to create PDF document');
+    }
+
+    iframeDoc.open();
+    iframeDoc.write(html);
+    iframeDoc.close();
+
+    const emailStyles = iframeDoc.createElement('style');
+    emailStyles.textContent = `
+      html, body { width: 718px !important; min-width: 718px !important; margin: 0 !important; }
+      .inv { width: 718px !important; max-width: 718px !important; margin: 0 !important; }
+      .tax-break, .sign, .bot { break-inside: avoid; page-break-inside: avoid; }
+    `;
+    iframeDoc.head.appendChild(emailStyles);
+
+    await new Promise(resolve => { iframe.onload = resolve; });
+    await new Promise(resolve => setTimeout(resolve, 500));
+    try {
+      await (iframe.contentWindow as any).document.fonts.ready;
+    } catch { /* fonts API unavailable, proceed */ }
+    await new Promise(resolve => setTimeout(resolve, 500));
+
+    const target = iframeDoc.body;
+    const opt = {
+      margin: [10, 10, 10, 10] as [number, number, number, number],
+      filename: `Invoice_${inv.invoice_number ?? 'draft'}.pdf`,
+      image: { type: 'png', quality: 1.0 },
+      html2canvas: { scale: 2, width: 718, windowWidth: 718, useCORS: true, logging: false, backgroundColor: '#ffffff' },
+      pagebreak: { mode: ['css', 'legacy'] as const },
+      jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' as const },
+    };
+
+    try {
+      const html2pdf = await getHtml2pdf();
+      const blob: Blob = await html2pdf().set(opt).from(target).outputPdf('blob');
+      const arrayBuffer = await blob.arrayBuffer();
+      const bytes = new Uint8Array(arrayBuffer);
+      let binary = '';
+      const chunkSize = 8192;
+      for (let i = 0; i < bytes.length; i += chunkSize) {
+        const chunk = bytes.subarray(i, i + chunkSize);
+        binary += String.fromCharCode(...chunk);
+      }
+      return btoa(binary);
+    } finally {
+      if (iframe.parentNode) document.body.removeChild(iframe);
+    }
+  };
+
   // Email
   const sendEmail = async (inv: InvoiceWithRelations) => {
-    const email = inv.customer_email ?? inv.customer?.email;
+    const email = inv.customer?.email ?? inv.customer_email;
     if (!email) {
       show('This customer does not have an email address configured. Please add an email in Customer Master.', 'error');
       return;
     }
     setEmailSending(true);
     try {
+      const pdfBase64 = await generateInvoicePdfBase64(inv, inv.items ?? []);
       const { data, error } = await supabase.functions.invoke('send-invoice-email', {
-        body: { invoiceId: inv.id },
+        body: { invoiceId: inv.id, pdfBase64 },
       });
       if (error) {
         let msg = 'Unable to send invoice. Please try again.';

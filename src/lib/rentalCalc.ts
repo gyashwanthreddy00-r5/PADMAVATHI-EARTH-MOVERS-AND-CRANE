@@ -7,6 +7,7 @@ export interface SessionInput {
   opening_hour_meter: number | null;
   closing_hour_meter: number | null;
   remarks?: string | null;
+  rate_type?: RateType | null;
 }
 
 export interface SessionResult extends SessionInput {
@@ -288,16 +289,17 @@ export function calcRental(
 
   const sessionResults: SessionResult[] = sessions.map((s, idx) => {
     const minutes = calcSessionMinutes(s);
+    const sRateType = s.rate_type ?? rateType;
     let sessionAmount = 0;
     let sessionBd = '';
 
-    if (rateType === 'Daily') {
+    if (sRateType === 'Daily') {
       sessionAmount = dailyRate;
       sessionBd = `Full Day Rate = ${formatCurrency(dailyRate)}`;
-    } else if (rateType === 'Monthly') {
+    } else if (sRateType === 'Monthly') {
       sessionAmount = monthlyRate;
       sessionBd = `Monthly Rate = ${formatCurrency(monthlyRate)}`;
-    } else if (rateType === 'Weekly') {
+    } else if (sRateType === 'Weekly') {
       sessionAmount = weeklyRate;
       sessionBd = `Weekly Rate = ${formatCurrency(weeklyRate)}`;
     } else {
@@ -319,18 +321,7 @@ export function calcRental(
   const totalMinutes = sessionResults.reduce((sum, s) => sum + s.duration_minutes, 0);
   const totalHours = round2(totalMinutes / 60);
 
-  let rentalAmount: number;
-  if (rateType === 'Daily') {
-    // For Daily/Monthly/Weekly with multiple sessions, each session gets the flat rate
-    rentalAmount = round2(sessionResults.reduce((sum, s) => sum + s.session_amount, 0));
-  } else if (rateType === 'Monthly') {
-    rentalAmount = round2(sessionResults.reduce((sum, s) => sum + s.session_amount, 0));
-  } else if (rateType === 'Weekly') {
-    rentalAmount = round2(sessionResults.reduce((sum, s) => sum + s.session_amount, 0));
-  } else {
-    // Hourly: sum of per-session amounts
-    rentalAmount = round2(sessionResults.reduce((sum, s) => sum + s.session_amount, 0));
-  }
+  const rentalAmount = round2(sessionResults.reduce((sum, s) => sum + s.session_amount, 0));
 
   const bathaAmount = round2(batha);
   const upTransport = round2(transportation?.up_enabled ? Number(transportation.up_amount) || 0 : 0);
@@ -417,27 +408,25 @@ function formatSessionTime(s: SessionResult): string {
 
 export function validateSessions(sessions: SessionInput[], rateType?: RateType): string[] {
   const errors: string[] = [];
-  const skipTimeValidation = rateType === 'Daily' || rateType === 'Weekly' || rateType === 'Monthly';
-  const validSessions = skipTimeValidation
-    ? sessions
-    : sessions.filter(s => s.in_time || s.out_time || s.opening_hour_meter != null || s.closing_hour_meter != null);
+  const skipTimeValidation = (rt?: RateType | null) => rt === 'Daily' || rt === 'Weekly' || rt === 'Monthly';
+  const validSessions = sessions.filter(s => s.in_time || s.out_time || s.opening_hour_meter != null || s.closing_hour_meter != null);
 
-  if (validSessions.length === 0 && !skipTimeValidation) {
+  if (validSessions.length === 0 && !skipTimeValidation(rateType)) {
     errors.push('At least one session is required.');
   }
 
-  if (!skipTimeValidation) {
-    validSessions.forEach((s, idx) => {
-      if (!s.in_time) errors.push(`Session ${idx + 1}: In-Time is required.`);
-      if (!s.out_time) errors.push(`Session ${idx + 1}: Out-Time is required.`);
-      if (s.in_time && s.out_time && new Date(s.out_time).getTime() < new Date(s.in_time).getTime()) {
-        errors.push(`Session ${idx + 1}: Out-Time cannot be before In-Time.`);
-      }
-      if (s.opening_hour_meter != null && s.closing_hour_meter != null && Number(s.closing_hour_meter) < Number(s.opening_hour_meter)) {
-        errors.push(`Session ${idx + 1}: Closing Hour Meter cannot be less than Opening Hour Meter.`);
-      }
-    });
-  }
+  sessions.forEach((s, idx) => {
+    const sRateType = s.rate_type ?? rateType;
+    if (skipTimeValidation(sRateType)) return;
+    if (!s.in_time) errors.push(`Session ${idx + 1}: In-Time is required.`);
+    if (!s.out_time) errors.push(`Session ${idx + 1}: Out-Time is required.`);
+    if (s.in_time && s.out_time && new Date(s.out_time).getTime() < new Date(s.in_time).getTime()) {
+      errors.push(`Session ${idx + 1}: Out-Time cannot be before In-Time.`);
+    }
+    if (s.opening_hour_meter != null && s.closing_hour_meter != null && Number(s.closing_hour_meter) < Number(s.opening_hour_meter)) {
+      errors.push(`Session ${idx + 1}: Closing Hour Meter cannot be less than Opening Hour Meter.`);
+    }
+  });
 
   return errors;
 }

@@ -19,8 +19,8 @@ import type {
   MonthlyContract,
 } from '@/types';
 
-function emptySession(): SessionInput {
-  return { in_time: null, out_time: null, opening_hour_meter: null, closing_hour_meter: null, remarks: '' };
+function emptySession(rateType: RateType = 'Hourly'): SessionInput {
+  return { in_time: null, out_time: null, opening_hour_meter: null, closing_hour_meter: null, remarks: '', rate_type: rateType };
 }
 
 export type VehicleTypeFilter = 'Crane' | 'JCB';
@@ -99,7 +99,7 @@ function createEmptyVehicle(): VehicleEntryData {
     rate_type: 'Hourly',
     tons: '',
     vehicle_type_filter: 'Crane',
-    sessions: [emptySession()],
+    sessions: [emptySession('Hourly')],
     batha: 0,
     total_hours: 0,
     rental_amount: 0,
@@ -153,7 +153,7 @@ export function TripEntryForm({
     initialData?.vehicles?.length ? initialData.vehicles.map(v => ({
       ...v,
       vehicle_type_filter: v.vehicle_type_filter ?? (v.vehicle_type === 'JCB' ? 'JCB' : 'Crane' as VehicleTypeFilter),
-      sessions: v.sessions?.length ? v.sessions : [emptySession()],
+      sessions: v.sessions?.length ? v.sessions.map(s => ({ ...s, rate_type: s.rate_type ?? v.rate_type ?? 'Hourly' })) : [emptySession(v.rate_type ?? 'Hourly')],
     })) : [createEmptyVehicle()]
   );
   const [collapsedVehicles, setCollapsedVehicles] = useState<Set<number>>(new Set());
@@ -291,7 +291,14 @@ export function TripEntryForm({
   };
 
   const onVehicleRateTypeChange = (idx: number, rateType: RateType) => {
-    updateVehicleEntry(idx, { rate_type: rateType });
+    setVehicleEntries(prev => prev.map((ve, i) => {
+      if (i !== idx) return ve;
+      const lastSession = ve.sessions[ve.sessions.length - 1];
+      if (ve.sessions.length === 1 && lastSession && (!lastSession.in_time && !lastSession.out_time && !lastSession.opening_hour_meter && !lastSession.closing_hour_meter && !lastSession.remarks)) {
+        return { ...ve, rate_type: rateType, sessions: [{ ...lastSession, rate_type: rateType }] };
+      }
+      return { ...ve, rate_type: rateType };
+    }));
   };
 
   const updateVehicleSession = (vIdx: number, sIdx: number, patch: Partial<SessionInput>) => {
@@ -303,7 +310,12 @@ export function TripEntryForm({
   };
 
   const addVehicleSession = (vIdx: number) => {
-    setVehicleEntries(prev => prev.map((ve, i) => i === vIdx ? { ...ve, sessions: [...ve.sessions, emptySession()] } : ve));
+    setVehicleEntries(prev => prev.map((ve, i) => {
+      if (i !== vIdx) return ve;
+      const lastSession = ve.sessions[ve.sessions.length - 1];
+      const defaultRateType = lastSession?.rate_type ?? ve.rate_type;
+      return { ...ve, sessions: [...ve.sessions, emptySession(defaultRateType)] };
+    }));
   };
 
   const removeVehicleSession = (vIdx: number, sIdx: number) => {
@@ -578,7 +590,15 @@ export function TripEntryForm({
                           )}
                         </div>
                         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2">
-                          {(ve.rate_type === 'Hourly') && (
+                          <Field label={t('rateType')}>
+                            <select className={inputClass()} value={ve.sessions[sIdx].rate_type ?? ve.rate_type} onChange={e => updateVehicleSession(vIdx, sIdx, { rate_type: e.target.value as RateType })}>
+                              <option value="Hourly">Hourly</option>
+                              <option value="Daily">Full Day</option>
+                              <option value="Weekly">Weekly</option>
+                              <option value="Monthly">Monthly</option>
+                            </select>
+                          </Field>
+                          {((ve.sessions[sIdx].rate_type ?? ve.rate_type) === 'Hourly') && (
                             <>
                               <Field label={t('inTime')} required>
                                 <DateTimePicker value={ve.sessions[sIdx].in_time ?? ''} onChange={v => updateVehicleSession(vIdx, sIdx, { in_time: v || null })} />
@@ -594,11 +614,11 @@ export function TripEntryForm({
                               </Field>
                             </>
                           )}
-                          {ve.rate_type !== 'Hourly' && (
+                          {((ve.sessions[sIdx].rate_type ?? ve.rate_type) !== 'Hourly') && (
                             <div className="col-span-full text-sm text-slate-500">
-                              {ve.rate_type === 'Daily' && `Full Day Rate: ${formatCurrency(calcResult.rental_amount)}`}
-                              {ve.rate_type === 'Weekly' && `Weekly Rate: ${formatCurrency(calcResult.rental_amount)}`}
-                              {ve.rate_type === 'Monthly' && `Monthly Rate: ${formatCurrency(calcResult.rental_amount)}`}
+                              {(ve.sessions[sIdx].rate_type ?? ve.rate_type) === 'Daily' && `Full Day Rate: ${formatCurrency(session.session_amount)}`}
+                              {(ve.sessions[sIdx].rate_type ?? ve.rate_type) === 'Weekly' && `Weekly Rate: ${formatCurrency(session.session_amount)}`}
+                              {(ve.sessions[sIdx].rate_type ?? ve.rate_type) === 'Monthly' && `Monthly Rate: ${formatCurrency(session.session_amount)}`}
                             </div>
                           )}
                         </div>

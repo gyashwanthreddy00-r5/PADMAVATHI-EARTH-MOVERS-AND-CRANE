@@ -237,6 +237,7 @@ export default function CashBills() {
           closing_hour_meter: s.closing_hour_meter ?? null,
           remarks: s.remarks ?? null,
           duration_minutes: 0,
+          rate_type: s.rate_type ?? ve.rate_type ?? 'Hourly',
         }));
         const { error: sessErr } = await supabase.from('invoice_vehicle_sessions').insert(sessionRows);
         if (sessErr) console.error('Session save error:', sessErr);
@@ -352,10 +353,44 @@ export default function CashBills() {
     return calcPayStatus(getTotalPaid(inv), getPayableAmount(inv));
   };
 
-  const printReceipt = (inv: InvoiceWithRelations) => {
-    const win = window.open('', '_blank');
-    if (!win) { show('Please allow popups to print', 'error'); return; }
+  const printInIframe = (html: string) => {
+    const iframe = document.createElement('iframe');
+    iframe.style.position = 'fixed';
+    iframe.style.right = '0';
+    iframe.style.bottom = '0';
+    iframe.style.width = '0';
+    iframe.style.height = '0';
+    iframe.style.border = 'none';
+    iframe.style.visibility = 'hidden';
+    document.body.appendChild(iframe);
 
+    const doc = iframe.contentWindow?.document;
+    if (!doc) {
+      document.body.removeChild(iframe);
+      show('Unable to open print dialog', 'error');
+      return;
+    }
+
+    doc.open();
+    doc.write(html);
+    doc.close();
+
+    iframe.onload = () => {
+      setTimeout(() => {
+        try {
+          iframe.contentWindow?.focus();
+          iframe.contentWindow?.print();
+        } catch {
+          show('Unable to open print dialog', 'error');
+        }
+        setTimeout(() => {
+          if (iframe.parentNode) document.body.removeChild(iframe);
+        }, 1000);
+      }, 350);
+    };
+  };
+
+  const printReceipt = (inv: InvoiceWithRelations) => {
     const companyName = settings?.company_name ?? 'PADMAVATHI EARTH MOVERS AND CRANE SERVICES';
     const totalAmt = Number(inv.grand_total) || 0;
     const paidAmt = getTotalPaid(inv);
@@ -372,10 +407,78 @@ export default function CashBills() {
     const vehicles = inv.invoiceVehicles ?? [];
 
     const vehicleRows = vehicles.map(v => {
-      const hours = v.total_hours ? formatDuration(Number(v.total_hours)) : '-';
-      const label = v.vehicle_type ? `${v.vehicle_type} - ${v.vehicle_number ?? ''}` : (v.vehicle_number ?? '');
-      return `<tr><td>${label}</td><td style="text-align:center">${hours}</td><td style="text-align:right">${formatCurrency(Number(v.rental_amount))}</td><td style="text-align:right">${formatCurrency(Number(v.rental_amount))}</td></tr>
-<tr><td style="padding-left:16px;font-style:italic;color:#666">Operator Batha</td><td style="text-align:center">${hours}</td><td style="text-align:right">${formatCurrency(Number(v.batha))}</td><td style="text-align:right">${formatCurrency(Number(v.batha))}</td></tr>`;
+      const sessions = (v.sessions ?? []) as InvoiceVehicleSession[];
+      const vType = v.vehicle_type ?? '';
+      const capacity = v.capacity_tons ?? v.capacity ?? v.vehicle?.capacity ?? '';
+      let craneDesc = vType;
+      if (vType === 'JCB') {
+        craneDesc = 'JCB';
+      } else if (vType === 'Crane') {
+        const tonsNum = capacity ? String(capacity).replace(/[^0-9.]/g, '') : '';
+        craneDesc = tonsNum ? `${tonsNum} Ton Crane` : 'Crane';
+      }
+      const vNum = v.vehicle_number ?? v.vehicle?.registration_number ?? '';
+
+      if (sessions.length === 0) {
+        const hours = v.total_hours ? formatDuration(Number(v.total_hours)) : '-';
+        const rateType = (v.rate_type ?? 'Hourly') as string;
+        const isFlat = rateType === 'Daily' || rateType === 'Weekly' || rateType === 'Monthly';
+        const rateLabel = isFlat
+          ? formatCurrency(Number(v.rental_amount))
+          : `${formatCurrency(Number(v.first_hour_rate) || 0)}/Hr`;
+        return `<tr><td>${craneDesc}${vNum ? ' (' + vNum + ')' : ''}</td><td style="text-align:center">${hours}</td><td style="text-align:right">${rateLabel}</td><td style="text-align:right">${formatCurrency(Number(v.rental_amount))}</td></tr>`;
+      }
+
+      return sessions.map(s => {
+        const sRateType = (s.rate_type ?? v.rate_type ?? 'Hourly') as string;
+        const minutes = s.duration_minutes || 0;
+        const hours = minutes > 0 ? formatDuration(minutes / 60) : '-';
+        const rental = Number(v.rental_amount) || 0;
+        const batha = Number(v.batha) || 0;
+        const r1 = Number(v.first_hour_rate) || 0;
+        const r2 = Number(v.second_hour_rate) || 0;
+        const dailyRate = Number(v.daily_rate_snapshot) || 0;
+        const weeklyRate = Number(v.weekly_rate_snapshot) || 0;
+        const monthlyRate = Number(v.monthly_rate_snapshot) || 0;
+
+        let durationLabel = hours;
+        let rateLabel = '';
+        let sessionAmount = 0;
+
+        if (sRateType === 'Daily') {
+          const days = minutes > 0 ? Math.max(1, Math.round(minutes / (24 * 60))) : 1;
+          durationLabel = `${days} Day${days > 1 ? 's' : ''}`;
+          rateLabel = formatCurrency(dailyRate);
+          sessionAmount = dailyRate * days;
+        } else if (sRateType === 'Weekly') {
+          durationLabel = '1 Week';
+          rateLabel = formatCurrency(weeklyRate);
+          sessionAmount = weeklyRate;
+        } else if (sRateType === 'Monthly') {
+          durationLabel = '1 Month';
+          rateLabel = formatCurrency(monthlyRate);
+          sessionAmount = monthlyRate;
+        } else {
+          // Hourly
+          const fullHours = Math.floor(minutes / 60);
+          const remMin = minutes % 60;
+          if (fullHours >= 1) {
+            durationLabel = `${fullHours} Hr${remMin > 0 ? ' ' + remMin + ' Min' : ''}`;
+            rateLabel = `${formatCurrency(r1)}/Hr`;
+            sessionAmount = r1 + Math.max(0, fullHours - 1) * r2 + (remMin > 0 ? remMin * (r2 / 60) : 0);
+          } else if (minutes > 0) {
+            durationLabel = `${minutes} Min`;
+            rateLabel = `${formatCurrency(r1)}/Hr`;
+            sessionAmount = (minutes / 60) * r1;
+          } else {
+            durationLabel = '-';
+            rateLabel = `${formatCurrency(r1)}/Hr`;
+            sessionAmount = 0;
+          }
+        }
+
+        return `<tr><td>${craneDesc}${vNum ? ' (' + vNum + ')' : ''}</td><td style="text-align:center">${durationLabel}</td><td style="text-align:right">${rateLabel}</td><td style="text-align:right">${formatCurrency(Math.round(sessionAmount * 100) / 100)}</td></tr>`;
+      }).join('');
     }).join('');
 
     const transportRows: string[] = [];
@@ -443,7 +546,7 @@ export default function CashBills() {
     <div class="field"><span class="lbl">Place of Work:</span><span class="val">${inv.place_of_work ?? '-'}</span></div>
   </div>
   <table class="txn">
-    <thead><tr><th>Description</th><th class="c">Hours</th><th class="r">Rate</th><th class="r">Amount</th></tr></thead>
+    <thead><tr><th>Description</th><th class="c">Hours / Days</th><th class="r">Rate</th><th class="r">Amount</th></tr></thead>
     <tbody>${vehicleRows || '<tr><td colspan="4">No vehicles</td></tr>'}${transportRows.join('')}</tbody>
   </table>
   <div class="totals">
@@ -456,11 +559,9 @@ export default function CashBills() {
   <div class="pay-status">Payment Status: ${statusLabel}</div>
   ${paymentHistorySection}
   <div class="footer">Thank you for your business!</div>
-  <script>window.onload = () => { window.print(); }</script>
 </body>
 </html>`;
-    win.document.write(html);
-    win.document.close();
+    printInIframe(html);
   };
 
   const columns: Column<InvoiceWithRelations>[] = [
@@ -737,28 +838,93 @@ export default function CashBills() {
                 <thead>
                   <tr className="bg-slate-100 text-xs uppercase text-slate-600">
                     <th className="text-left px-3 py-2 border-b border-slate-200">Description</th>
-                    <th className="text-center px-3 py-2 border-b border-slate-200">Hours</th>
+                    <th className="text-center px-3 py-2 border-b border-slate-200">Hours / Days</th>
                     <th className="text-right px-3 py-2 border-b border-slate-200">Rate</th>
                     <th className="text-right px-3 py-2 border-b border-slate-200">Amount</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {vehicles.map(v => (
-                    <tr key={v.id}>
-                      <td className="px-3 py-2 border-b border-slate-100">{v.vehicle_type ?? ''} {v.vehicle_number ?? '-'}</td>
-                      <td className="text-center px-3 py-2 border-b border-slate-100">{v.total_hours ? formatDuration(Number(v.total_hours)) : '-'}</td>
-                      <td className="text-right px-3 py-2 border-b border-slate-100">{formatCurrency(Number(v.rental_amount))}</td>
-                      <td className="text-right px-3 py-2 border-b border-slate-100">{formatCurrency(Number(v.rental_amount))}</td>
-                    </tr>
-                  ))}
-                  {vehicles.map(v => (
-                    <tr key={`${v.id}-batha`}>
-                      <td className="px-3 py-2 border-b border-slate-100 pl-6 italic text-slate-500">Operator Batha ({v.vehicle_number ?? ''})</td>
-                      <td className="text-center px-3 py-2 border-b border-slate-100">{v.total_hours ? formatDuration(Number(v.total_hours)) : '-'}</td>
-                      <td className="text-right px-3 py-2 border-b border-slate-100">{formatCurrency(Number(v.batha))}</td>
-                      <td className="text-right px-3 py-2 border-b border-slate-100">{formatCurrency(Number(v.batha))}</td>
-                    </tr>
-                  ))}
+                  {vehicles.flatMap(v => {
+                    const sessions = (v.sessions ?? []) as InvoiceVehicleSession[];
+                    const vType = v.vehicle_type ?? '';
+                    const capacity = v.capacity_tons ?? v.capacity ?? v.vehicle?.capacity ?? '';
+                    let craneDesc = vType;
+                    if (vType === 'JCB') craneDesc = 'JCB';
+                    else if (vType === 'Crane') {
+                      const tonsNum = capacity ? String(capacity).replace(/[^0-9.]/g, '') : '';
+                      craneDesc = tonsNum ? `${tonsNum} Ton Crane` : 'Crane';
+                    }
+                    const vNum = v.vehicle_number ?? v.vehicle?.registration_number ?? '';
+                    const label = `${craneDesc}${vNum ? ' (' + vNum + ')' : ''}`;
+
+                    if (sessions.length === 0) {
+                      const hours = v.total_hours ? formatDuration(Number(v.total_hours)) : '-';
+                      const rateType = (v.rate_type ?? 'Hourly') as string;
+                      const isFlat = rateType === 'Daily' || rateType === 'Weekly' || rateType === 'Monthly';
+                      const rateLabel = isFlat ? formatCurrency(Number(v.rental_amount)) : `${formatCurrency(Number(v.first_hour_rate) || 0)}/Hr`;
+                      return [(
+                        <tr key={v.id}>
+                          <td className="px-3 py-2 border-b border-slate-100">{label}</td>
+                          <td className="text-center px-3 py-2 border-b border-slate-100">{hours}</td>
+                          <td className="text-right px-3 py-2 border-b border-slate-100">{rateLabel}</td>
+                          <td className="text-right px-3 py-2 border-b border-slate-100">{formatCurrency(Number(v.rental_amount))}</td>
+                        </tr>
+                      )];
+                    }
+
+                    return sessions.map((s, sIdx) => {
+                      const sRateType = (s.rate_type ?? v.rate_type ?? 'Hourly') as string;
+                      const minutes = s.duration_minutes || 0;
+                      const r1 = Number(v.first_hour_rate) || 0;
+                      const r2 = Number(v.second_hour_rate) || 0;
+                      const dailyRate = Number(v.daily_rate_snapshot) || 0;
+                      const weeklyRate = Number(v.weekly_rate_snapshot) || 0;
+                      const monthlyRate = Number(v.monthly_rate_snapshot) || 0;
+
+                      let durationLabel = minutes > 0 ? formatDuration(minutes / 60) : '-';
+                      let rateLabel = '';
+                      let sessionAmount = 0;
+
+                      if (sRateType === 'Daily') {
+                        const days = minutes > 0 ? Math.max(1, Math.round(minutes / (24 * 60))) : 1;
+                        durationLabel = `${days} Day${days > 1 ? 's' : ''}`;
+                        rateLabel = formatCurrency(dailyRate);
+                        sessionAmount = dailyRate * days;
+                      } else if (sRateType === 'Weekly') {
+                        durationLabel = '1 Week';
+                        rateLabel = formatCurrency(weeklyRate);
+                        sessionAmount = weeklyRate;
+                      } else if (sRateType === 'Monthly') {
+                        durationLabel = '1 Month';
+                        rateLabel = formatCurrency(monthlyRate);
+                        sessionAmount = monthlyRate;
+                      } else {
+                        const fullHours = Math.floor(minutes / 60);
+                        const remMin = minutes % 60;
+                        if (fullHours >= 1) {
+                          durationLabel = `${fullHours} Hr${remMin > 0 ? ' ' + remMin + ' Min' : ''}`;
+                          rateLabel = `${formatCurrency(r1)}/Hr`;
+                          sessionAmount = r1 + Math.max(0, fullHours - 1) * r2 + (remMin > 0 ? remMin * (r2 / 60) : 0);
+                        } else if (minutes > 0) {
+                          durationLabel = `${minutes} Min`;
+                          rateLabel = `${formatCurrency(r1)}/Hr`;
+                          sessionAmount = (minutes / 60) * r1;
+                        } else {
+                          durationLabel = '-';
+                          rateLabel = `${formatCurrency(r1)}/Hr`;
+                        }
+                      }
+
+                      return (
+                        <tr key={`${v.id}-${sIdx}`}>
+                          <td className="px-3 py-2 border-b border-slate-100">{label}</td>
+                          <td className="text-center px-3 py-2 border-b border-slate-100">{durationLabel}</td>
+                          <td className="text-right px-3 py-2 border-b border-slate-100">{rateLabel}</td>
+                          <td className="text-right px-3 py-2 border-b border-slate-100">{formatCurrency(Math.round(sessionAmount * 100) / 100)}</td>
+                        </tr>
+                      );
+                    });
+                  })}
                   {upTransport > 0 && (
                     <tr><td className="px-3 py-2 border-b border-slate-100">UP Transportation</td><td className="text-center px-3 py-2 border-b border-slate-100">—</td><td className="text-right px-3 py-2 border-b border-slate-100">—</td><td className="text-right px-3 py-2 border-b border-slate-100">{formatCurrency(upTransport)}</td></tr>
                   )}

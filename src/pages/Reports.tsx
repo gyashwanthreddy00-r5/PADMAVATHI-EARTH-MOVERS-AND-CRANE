@@ -8,7 +8,7 @@ import { Download, Printer } from 'lucide-react';
 import { formatCurrency, formatDate, formatTime, exportToExcelWithCompany, todayISO, monthName } from '@/lib/utils';
 import { getReportLogoUrl } from '@/lib/reportLogo';
 import { DatePicker } from '@/components/ui/DatePicker';
-import type { TripWithRelations, DieselWithRelations, MaintenanceWithRelations, EmiWithRelations, AttendanceWithEmployee, Employee, Vehicle, InvoiceWithRelations } from '@/types';
+import type { TripWithRelations, DieselWithRelations, MaintenanceWithRelations, EmiWithRelations, AttendanceWithEmployee, Employee, Vehicle, InvoiceWithRelations, InvoiceVehicle } from '@/types';
 
 type ReportType = 'trips' | 'diesel' | 'attendance' | 'maintenance' | 'emi' | 'salary' | 'daily-vehicle' | 'monthly' | 'profit-loss' | 'cash-bills' | 'customer-billing';
 
@@ -38,7 +38,7 @@ export default function Reports({ type }: ReportProps) {
 
   const [filters, setFilters] = useState({
     from: defaultFrom,
-    to: todayISO(),
+    to: type === 'emi' ? monthEndISO(now.getFullYear(), now.getMonth() + 1) : todayISO(),
     vehicle_id: '',
     driver_id: '',
     place_of_work: '',
@@ -167,82 +167,108 @@ export default function Reports({ type }: ReportProps) {
 
   const fetchDailyVehicleReport = async () => {
     const date = filters.from;
-    const [tRes, dRes, mRes] = await Promise.all([
-      supabase.from('trips').select('*, vehicle:vehicles(id,registration_number,type), driver:employees(id,name,role)').eq('trip_date', date).eq('is_cancelled', false),
+    const [invRes, dRes, mRes] = await Promise.all([
+      supabase.from('invoices').select('id, invoice_number, invoice_date, invoice_type, grand_total, payment_status, place_of_work, driver_name, is_cancelled, invoice_vehicles:invoice_vehicles(*, vehicle:vehicles(id,registration_number,type), driver:employees(id,name,role))').eq('invoice_date', date).eq('is_cancelled', false),
       supabase.from('diesel_entries').select('*, vehicle:vehicles(id)').eq('diesel_date', date).eq('is_cancelled', false),
       supabase.from('maintenance').select('*, vehicle:vehicles(id)').eq('maintenance_date', date).eq('is_cancelled', false),
     ]);
-    if (tRes.error) { console.error('Daily vehicle trips error:', tRes.error); setErrorMsg('Unable to load daily vehicle report.'); setData([]); return; }
-    const trips = (tRes.data ?? []) as TripWithRelations[];
+    if (invRes.error) { console.error('Daily vehicle report error:', invRes.error); setErrorMsg('Unable to load daily vehicle report.'); setData([]); return; }
+    const invoices = (invRes.data ?? []) as (InvoiceWithRelations & { invoice_vehicles?: (InvoiceVehicle & { vehicle: { id: string; registration_number: string; type: string } | null; driver: { id: string; name: string; role: string } | null })[] })[];
     const diesel = (dRes.data ?? []) as DieselWithRelations[];
     const maint = (mRes.data ?? []) as MaintenanceWithRelations[];
-    const rows = trips.map(tr => {
-      const dAmount = diesel.filter(d => d.vehicle_id === tr.vehicle_id).reduce((s, d) => s + Number(d.total_amount), 0);
-      const dLiters = diesel.filter(d => d.vehicle_id === tr.vehicle_id).reduce((s, d) => s + Number(d.quantity_liters), 0);
-      const mAmount = maint.filter(m => m.vehicle_id === tr.vehicle_id).reduce((s, m) => s + Number(m.amount), 0);
-      const totalCost = dAmount + mAmount + Number(tr.batha);
-      const net = Number(tr.total_amount) - totalCost;
-      return { trip: tr, dAmount, dLiters, mAmount, net };
-    });
+    const rows: { trip: TripWithRelations; dAmount: number; dLiters: number; mAmount: number; net: number }[] = [];
+    for (const inv of invoices) {
+      for (const iv of inv.invoice_vehicles ?? []) {
+        const vehId = iv.vehicle_id ?? iv.vehicle?.id ?? '';
+        const dAmount = diesel.filter(d => d.vehicle_id === vehId).reduce((s, d) => s + Number(d.total_amount), 0);
+        const dLiters = diesel.filter(d => d.vehicle_id === vehId).reduce((s, d) => s + Number(d.quantity_liters), 0);
+        const mAmount = maint.filter(m => m.vehicle_id === vehId).reduce((s, m) => s + Number(m.amount), 0);
+        const totalCost = dAmount + mAmount + Number(iv.batha);
+        const net = Number(iv.vehicle_total) - totalCost;
+        rows.push({
+          trip: {
+            trip_number: inv.invoice_number,
+            trip_date: inv.invoice_date,
+            vehicle: iv.vehicle ? { id: iv.vehicle.id, registration_number: iv.vehicle.registration_number, type: iv.vehicle.type } : null,
+            driver: iv.driver ? { id: iv.driver.id, name: iv.driver.name, role: iv.driver.role } : { id: '', name: inv.driver_name ?? '-', role: '' },
+            place_of_work: iv.place_of_work ?? inv.place_of_work ?? '-',
+            in_time: null, out_time: null,
+            total_hours: Number(iv.total_hours) || 0,
+            rental_amount: Number(iv.rental_amount) || 0,
+            batha: Number(iv.batha) || 0,
+            total_amount: Number(iv.vehicle_total) || 0,
+            bill_status: (inv.payment_status ?? 'Pending') as 'Paid' | 'Pending',
+          } as TripWithRelations,
+          dAmount, dLiters, mAmount, net,
+        });
+      }
+    }
     setData(rows);
   };
 
   const fetchMonthlyReport = async () => {
     const mStart = monthStartISO(filters.year, filters.month);
     const mEnd = monthEndISO(filters.year, filters.month);
-    const [tRes, dRes, mRes, eRes, emiRes] = await Promise.all([
-      supabase.from('trips').select('*, vehicle:vehicles(id,registration_number,type), driver:employees(id,name,role)').eq('is_cancelled', false).gte('trip_date', mStart).lte('trip_date', mEnd),
+    const [invRes, dRes, mRes, eRes, emiRes] = await Promise.all([
+      supabase.from('invoices').select('id, invoice_number, invoice_date, invoice_type, grand_total, payment_status, payment_mode, discount_enabled, discount_amount, final_payable_amount, up_transportation_enabled, up_transportation_amount, down_transportation_enabled, down_transportation_amount, is_cancelled, invoice_vehicles:invoice_vehicles(vehicle_total, batha, total_hours, rental_amount)').gte('invoice_date', mStart).lte('invoice_date', mEnd).eq('is_cancelled', false),
       supabase.from('diesel_entries').select('*').eq('is_cancelled', false).gte('diesel_date', mStart).lte('diesel_date', mEnd),
       supabase.from('maintenance').select('*').eq('is_cancelled', false).gte('maintenance_date', mStart).lte('maintenance_date', mEnd),
       supabase.from('employees').select('salary').eq('active', true),
       supabase.from('emi_records').select('*').gte('due_date', mStart).lte('due_date', mEnd),
     ]);
-    if (tRes.error) { console.error('Monthly report trips error:', tRes.error); setErrorMsg('Unable to load monthly report.'); setData([]); return; }
-    const trips = (tRes.data ?? []) as TripWithRelations[];
+    if (invRes.error) { console.error('Monthly report error:', invRes.error); setErrorMsg('Unable to load monthly report.'); setData([]); return; }
+    const invoices = (invRes.data ?? []) as (InvoiceWithRelations & { invoice_vehicles?: (Pick<InvoiceVehicle, 'vehicle_total' | 'batha' | 'total_hours' | 'rental_amount'>)[] })[];
     const diesel = (dRes.data ?? []) as DieselWithRelations[];
     const maint = (mRes.data ?? []) as MaintenanceWithRelations[];
     const emps = (eRes.data ?? []) as Employee[];
     const emis = (emiRes.data ?? []) as EmiWithRelations[];
 
-    const totalRevenue = trips.reduce((s, tr) => s + Number(tr.total_amount), 0);
-    const tripRevenue = trips.reduce((s, tr) => s + Number(tr.rental_amount), 0);
-    const totalHours = trips.reduce((s, tr) => s + Number(tr.total_hours), 0);
+    const totalRevenue = invoices.reduce((s, inv) => {
+      const payable = inv.discount_enabled ? Number(inv.final_payable_amount ?? inv.grand_total) : Number(inv.grand_total);
+      return s + payable;
+    }, 0);
+    const ivRows = invoices.flatMap(inv => inv.invoice_vehicles ?? []);
+    const tripRevenue = ivRows.reduce((s, iv) => s + Number(iv.rental_amount), 0);
+    const totalHours = ivRows.reduce((s, iv) => s + Number(iv.total_hours), 0);
     const dieselCost = diesel.reduce((s, d) => s + Number(d.total_amount), 0);
     const dieselLiters = diesel.reduce((s, d) => s + Number(d.quantity_liters), 0);
     const maintCost = maint.reduce((s, m) => s + Number(m.amount), 0);
     const maintCount = maint.length;
     const totalSalary = emps.reduce((s, e) => s + Number(e.salary), 0);
     const emiCost = emis.filter(e => e.status === 'Paid').reduce((s, e) => s + Number(e.emi_amount), 0);
-    const cashCollection = trips.filter(tr => tr.payment_mode === 'Cash' && tr.bill_status === 'Paid').reduce((s, tr) => s + Number(tr.total_amount), 0);
-    const onlineCollection = trips.filter(tr => (tr.payment_mode === 'UPI' || tr.payment_mode === 'Bank Transfer' || tr.payment_mode === 'Cheque') && tr.bill_status === 'Paid').reduce((s, tr) => s + Number(tr.total_amount), 0);
-    const pendingAmount = trips.filter(tr => tr.bill_status === 'Pending').reduce((s, tr) => s + Number(tr.total_amount), 0);
+    const cashCollection = invoices.filter(inv => inv.payment_mode === 'Cash' && inv.payment_status === 'Paid').reduce((s, inv) => s + Number(inv.grand_total), 0);
+    const onlineCollection = invoices.filter(inv => { const pm = inv.payment_mode; return (pm === 'UPI' || pm === 'Bank Transfer' || pm === 'Cheque') && inv.payment_status === 'Paid'; }).reduce((s, inv) => s + Number(inv.grand_total), 0);
+    const pendingAmount = invoices.filter(inv => inv.payment_status === 'Pending').reduce((s, inv) => s + Number(inv.grand_total), 0);
     const grossIncome = totalRevenue;
     const totalExpenses = dieselCost + totalSalary + maintCost + emiCost;
     const netProfit = totalRevenue - totalExpenses;
 
     setData([{
-      totalTrips: trips.length, totalHours, tripRevenue, totalRevenue,
+      totalTrips: invoices.length, totalHours, tripRevenue, totalRevenue,
       dieselCost, dieselLiters, maintCost, maintCount, totalSalary, emiCost, totalExpenses,
       cashCollection, onlineCollection, pendingAmount, netProfit, grossIncome,
     }]);
   };
 
   const fetchProfitLossReport = async () => {
-    const [tRes, dRes, mRes, eRes, emiRes] = await Promise.all([
-      supabase.from('trips').select('*, vehicle:vehicles(id,registration_number,type)').eq('is_cancelled', false).gte('trip_date', filters.from).lte('trip_date', filters.to),
+    const [invRes, dRes, mRes, eRes, emiRes] = await Promise.all([
+      supabase.from('invoices').select('id, invoice_number, invoice_date, invoice_type, grand_total, payment_status, discount_enabled, discount_amount, final_payable_amount, is_cancelled').gte('invoice_date', filters.from).lte('invoice_date', filters.to).eq('is_cancelled', false),
       supabase.from('diesel_entries').select('*').eq('is_cancelled', false).gte('diesel_date', filters.from).lte('diesel_date', filters.to),
       supabase.from('maintenance').select('*').eq('is_cancelled', false).gte('maintenance_date', filters.from).lte('maintenance_date', filters.to),
       supabase.from('employees').select('salary').eq('active', true),
       supabase.from('emi_records').select('*').gte('due_date', filters.from).lte('due_date', filters.to),
     ]);
-    if (tRes.error) { console.error('P&L report trips error:', tRes.error); setErrorMsg('Unable to load profit & loss report.'); setData([]); return; }
-    const trips = (tRes.data ?? []) as TripWithRelations[];
+    if (invRes.error) { console.error('P&L report error:', invRes.error); setErrorMsg('Unable to load profit & loss report.'); setData([]); return; }
+    const invoices = (invRes.data ?? []) as InvoiceWithRelations[];
     const diesel = (dRes.data ?? []) as DieselWithRelations[];
     const maint = (mRes.data ?? []) as MaintenanceWithRelations[];
     const emps = (eRes.data ?? []) as Employee[];
     const emis = (emiRes.data ?? []) as EmiWithRelations[];
 
-    const revenue = trips.reduce((s, tr) => s + Number(tr.total_amount), 0);
+    const revenue = invoices.reduce((s, inv) => {
+      const payable = inv.discount_enabled ? Number(inv.final_payable_amount ?? inv.grand_total) : Number(inv.grand_total);
+      return s + payable;
+    }, 0);
     const dieselCost = diesel.reduce((s, d) => s + Number(d.total_amount), 0);
     const maintCost = maint.reduce((s, m) => s + Number(m.amount), 0);
     const salary = emps.reduce((s, e) => s + Number(e.salary), 0);
