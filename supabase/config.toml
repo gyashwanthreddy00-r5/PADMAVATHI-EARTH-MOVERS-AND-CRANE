@@ -1,0 +1,14 @@
+[functions.auth-helper]
+verify_jwt = false
+
+[functions.create-user]
+verify_jwt = false
+
+[functions.send-invoice-email]
+verify_jwt = false
+
+[functions.process-reminders]
+verify_jwt = false
+
+[functions.send-quotation-email]
+verify_jwt = false
