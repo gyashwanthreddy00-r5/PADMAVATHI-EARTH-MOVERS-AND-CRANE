@@ -366,9 +366,12 @@ export async function generateQuotationPdf(
   paragraph(`Bank Name: ${text(settings?.bank_name) || 'Axis Bank LTD'}`, 9, 2);
   paragraph(`A/C No: ${text(settings?.bank_account_number) || '914020039371713'}`, 9, 2);
   paragraph(`IFS Code: ${text(settings?.bank_ifsc) || 'UTIB0001378'}`, 9, 8);
-  ensure(90);
-  current.page.drawText(`For ${(text(settings?.company_name) || 'PADMAVATHI').toUpperCase()}`, { x: RIGHT - 170, y: current.y, size: 9, font: bold, color: BLACK });
-  current.y -= 10;
+  const forLine = `For ${(text(settings?.company_name) || 'PADMAVATHI').toUpperCase()}`;
+  const forLineMaxWidth = 170;
+  const forLineCount = wrap(bold, forLine, 9, forLineMaxWidth).length;
+  ensure(90 + Math.max(0, forLineCount - 1) * 11);
+  current.y = drawWrapped(current.page, bold, forLine, RIGHT - 170, current.y, forLineMaxWidth, 9, BLACK, 2);
+  current.y -= 2;
   if (stamp) { drawImageContain(current.page, stamp, RIGHT - 170, current.y, 150, 52); current.y -= 58; }
   if (signature) { drawImageContain(current.page, signature, RIGHT - 170, current.y, 150, 42); current.y -= 48; }
   current.page.drawText(text(settings?.authorized_signatory) || 'AUTHORIZED SIGNATORY', { x: RIGHT - 160, y: current.y, size: 8.5, font: regular, color: BLACK });

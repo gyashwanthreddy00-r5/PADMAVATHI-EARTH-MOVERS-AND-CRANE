@@ -353,10 +353,44 @@ export default function CashBills() {
     return calcPayStatus(getTotalPaid(inv), getPayableAmount(inv));
   };
 
-  const printReceipt = (inv: InvoiceWithRelations) => {
-    const win = window.open('', '_blank');
-    if (!win) { show('Please allow popups to print', 'error'); return; }
+  const printInIframe = (html: string) => {
+    const iframe = document.createElement('iframe');
+    iframe.style.position = 'fixed';
+    iframe.style.right = '0';
+    iframe.style.bottom = '0';
+    iframe.style.width = '0';
+    iframe.style.height = '0';
+    iframe.style.border = 'none';
+    iframe.style.visibility = 'hidden';
+    document.body.appendChild(iframe);
 
+    const doc = iframe.contentWindow?.document;
+    if (!doc) {
+      document.body.removeChild(iframe);
+      show('Unable to open print dialog', 'error');
+      return;
+    }
+
+    doc.open();
+    doc.write(html);
+    doc.close();
+
+    iframe.onload = () => {
+      setTimeout(() => {
+        try {
+          iframe.contentWindow?.focus();
+          iframe.contentWindow?.print();
+        } catch {
+          show('Unable to open print dialog', 'error');
+        }
+        setTimeout(() => {
+          if (iframe.parentNode) document.body.removeChild(iframe);
+        }, 1000);
+      }, 350);
+    };
+  };
+
+  const printReceipt = (inv: InvoiceWithRelations) => {
     const companyName = settings?.company_name ?? 'PADMAVATHI EARTH MOVERS AND CRANE SERVICES';
     const totalAmt = Number(inv.grand_total) || 0;
     const paidAmt = getTotalPaid(inv);
@@ -525,11 +559,9 @@ export default function CashBills() {
   <div class="pay-status">Payment Status: ${statusLabel}</div>
   ${paymentHistorySection}
   <div class="footer">Thank you for your business!</div>
-  <script>window.onload = () => { window.print(); }</script>
 </body>
 </html>`;
-    win.document.write(html);
-    win.document.close();
+    printInIframe(html);
   };
 
   const columns: Column<InvoiceWithRelations>[] = [
