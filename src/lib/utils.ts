@@ -433,11 +433,13 @@ export function buildInvoiceLineDescription(tr: Pick<Trip,
         duration_minutes: Math.round((Number(tr.total_hours) || 0) * 60),
         rate_type: rateType,
       }];
-  const multiSession = effectiveSessions.length > 1;
-
-  effectiveSessions.forEach(s => {
+  effectiveSessions.forEach((s, idx) => {
     const sRateType = s.rate_type ?? rateType;
     const sMinutes = s.duration_minutes ?? Math.round(Number(s.duration_hours) * 60);
+    // Only the first session of the booking gets the discounted 1st-hour rate; every
+    // session after it is billed entirely at the 2nd-hour rate from its first minute.
+    const isFirstSession = idx === 0;
+    const effectiveR1 = isFirstSession ? r1 : r2;
     let sAmount: number;
     let sLabel: string;
 
@@ -454,24 +456,30 @@ export function buildInvoiceLineDescription(tr: Pick<Trip,
       sAmount = dailyRate;
       sLabel = `Duration >= 8 Hr → Full Day Rate = ${formatCurrency(dailyRate)}`;
     } else if (sMinutes > 0) {
-      sAmount = s.session_amount != null ? Number(s.session_amount) : calcSessionAmount(sMinutes, r1, r2, dailyRate);
+      sAmount = s.session_amount != null ? Number(s.session_amount) : calcSessionAmount(sMinutes, effectiveR1, r2, dailyRate);
       const fullHours = Math.floor(sMinutes / 60);
       const remainingMinutes = sMinutes % 60;
-      const extraHours = fullHours > 1 ? fullHours - 1 : 0;
-      const minutesAmount = remainingMinutes > 0 ? round2(remainingMinutes * r2 / 60) : 0;
-      const subParts: string[] = [`1st Hr ${formatCurrency(r1)}`];
-      if (extraHours > 0) {
-        subParts.push(`2nd Hr Onwards ${formatCurrency(r2)} × ${extraHours} Hr = ${formatCurrency(round2(extraHours * r2))}`);
+      if (!isFirstSession) {
+        // Entire duration billed at the 2nd-hour rate — a flat rate x duration line.
+        const durationLabel = fullHours > 0 ? `${fullHours} Hr${remainingMinutes > 0 ? ` ${remainingMinutes} Min` : ''}` : `${sMinutes} Min`;
+        sLabel = `${durationLabel} × ${formatCurrency(r2)} = ${formatCurrency(sAmount)}`;
+      } else {
+        const extraHours = fullHours > 1 ? fullHours - 1 : 0;
+        const minutesAmount = remainingMinutes > 0 ? round2(remainingMinutes * r2 / 60) : 0;
+        const subParts: string[] = [`1st Hr ${formatCurrency(effectiveR1)}`];
+        if (extraHours > 0) {
+          subParts.push(`2nd Hr Onwards ${formatCurrency(r2)} × ${extraHours} Hr = ${formatCurrency(round2(extraHours * r2))}`);
+        }
+        if (remainingMinutes > 0) {
+          subParts.push(`${remainingMinutes} Min ${formatCurrency(minutesAmount)}`);
+        }
+        sLabel = `${subParts.join(' + ')} = ${formatCurrency(sAmount)}`;
       }
-      if (remainingMinutes > 0) {
-        subParts.push(`${remainingMinutes} Min ${formatCurrency(minutesAmount)}`);
-      }
-      sLabel = `${subParts.join(' + ')} = ${formatCurrency(sAmount)}`;
     } else {
       return;
     }
 
-    parts.push(multiSession ? `Session ${s.session_number}: ${sLabel}` : sLabel);
+    parts.push(sLabel);
   });
 
   parts.push(`Rental Amount = ${formatCurrency(rentalAmount)}`);

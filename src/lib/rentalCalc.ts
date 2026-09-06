@@ -244,6 +244,7 @@ function buildSessionBreakdown(
   r2: number,
   fullDayRate: number,
   amount: number,
+  isFirstSession = true,
 ): string {
   if (minutes <= 0) return '0';
 
@@ -253,6 +254,16 @@ function buildSessionBreakdown(
 
   const fullHours = Math.floor(minutes / 60);
   const remainingMinutes = minutes % 60;
+
+  // Only the very first session of the booking gets the discounted 1st-hour rate.
+  // Every session after it is billed entirely at the 2nd-hour rate from its first
+  // minute, so it gets a flat rate x duration line instead of a 1st Hr split.
+  if (!isFirstSession) {
+    const durationLabel = fullHours > 0
+      ? `${fullHours} Hr${remainingMinutes > 0 ? ` ${remainingMinutes} Min` : ''}`
+      : `${minutes} Min`;
+    return `${durationLabel} × ${formatCurrency(r2)} = ${formatCurrency(amount)}`;
+  }
 
   if (fullHours < 1) {
     // Partial first hour
@@ -303,9 +314,13 @@ export function calcRental(
       sessionAmount = weeklyRate;
       sessionBd = `Weekly Rate = ${formatCurrency(weeklyRate)}`;
     } else {
-      // Hourly / Both
-      sessionAmount = calcSessionAmount(minutes, r1, r2, dailyRate);
-      sessionBd = buildSessionBreakdown(minutes, r1, r2, dailyRate, sessionAmount);
+      // Hourly / Both. Only the first session of the booking gets the discounted
+      // 1st-hour rate; every session after it is billed entirely at the 2nd-hour
+      // rate from its first minute.
+      const isFirstSession = idx === 0;
+      const effectiveR1 = isFirstSession ? r1 : r2;
+      sessionAmount = calcSessionAmount(minutes, effectiveR1, r2, dailyRate);
+      sessionBd = buildSessionBreakdown(minutes, effectiveR1, r2, dailyRate, sessionAmount, isFirstSession);
     }
 
     return {
