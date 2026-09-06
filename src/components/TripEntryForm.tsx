@@ -573,7 +573,7 @@ export function TripEntryForm({
                       </Field>
                     )}
                     <Field label={t('batha')}>
-                      <input type="number" step="0.01" className={inputClass() + ' bg-slate-100 cursor-not-allowed'} value={ve.batha} readOnly placeholder="Auto from Rate Master" />
+                      <input type="number" step="0.01" className={inputClass()} value={ve.batha} onChange={e => updateVehicleEntry(vIdx, { batha: e.target.value === '' ? 0 : Number(e.target.value) })} placeholder="Auto from Rate Master" />
                     </Field>
                   </div>
 
@@ -614,25 +614,23 @@ export function TripEntryForm({
                               </Field>
                             </>
                           )}
-                          {((ve.sessions[sIdx].rate_type ?? ve.rate_type) !== 'Hourly') && (
-                            <div className="col-span-full text-sm text-slate-500">
-                              {(ve.sessions[sIdx].rate_type ?? ve.rate_type) === 'Daily' && `Full Day Rate: ${formatCurrency(session.session_amount)}`}
-                              {(ve.sessions[sIdx].rate_type ?? ve.rate_type) === 'Weekly' && `Weekly Rate: ${formatCurrency(session.session_amount)}`}
-                              {(ve.sessions[sIdx].rate_type ?? ve.rate_type) === 'Monthly' && `Monthly Rate: ${formatCurrency(session.session_amount)}`}
-                            </div>
-                          )}
                         </div>
-                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 mt-1">
+                        <div className="grid grid-cols-1 gap-2 mt-1">
                           <Field label={t('remarks')}>
                             <input className={inputClass()} value={ve.sessions[sIdx].remarks ?? ''} onChange={e => updateVehicleSession(vIdx, sIdx, { remarks: e.target.value })} placeholder="Session remarks" />
                           </Field>
-                          <div className="flex items-end">
-                            <div className="text-sm text-slate-500">
-                              {t('sessionDuration')}: <span className="font-semibold text-slate-700">{formatDuration(session.duration_hours)}</span>
-                              {session.session_amount > 0 && <span className="ml-2 text-blue-600">{formatCurrency(session.session_amount)}</span>}
+                        </div>
+                        {session.session_amount > 0 && (
+                          <div className="mt-2 space-y-1">
+                            {session.session_breakdown && (
+                              <div className="text-xs text-slate-500">Rate: {session.session_breakdown}</div>
+                            )}
+                            <div className="flex items-center justify-between px-3 py-1.5 bg-blue-50 rounded-lg text-sm">
+                              <span className="text-slate-500">{t('sessionDuration')}: <span className="font-semibold text-slate-800">{session.duration_minutes > 0 ? formatDuration(session.duration_hours) : (ve.sessions[sIdx].rate_type ?? ve.rate_type) === 'Daily' ? 'Full Day' : (ve.sessions[sIdx].rate_type ?? ve.rate_type)}</span></span>
+                              <span className="font-bold text-slate-900">{formatCurrency(session.session_amount)}</span>
                             </div>
                           </div>
-                        </div>
+                        )}
                       </div>
                     ))}
                     <button type="button" onClick={() => addVehicleSession(vIdx)} className="flex items-center gap-2 px-3 py-1.5 text-sm font-medium text-blue-600 border border-dashed border-blue-300 rounded-lg hover:bg-blue-50 transition-colors">
@@ -693,15 +691,36 @@ export function TripEntryForm({
 
       {/* Bill Summary */}
       <div className="p-4 bg-blue-50 rounded-lg border border-blue-100">
-        <h4 className="text-sm font-semibold text-blue-800 mb-3">Bill Summary</h4>
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-sm">
-          <div><span className="text-slate-500">Vehicles: </span><span className="font-semibold text-slate-800">{vehicleEntries.length}</span></div>
-          <div><span className="text-slate-500">Total Hours: </span><span className="font-semibold text-slate-800">{formatDuration(billTotals.totalHours)}</span></div>
-          <div><span className="text-slate-500">Rental: </span><span className="font-semibold text-slate-800">{formatCurrency(billTotals.totalRental)}</span></div>
-          <div><span className="text-slate-500">Batha: </span><span className="font-semibold text-slate-800">{formatCurrency(billTotals.totalBatha)}</span></div>
-          {upTransportEnabled && <div><span className="text-slate-500">UP Transport: </span><span className="font-semibold text-slate-800">{formatCurrency(upTransportAmount)}</span></div>}
-          {downTransportEnabled && <div><span className="text-slate-500">DOWN Transport: </span><span className="font-semibold text-slate-800">{formatCurrency(downTransportAmount)}</span></div>}
+        <div className="flex items-center justify-between mb-3">
+          <h4 className="text-sm font-semibold text-blue-800">Bill Summary</h4>
+          <span className="text-xs text-slate-500">{vehicleEntries.length} Vehicle{vehicleEntries.length !== 1 ? 's' : ''} • Total Hours: <span className="font-semibold text-slate-700">{formatDuration(billTotals.totalHours)}</span></span>
         </div>
+
+        {/* Vehicle-wise breakdown */}
+        <div className="space-y-2 mb-3">
+          {vehicleEntries.map((ve, idx) => {
+            const { calcResult } = vehicleCalcs[idx];
+            return (
+              <div key={idx} className="flex items-center justify-between px-3 py-2 bg-white rounded-lg border border-blue-100 text-sm">
+                <div className="flex flex-wrap items-center gap-x-4 gap-y-1">
+                  <span className="font-semibold text-slate-700">{ve.vehicle_number ?? `Vehicle ${idx + 1}`}</span>
+                  <span className="text-slate-500">Duration: <span className="font-semibold text-slate-800">{formatDuration(calcResult.total_hours)}</span></span>
+                  <span className="text-slate-500">Rental: <span className="font-semibold text-slate-800">{formatCurrency(calcResult.rental_amount)}</span></span>
+                  <span className="text-slate-500">Batha: <span className="font-semibold text-slate-800">{formatCurrency(calcResult.batha)}</span></span>
+                </div>
+                <span className="font-bold text-slate-900">{formatCurrency(calcResult.rental_amount + calcResult.batha)}</span>
+              </div>
+            );
+          })}
+        </div>
+
+        {(upTransportEnabled || downTransportEnabled) && (
+          <div className="grid grid-cols-2 gap-3 text-sm mb-2">
+            {upTransportEnabled && <div><span className="text-slate-500">UP Transport: </span><span className="font-semibold text-slate-800">{formatCurrency(upTransportAmount)}</span></div>}
+            {downTransportEnabled && <div><span className="text-slate-500">DOWN Transport: </span><span className="font-semibold text-slate-800">{formatCurrency(downTransportAmount)}</span></div>}
+          </div>
+        )}
+
         <div className="border-t border-blue-200 pt-2 mt-2 flex justify-between text-sm">
           <span className="font-bold text-blue-800">Grand Total</span>
           <span className="font-bold text-slate-900 text-base">{formatCurrency(billTotals.grandTotal)}</span>

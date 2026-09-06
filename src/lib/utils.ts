@@ -343,7 +343,7 @@ export function buildInvoiceLineDescription(tr: Pick<Trip,
   'weekly_rate_snapshot' | 'daily_rate_snapshot' | 'monthly_rate_snapshot'
 > & {
   vehicle?: { registration_number?: string | null; type?: string | null; capacity?: string | number | null } | null;
-  sessions?: { session_number: number; duration_hours: number; duration_minutes?: number; session_amount?: number; in_time?: string | null }[] | null;
+  sessions?: { session_number: number; duration_hours: number; duration_minutes?: number; session_amount?: number; in_time?: string | null; rate_type?: string | null }[] | null;
   work_date?: string | null;
 }): InvoiceLineDesc {
   const rateType = tr.rate_type;
@@ -377,68 +377,102 @@ export function buildInvoiceLineDescription(tr: Pick<Trip,
 
   const description = `${typeLabel}${metaStr ? ' — ' + metaStr : ''}`;
 
-  if (rateType === 'Daily') {
+  // A recorded session is only "usable" for a per-session breakdown if it carries a real
+  // duration, or it's a flat rate type (Daily/Weekly/Monthly) that doesn't need one. Some
+  // older/other save paths record sessions with duration_minutes stuck at 0 — in that case
+  // there's nothing per-session worth showing, so we fall back to the vehicle-level total
+  // (total_hours / rental_amount, which are always saved correctly) instead of showing blanks.
+  const hasUsableSessions = !!sessions && sessions.some(s =>
+    (s.duration_minutes ?? Math.round(Number(s.duration_hours) * 60)) > 0 ||
+    (!!s.rate_type && s.rate_type !== 'Hourly')
+  );
+  const hasMultipleSessions = hasUsableSessions && sessions!.length > 1;
+
+  // These flat-rate shortcuts only apply when there's a single (or no) session to describe.
+  // A vehicle with multiple usable recorded sessions — even if its overall rate_type is
+  // Daily/Weekly/Monthly — is always handled per-session below so each session's own detail
+  // still shows.
+  if (rateType === 'Daily' && !hasMultipleSessions) {
     return {
       description,
       calculation_details: `Rental Amount = ${formatCurrency(rentalAmount)}`,
     };
   }
-  if (rateType === 'Monthly') {
+  if (rateType === 'Monthly' && !hasMultipleSessions) {
     return {
       description,
       calculation_details: `Monthly Rate = 1 Month × ${formatCurrency(monthlyRate || rentalAmount)} = ${formatCurrency(rentalAmount)}`,
     };
   }
-  if (rateType === 'Weekly') {
+  if (rateType === 'Weekly' && !hasMultipleSessions) {
     return {
       description,
       calculation_details: `Weekly Rate = ${formatCurrency(coupleRate || rentalAmount)} = ${formatCurrency(rentalAmount)}`,
     };
   }
 
-  // If rates are missing but rental_amount exists (e.g. JCB with no rate snapshot), show the stored amount
-  if (r1 <= 0 && r2 <= 0 && rentalAmount > 0) {
+  // If rates are missing but rental_amount exists (e.g. JCB with no rate snapshot), show the stored amount.
+  // Only applies to the single-session fallback — a vehicle with multiple usable (possibly mixed
+  // rate-type) sessions is always handled per-session below so each session's own rate is respected.
+  if (r1 <= 0 && r2 <= 0 && rentalAmount > 0 && !hasMultipleSessions) {
     return {
       description,
       calculation_details: `Rental Amount = ${formatCurrency(rentalAmount)}\nNote: Rate is not configured in Rate Master.`,
     };
   }
 
-  // Hourly with per-session breakdown
+  // Per-session breakdown. When no sessions are recorded (or none are usable — see above),
+  // treat the whole booking as one synthetic session derived from total_hours so the same
+  // logic handles both cases.
   const parts: string[] = [];
+  const effectiveSessions = hasUsableSessions
+    ? sessions!
+    : [{
+        session_number: 1,
+        duration_hours: Number(tr.total_hours) || 0,
+        duration_minutes: Math.round((Number(tr.total_hours) || 0) * 60),
+        rate_type: rateType,
+      }];
+  const multiSession = effectiveSessions.length > 1;
 
-  if (sessions && sessions.length > 0) {
-    sessions.forEach(s => {
-      const sMinutes = s.duration_minutes ?? Math.round(Number(s.duration_hours) * 60);
-      const sAmount = s.session_amount != null
-        ? Number(s.session_amount)
-        : calcSessionAmount(sMinutes, r1, r2, dailyRate);
-      if (sMinutes > 0) {
-        parts.push(`Session ${s.session_number}: ${formatDuration(sMinutes / 60)} = ${formatCurrency(sAmount)}`);
-      }
-    });
-  } else {
-    // Single session fallback: compute from total hours
-    const totalMinutes = Math.round(Number(tr.total_hours) * 60);
-    const amount = calcSessionAmount(totalMinutes, r1, r2, dailyRate);
-    if (dailyRate > 0 && totalMinutes >= 8 * 60) {
-      parts.push(`Duration >= 8 Hr → Full Day Rate = ${formatCurrency(dailyRate)}`);
-    } else {
-      const fullHours = Math.floor(totalMinutes / 60);
-      const remainingMinutes = totalMinutes % 60;
+  effectiveSessions.forEach(s => {
+    const sRateType = s.rate_type ?? rateType;
+    const sMinutes = s.duration_minutes ?? Math.round(Number(s.duration_hours) * 60);
+    let sAmount: number;
+    let sLabel: string;
+
+    if (sRateType === 'Daily') {
+      sAmount = s.session_amount != null ? Number(s.session_amount) : dailyRate;
+      sLabel = `Full Day Amt = ${formatCurrency(sAmount)}`;
+    } else if (sRateType === 'Weekly') {
+      sAmount = s.session_amount != null ? Number(s.session_amount) : coupleRate;
+      sLabel = `Weekly Rate = ${formatCurrency(sAmount)}`;
+    } else if (sRateType === 'Monthly') {
+      sAmount = s.session_amount != null ? Number(s.session_amount) : monthlyRate;
+      sLabel = `Monthly Rate = ${formatCurrency(sAmount)}`;
+    } else if (dailyRate > 0 && sMinutes >= 8 * 60) {
+      sAmount = dailyRate;
+      sLabel = `Duration >= 8 Hr → Full Day Rate = ${formatCurrency(dailyRate)}`;
+    } else if (sMinutes > 0) {
+      sAmount = s.session_amount != null ? Number(s.session_amount) : calcSessionAmount(sMinutes, r1, r2, dailyRate);
+      const fullHours = Math.floor(sMinutes / 60);
+      const remainingMinutes = sMinutes % 60;
       const extraHours = fullHours > 1 ? fullHours - 1 : 0;
       const minutesAmount = remainingMinutes > 0 ? round2(remainingMinutes * r2 / 60) : 0;
       const subParts: string[] = [`1st Hr ${formatCurrency(r1)}`];
       if (extraHours > 0) {
-        subParts.push(`${extraHours} Hr ${formatCurrency(r2)}`);
+        subParts.push(`2nd Hr Onwards ${formatCurrency(r2)} × ${extraHours} Hr = ${formatCurrency(round2(extraHours * r2))}`);
       }
       if (remainingMinutes > 0) {
         subParts.push(`${remainingMinutes} Min ${formatCurrency(minutesAmount)}`);
       }
-      subParts.push(`= ${formatCurrency(amount)}`);
-      parts.push(subParts.join(' + '));
+      sLabel = `${subParts.join(' + ')} = ${formatCurrency(sAmount)}`;
+    } else {
+      return;
     }
-  }
+
+    parts.push(multiSession ? `Session ${s.session_number}: ${sLabel}` : sLabel);
+  });
 
   parts.push(`Rental Amount = ${formatCurrency(rentalAmount)}`);
   return { description, calculation_details: parts.join('\n') };

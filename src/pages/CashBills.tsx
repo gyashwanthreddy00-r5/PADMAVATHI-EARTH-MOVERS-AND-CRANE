@@ -6,7 +6,8 @@ import { useSettings } from '@/context/SettingsContext';
 import { DataTable, type Column } from '@/components/ui/DataTable';
 import { Modal, ConfirmDialog, Button, Field, inputClass, LoadingSpinner } from '@/components/ui/common';
 import { Plus, Printer, Eye, Trash2, Download, IndianRupee, CreditCard } from 'lucide-react';
-import { formatCurrency, formatDate, formatDuration, todayISO, sanitizePhone, phoneValidationError } from '@/lib/utils';
+import { formatCurrency, formatDate, formatDuration, todayISO, sanitizePhone, phoneValidationError, buildInvoiceLineDescription } from '@/lib/utils';
+import { calcSessionMinutes } from '@/lib/rentalCalc';
 import { getReportLogoUrl } from '@/lib/reportLogo';
 import { calculateDiscount, validateDiscountPercentage } from '@/lib/discountCalc';
 import { exportToExcelProfessional } from '@/lib/excelExport';
@@ -15,6 +16,19 @@ import { DatePicker } from '@/components/ui/DatePicker';
 import type { InvoiceWithRelations, InvoicePayment, PaymentMode } from '@/types';
 
 type CashPayStatus = 'Unpaid' | 'Partial' | 'Paid';
+
+// A session's saved duration_minutes can be 0 even when real in/out times (or meter
+// readings) were recorded — derive the real duration from those for display when that
+// happens, so each session still shows its own accurate hours/amount.
+function deriveSessionMinutes(s: { duration_minutes: number; in_time: string | null; out_time: string | null; opening_hour_meter: number | null; closing_hour_meter: number | null }): number {
+  if (s.duration_minutes > 0) return s.duration_minutes;
+  return calcSessionMinutes({
+    in_time: s.in_time,
+    out_time: s.out_time,
+    opening_hour_meter: s.opening_hour_meter,
+    closing_hour_meter: s.closing_hour_meter,
+  });
+}
 
 function calcBalance(total: number, paid: number): number {
   return Math.max(Math.round((total - paid) * 100) / 100, 0);
@@ -27,7 +41,7 @@ function calcPayStatus(paid: number, total: number): CashPayStatus {
 }
 
 const PAYMENT_SELECT = 'invoice_payments(*)';
-const INVOICE_VEHICLES_SELECT = 'invoice_vehicles(*, vehicle:vehicles!invoice_vehicles_vehicle_id_fkey(id,registration_number,type,capacity), driver:employees!invoice_vehicles_driver_id_fkey(id,name,role), sessions:invoice_vehicle_sessions(*))';
+const INVOICE_VEHICLES_SELECT = 'invoiceVehicles:invoice_vehicles(*, vehicle:vehicles!invoice_vehicles_vehicle_id_fkey(id,registration_number,type,capacity), driver:employees!invoice_vehicles_driver_id_fkey(id,name,role), sessions:invoice_vehicle_sessions(*))';
 const FULL_SELECT = `*, customer:customers!invoices_customer_id_fkey(id,name), ${PAYMENT_SELECT}, ${INVOICE_VEHICLES_SELECT}`;
 
 function statusBadgeVariant(status: CashPayStatus): { label: string; className: string } {
@@ -419,19 +433,51 @@ export default function CashBills() {
       }
       const vNum = v.vehicle_number ?? v.vehicle?.registration_number ?? '';
 
-      if (sessions.length === 0) {
+      // Rate/hourly breakdown description (e.g. "1st Hr ₹X + 2nd Hr Onwards ₹Y × N Hr = Z"),
+      // shown as extra detail lines under the description — reuses the same, already-correct
+      // breakdown builder used for GST invoices. Purely descriptive text; the Hours/Rate/Amount
+      // columns below still come from their own existing values, unchanged.
+      const rateDescLines = buildInvoiceLineDescription({
+        rate_type: (v.rate_type ?? 'Hourly') as 'Hourly' | 'Daily' | 'Weekly' | 'Monthly',
+        total_hours: Number(v.total_hours) || 0,
+        rental_amount: Number(v.rental_amount) || 0,
+        trip_date: inv.trip_date ?? inv.invoice_date ?? '',
+        place_of_work: v.place_of_work ?? '',
+        capacity_tons: v.capacity_tons,
+        first_hour_rate: v.first_hour_rate,
+        second_hour_rate: v.second_hour_rate,
+        weekly_rate_snapshot: v.weekly_rate_snapshot,
+        daily_rate_snapshot: v.daily_rate_snapshot,
+        monthly_rate_snapshot: v.monthly_rate_snapshot,
+        sessions: sessions.length > 0
+          ? sessions.map(s => {
+              const m = deriveSessionMinutes(s);
+              return {
+                session_number: s.session_number,
+                duration_hours: m / 60,
+                duration_minutes: m,
+                rate_type: s.rate_type,
+              };
+            })
+          : null,
+      }).calculation_details.split('\n').filter(Boolean)
+        .map(l => `<div style="font-size:9px;color:#555;margin-top:2px">${l}</div>`).join('');
+
+      const hasUsableSessions = sessions.some(s => deriveSessionMinutes(s) > 0 || (!!s.rate_type && s.rate_type !== 'Hourly'));
+
+      if (!hasUsableSessions) {
         const hours = v.total_hours ? formatDuration(Number(v.total_hours)) : '-';
         const rateType = (v.rate_type ?? 'Hourly') as string;
         const isFlat = rateType === 'Daily' || rateType === 'Weekly' || rateType === 'Monthly';
         const rateLabel = isFlat
           ? formatCurrency(Number(v.rental_amount))
           : `${formatCurrency(Number(v.first_hour_rate) || 0)}/Hr`;
-        return `<tr><td>${craneDesc}${vNum ? ' (' + vNum + ')' : ''}</td><td style="text-align:center">${hours}</td><td style="text-align:right">${rateLabel}</td><td style="text-align:right">${formatCurrency(Number(v.rental_amount))}</td></tr>`;
+        return `<tr><td>${craneDesc}${vNum ? ' (' + vNum + ')' : ''}${rateDescLines}</td><td style="text-align:center">${hours}</td><td style="text-align:right">${formatCurrency(Number(v.rental_amount))}</td></tr>`;
       }
 
-      return sessions.map(s => {
+      return sessions.map((s, sIdx) => {
         const sRateType = (s.rate_type ?? v.rate_type ?? 'Hourly') as string;
-        const minutes = s.duration_minutes || 0;
+        const minutes = deriveSessionMinutes(s);
         const hours = minutes > 0 ? formatDuration(minutes / 60) : '-';
         const rental = Number(v.rental_amount) || 0;
         const batha = Number(v.batha) || 0;
@@ -477,13 +523,14 @@ export default function CashBills() {
           }
         }
 
-        return `<tr><td>${craneDesc}${vNum ? ' (' + vNum + ')' : ''}</td><td style="text-align:center">${durationLabel}</td><td style="text-align:right">${rateLabel}</td><td style="text-align:right">${formatCurrency(Math.round(sessionAmount * 100) / 100)}</td></tr>`;
+        const isLastSession = sIdx === sessions.length - 1;
+        return `<tr><td>${craneDesc}${vNum ? ' (' + vNum + ')' : ''}${isLastSession ? rateDescLines : ''}</td><td style="text-align:center">${durationLabel}</td><td style="text-align:right">${formatCurrency(Math.round(sessionAmount * 100) / 100)}</td></tr>`;
       }).join('');
     }).join('');
 
     const transportRows: string[] = [];
-    if (upTransport > 0) transportRows.push(`<tr><td>UP Transportation Charges</td><td style="text-align:center">—</td><td style="text-align:right">—</td><td style="text-align:right">${formatCurrency(upTransport)}</td></tr>`);
-    if (downTransport > 0) transportRows.push(`<tr><td>Down Transportation Charges</td><td style="text-align:center">—</td><td style="text-align:right">—</td><td style="text-align:right">${formatCurrency(downTransport)}</td></tr>`);
+    if (upTransport > 0) transportRows.push(`<tr><td>UP Transportation Charges</td><td style="text-align:center">—</td><td style="text-align:right">${formatCurrency(upTransport)}</td></tr>`);
+    if (downTransport > 0) transportRows.push(`<tr><td>Down Transportation Charges</td><td style="text-align:center">—</td><td style="text-align:right">${formatCurrency(downTransport)}</td></tr>`);
 
     const paymentHistoryRows = payments.length > 0 ? payments.map(p => `<tr><td style="text-align:center">${formatDate(p.payment_date)}</td><td style="text-align:center">${p.payment_mode ?? '-'}</td><td style="text-align:center">${p.reference ?? '-'}</td><td style="text-align:right">${formatCurrency(Number(p.amount))}</td></tr>`).join('') : '';
     const paymentHistorySection = payments.length > 0 ? `
@@ -546,7 +593,7 @@ export default function CashBills() {
     <div class="field"><span class="lbl">Place of Work:</span><span class="val">${inv.place_of_work ?? '-'}</span></div>
   </div>
   <table class="txn">
-    <thead><tr><th>Description</th><th class="c">Hours / Days</th><th class="r">Rate</th><th class="r">Amount</th></tr></thead>
+    <thead><tr><th>Description</th><th class="c">Hours / Days</th><th class="r">Amount</th></tr></thead>
     <tbody>${vehicleRows || '<tr><td colspan="4">No vehicles</td></tr>'}${transportRows.join('')}</tbody>
   </table>
   <div class="totals">
@@ -839,7 +886,6 @@ export default function CashBills() {
                   <tr className="bg-slate-100 text-xs uppercase text-slate-600">
                     <th className="text-left px-3 py-2 border-b border-slate-200">Description</th>
                     <th className="text-center px-3 py-2 border-b border-slate-200">Hours / Days</th>
-                    <th className="text-right px-3 py-2 border-b border-slate-200">Rate</th>
                     <th className="text-right px-3 py-2 border-b border-slate-200">Amount</th>
                   </tr>
                 </thead>
@@ -857,16 +903,51 @@ export default function CashBills() {
                     const vNum = v.vehicle_number ?? v.vehicle?.registration_number ?? '';
                     const label = `${craneDesc}${vNum ? ' (' + vNum + ')' : ''}`;
 
-                    if (sessions.length === 0) {
+                    // Rate/hourly breakdown description (e.g. "1st Hr ₹X + 2nd Hr Onwards ₹Y ×
+                    // N Hr = Z"), shown as extra muted lines under the description — reuses the
+                    // same, already-correct breakdown builder used for GST invoices. Purely
+                    // descriptive text; the Hours/Rate/Amount columns below are unchanged.
+                    const rateDescLines = buildInvoiceLineDescription({
+                      rate_type: (v.rate_type ?? 'Hourly') as 'Hourly' | 'Daily' | 'Weekly' | 'Monthly',
+                      total_hours: Number(v.total_hours) || 0,
+                      rental_amount: Number(v.rental_amount) || 0,
+                      trip_date: viewInvoice.trip_date ?? viewInvoice.invoice_date ?? '',
+                      place_of_work: v.place_of_work ?? '',
+                      capacity_tons: v.capacity_tons,
+                      first_hour_rate: v.first_hour_rate,
+                      second_hour_rate: v.second_hour_rate,
+                      weekly_rate_snapshot: v.weekly_rate_snapshot,
+                      daily_rate_snapshot: v.daily_rate_snapshot,
+                      monthly_rate_snapshot: v.monthly_rate_snapshot,
+                      sessions: sessions.length > 0
+                        ? sessions.map(s => {
+                            const m = deriveSessionMinutes(s);
+                            return {
+                              session_number: s.session_number,
+                              duration_hours: m / 60,
+                              duration_minutes: m,
+                              rate_type: s.rate_type,
+                            };
+                          })
+                        : null,
+                    }).calculation_details.split('\n').filter(Boolean);
+                    const rateDesc = rateDescLines.length > 0 ? (
+                      <div className="mt-1 space-y-0.5">
+                        {rateDescLines.map((l, li) => <div key={li} className="text-[10px] text-slate-500">{l}</div>)}
+                      </div>
+                    ) : null;
+
+                    const hasUsableSessions = sessions.some(s => deriveSessionMinutes(s) > 0 || (!!s.rate_type && s.rate_type !== 'Hourly'));
+
+                    if (!hasUsableSessions) {
                       const hours = v.total_hours ? formatDuration(Number(v.total_hours)) : '-';
                       const rateType = (v.rate_type ?? 'Hourly') as string;
                       const isFlat = rateType === 'Daily' || rateType === 'Weekly' || rateType === 'Monthly';
                       const rateLabel = isFlat ? formatCurrency(Number(v.rental_amount)) : `${formatCurrency(Number(v.first_hour_rate) || 0)}/Hr`;
                       return [(
                         <tr key={v.id}>
-                          <td className="px-3 py-2 border-b border-slate-100">{label}</td>
+                          <td className="px-3 py-2 border-b border-slate-100">{label}{rateDesc}</td>
                           <td className="text-center px-3 py-2 border-b border-slate-100">{hours}</td>
-                          <td className="text-right px-3 py-2 border-b border-slate-100">{rateLabel}</td>
                           <td className="text-right px-3 py-2 border-b border-slate-100">{formatCurrency(Number(v.rental_amount))}</td>
                         </tr>
                       )];
@@ -874,7 +955,7 @@ export default function CashBills() {
 
                     return sessions.map((s, sIdx) => {
                       const sRateType = (s.rate_type ?? v.rate_type ?? 'Hourly') as string;
-                      const minutes = s.duration_minutes || 0;
+                      const minutes = deriveSessionMinutes(s);
                       const r1 = Number(v.first_hour_rate) || 0;
                       const r2 = Number(v.second_hour_rate) || 0;
                       const dailyRate = Number(v.daily_rate_snapshot) || 0;
@@ -915,21 +996,21 @@ export default function CashBills() {
                         }
                       }
 
+                      const isLastSession = sIdx === sessions.length - 1;
                       return (
                         <tr key={`${v.id}-${sIdx}`}>
-                          <td className="px-3 py-2 border-b border-slate-100">{label}</td>
+                          <td className="px-3 py-2 border-b border-slate-100">{label}{isLastSession ? rateDesc : null}</td>
                           <td className="text-center px-3 py-2 border-b border-slate-100">{durationLabel}</td>
-                          <td className="text-right px-3 py-2 border-b border-slate-100">{rateLabel}</td>
                           <td className="text-right px-3 py-2 border-b border-slate-100">{formatCurrency(Math.round(sessionAmount * 100) / 100)}</td>
                         </tr>
                       );
                     });
                   })}
                   {upTransport > 0 && (
-                    <tr><td className="px-3 py-2 border-b border-slate-100">UP Transportation</td><td className="text-center px-3 py-2 border-b border-slate-100">—</td><td className="text-right px-3 py-2 border-b border-slate-100">—</td><td className="text-right px-3 py-2 border-b border-slate-100">{formatCurrency(upTransport)}</td></tr>
+                    <tr><td className="px-3 py-2 border-b border-slate-100">UP Transportation</td><td className="text-center px-3 py-2 border-b border-slate-100">—</td><td className="text-right px-3 py-2 border-b border-slate-100">{formatCurrency(upTransport)}</td></tr>
                   )}
                   {downTransport > 0 && (
-                    <tr><td className="px-3 py-2 border-b border-slate-100">Down Transportation</td><td className="text-center px-3 py-2 border-b border-slate-100">—</td><td className="text-right px-3 py-2 border-b border-slate-100">—</td><td className="text-right px-3 py-2 border-b border-slate-100">{formatCurrency(downTransport)}</td></tr>
+                    <tr><td className="px-3 py-2 border-b border-slate-100">Down Transportation</td><td className="text-center px-3 py-2 border-b border-slate-100">—</td><td className="text-right px-3 py-2 border-b border-slate-100">{formatCurrency(downTransport)}</td></tr>
                   )}
                 </tbody>
               </table>

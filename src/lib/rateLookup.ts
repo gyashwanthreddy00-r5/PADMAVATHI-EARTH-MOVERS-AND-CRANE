@@ -17,7 +17,7 @@ export function normalizeCapacity(cap: string | null | undefined): string {
  * - Return the latest-effective record (sorted by effective_from DESC)
  */
 export function findRateMasterForVehicle(
-  vehicle: Vehicle | undefined,
+  vehicle: Pick<Vehicle, 'type' | 'capacity'> | undefined,
   rateMasterRates: RateMaster[],
   tripDate: string,
 ): RateMaster | null {

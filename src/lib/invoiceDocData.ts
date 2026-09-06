@@ -1,7 +1,11 @@
 import type { InvoiceWithRelations, InvoiceItem, CompanySettings, InvoiceSettings } from '@/types';
 import { amountInWords, buildInvoiceLineDescription } from '@/lib/utils';
-import { calcSessionAmount } from '@/lib/rentalCalc';
+import { calcSessionMinutes } from '@/lib/rentalCalc';
 import { calculateDiscount } from '@/lib/discountCalc';
+
+function round2(n: number): number {
+  return Math.round(n * 100) / 100;
+}
 
 // Single source of truth for Master/Duplicate/Extra Copy invoice content and
 // figures. Both the print template (InvoiceDocument.tsx) and the email PDF
@@ -179,31 +183,49 @@ export function prepareInvoiceData(
           daily_rate_snapshot: iv.daily_rate_snapshot,
           monthly_rate_snapshot: iv.monthly_rate_snapshot,
           vehicle: { registration_number: iv.vehicle_number, type: iv.vehicle_type, capacity: iv.capacity },
+          // The saved duration_minutes on a session can be 0 even when real in/out times (or
+          // meter readings) were recorded — derive the real duration from those when that
+          // happens, so each session still gets its own accurate breakdown line.
+          sessions: sessions.length > 0
+            ? sessions.map(s => {
+                const minutes = s.duration_minutes > 0 ? s.duration_minutes : calcSessionMinutes({
+                  in_time: s.in_time,
+                  out_time: s.out_time,
+                  opening_hour_meter: s.opening_hour_meter,
+                  closing_hour_meter: s.closing_hour_meter,
+                });
+                return {
+                  session_number: s.session_number,
+                  duration_hours: round2(minutes / 60),
+                  duration_minutes: minutes,
+                  in_time: s.in_time,
+                  rate_type: s.rate_type,
+                };
+              })
+            : null,
         };
         const rebuilt = buildInvoiceLineDescription(tr);
         desc = rebuilt.description;
         calcDetails = rebuilt.calculation_details;
 
-        if (rateType === 'Daily') {
-          if (sessionCount > 0) {
-            quantity = sessionCount;
-          } else if (dailyRate > 0) {
+        // Only treat the line as a flat "per day" quantity when there's a single day-rate
+        // session to describe. A vehicle with multiple sessions is shown with a full
+        // per-session breakdown instead (see buildInvoiceLineDescription), so it keeps the
+        // default quantity/unit rather than being mislabeled as "N day".
+        if (rateType === 'Daily' && sessionCount <= 1) {
+          if (dailyRate > 0) {
             quantity = Math.round((rentalAmount / dailyRate) * 100) / 100;
           }
           unit = 'day';
         }
 
-        // For Hourly rate: the stored rental_amount is the base rental, and the
-        // session hourly calculation is additional. Final amount = base + hourly.
-        if (rateType === 'Hourly') {
-          const r1 = Number(iv.first_hour_rate) || 0;
-          const r2 = Number(iv.second_hour_rate) || 0;
-          const dRate = Number(iv.daily_rate_snapshot) || 0;
-          const totalMinutes = Math.round(Number(iv.total_hours) * 60);
-          const hourlyAmount = calcSessionAmount(totalMinutes, r1, r2, dRate);
-          if (hourlyAmount > 0 && rentalAmount > 0 && Math.abs(hourlyAmount - rentalAmount) > 0.01) {
-            amount = Math.round((rentalAmount + hourlyAmount) * 100) / 100;
-          }
+        // iv.rental_amount is always the authoritative total for this vehicle — it's the
+        // sum of every session's amount, computed at bill-creation time (see calcRental in
+        // rentalCalc.ts). Trust it as-is rather than re-deriving/adding an hourly estimate on
+        // top of it, which double-counted vehicles that mix an Hourly session with a Daily/
+        // Weekly/Monthly one (e.g. 1 hourly session + 1 full-day session).
+        if (rentalAmount > 0) {
+          amount = rentalAmount;
         }
       } else if (it.trip) {
         const rebuilt = buildInvoiceLineDescription(it.trip);

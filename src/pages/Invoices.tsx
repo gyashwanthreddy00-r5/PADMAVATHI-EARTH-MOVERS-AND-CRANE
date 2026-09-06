@@ -16,12 +16,13 @@ import {
 import { invoiceDocHTML, type PrintCopyType } from '@/components/InvoiceDocument';
 import { generateInvoicePdfFromData } from '@/lib/invoicePdf';
 import { calculateDiscount, validateDiscountPercentage } from '@/lib/discountCalc';
+import { findRateMasterForVehicle } from '@/lib/rateLookup';
 import { useAuth } from '@/context/AuthContext';
 import { TripEntryForm, type MultiVehicleTripFormData, type VehicleEntryData } from '@/components/TripEntryForm';
 import { DatePicker } from '@/components/ui/DatePicker';
 import type {
   InvoiceWithRelations, InvoiceItem, InvoicePayment,
-  Customer, InvoiceSettings, PaymentMode, InvoiceStatus, InvoiceReminder,
+  Customer, InvoiceSettings, PaymentMode, InvoiceStatus, InvoiceReminder, RateMaster, VehicleType,
 } from '@/types';
 
 type Step = 'list' | 'step1' | 'step2';
@@ -36,6 +37,40 @@ function getEmailErrorMessage(message: string): string {
     return 'Email delivery is still in testing mode. A sending domain must be verified before invoices can be sent to customers.';
   }
   return message;
+}
+
+// Some older invoice_vehicles rows don't carry a snapshot of the hourly
+// rate (first_hour_rate / second_hour_rate are 0/null) even though the
+// rental amount was correctly billed. When that happens, look up the
+// applicable Rate Master record so the printed/viewed/emailed invoice can
+// still show the "1st Hr + N Hr + Min" breakdown instead of collapsing to
+// a flat "Full Day Amt" line. This only fills in-memory display fields —
+// it never writes back to the database.
+function fillMissingHourlyRatesFromRateMaster(
+  invoicesData: InvoiceWithRelations[],
+  rateMasterRates: RateMaster[],
+): InvoiceWithRelations[] {
+  if (rateMasterRates.length === 0) return invoicesData;
+  return invoicesData.map(inv => {
+    const invoiceVehicles = inv.invoiceVehicles;
+    if (!invoiceVehicles || invoiceVehicles.length === 0) return inv;
+    let changed = false;
+    const updatedVehicles = invoiceVehicles.map(iv => {
+      const rateType = iv.rate_type ?? 'Hourly';
+      const hasRates = (Number(iv.first_hour_rate) || 0) > 0 || (Number(iv.second_hour_rate) || 0) > 0;
+      if (rateType !== 'Hourly' || hasRates) return iv;
+      const tripDate = iv.sessions?.[0]?.in_time || inv.trip_date || inv.invoice_date;
+      const rm = findRateMasterForVehicle(
+        { type: (iv.vehicle_type ?? iv.vehicle?.type ?? '') as VehicleType, capacity: iv.capacity_tons ?? iv.capacity },
+        rateMasterRates,
+        tripDate,
+      );
+      if (!rm) return iv;
+      changed = true;
+      return { ...iv, first_hour_rate: rm.first_hour_rate, second_hour_rate: rm.second_hour_rate };
+    });
+    return changed ? { ...inv, invoiceVehicles: updatedVehicles } : inv;
+  });
 }
 
 function convertInvoiceToFormData(inv: InvoiceWithRelations): MultiVehicleTripFormData {
@@ -152,7 +187,7 @@ export default function Invoices({ initialTab = 'list' }: InvoicesProps = {}) {
 
   const fetchAll = useCallback(async () => {
     setLoading(true);
-    const [invRes, custRes, isRes] = await Promise.all([
+    const [invRes, custRes, isRes, rateMasterRes] = await Promise.all([
       supabase
         .from('invoices')
         .select(FULL_INVOICE_SELECT)
@@ -160,9 +195,12 @@ export default function Invoices({ initialTab = 'list' }: InvoicesProps = {}) {
         .order('invoice_date', { ascending: false }),
       supabase.from('customers').select('*').order('name'),
       supabase.from('invoice_settings').select('*').limit(1).maybeSingle(),
+      supabase.from('rate_master').select('*').in('status', ['Active', 'Closed']),
     ]);
     if (invRes.error) show(t('error') + ': ' + invRes.error.message, 'error');
-    setInvoices((invRes.data ?? []) as unknown as InvoiceWithRelations[]);
+    const rawInvoices = (invRes.data ?? []) as unknown as InvoiceWithRelations[];
+    const rateMasterRates = (rateMasterRes.data ?? []) as RateMaster[];
+    setInvoices(fillMissingHourlyRatesFromRateMaster(rawInvoices, rateMasterRates));
     setCustomers(custRes.data ?? []);
     setInvoiceSettings(isRes.data as InvoiceSettings | null);
     setLoading(false);
