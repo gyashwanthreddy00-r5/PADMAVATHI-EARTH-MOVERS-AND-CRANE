@@ -133,6 +133,11 @@ export default function Rates() {
     try {
       if (editing) {
         const newEffFrom = form.effective_from ?? TODAY;
+        if (newEffFrom <= editing.effective_from) {
+          show(`Effective From must be after ${formatDate(editing.effective_from)} — the current version (V${editing.version_number}) already starts on that date. Pick a later date to create a new version.`, 'error');
+          setSaving(false);
+          return;
+        }
         const closeDate = new Date(newEffFrom);
         closeDate.setDate(closeDate.getDate() - 1);
         const prevDay = closeDate.toISOString().split('T')[0];

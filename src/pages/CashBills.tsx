@@ -6,14 +6,15 @@ import { useSettings } from '@/context/SettingsContext';
 import { DataTable, type Column } from '@/components/ui/DataTable';
 import { Modal, ConfirmDialog, Button, Field, inputClass, LoadingSpinner } from '@/components/ui/common';
 import { Plus, Printer, Eye, Trash2, Download, IndianRupee, CreditCard } from 'lucide-react';
-import { formatCurrency, formatDate, formatDuration, todayISO, sanitizePhone, phoneValidationError, buildInvoiceLineDescription } from '@/lib/utils';
+import { formatCurrency, formatDate, formatDuration, todayISO, sanitizePhone, phoneValidationError, buildInvoiceLineDescription, classNames } from '@/lib/utils';
 import { calcSessionMinutes } from '@/lib/rentalCalc';
 import { getReportLogoUrl } from '@/lib/reportLogo';
 import { calculateDiscount, validateDiscountPercentage } from '@/lib/discountCalc';
 import { exportToExcelProfessional } from '@/lib/excelExport';
-import { TripEntryForm, type MultiVehicleTripFormData, type VehicleEntryData } from '@/components/TripEntryForm';
+import type { MultiVehicleTripFormData, VehicleEntryData } from '@/components/TripEntryForm';
+import { SimpleCashBillForm } from '@/components/SimpleCashBillForm';
 import { DatePicker } from '@/components/ui/DatePicker';
-import type { InvoiceWithRelations, InvoicePayment, PaymentMode } from '@/types';
+import type { InvoiceWithRelations, InvoicePayment, PaymentMode, BillStatus } from '@/types';
 
 type CashPayStatus = 'Unpaid' | 'Partial' | 'Paid';
 
@@ -40,7 +41,7 @@ function calcPayStatus(paid: number, total: number): CashPayStatus {
   return 'Partial';
 }
 
-const PAYMENT_SELECT = 'invoice_payments(*)';
+const PAYMENT_SELECT = 'payments:invoice_payments(*)';
 const INVOICE_VEHICLES_SELECT = 'invoiceVehicles:invoice_vehicles(*, vehicle:vehicles!invoice_vehicles_vehicle_id_fkey(id,registration_number,type,capacity), driver:employees!invoice_vehicles_driver_id_fkey(id,name,role), sessions:invoice_vehicle_sessions(*))';
 const FULL_SELECT = `*, customer:customers!invoices_customer_id_fkey(id,name), ${PAYMENT_SELECT}, ${INVOICE_VEHICLES_SELECT}`;
 
@@ -71,6 +72,10 @@ export default function CashBills() {
   const [customerPhone, setCustomerPhone] = useState('');
   const [discountEnabled, setDiscountEnabled] = useState(false);
   const [discountPercent, setDiscountPercent] = useState(0);
+  const [billPaymentMode, setBillPaymentMode] = useState<PaymentMode>('Cash');
+  const [billPaymentStatus, setBillPaymentStatus] = useState<BillStatus>('Pending');
+  const [paidAmountInput, setPaidAmountInput] = useState('');
+  const [pendingBillData, setPendingBillData] = useState<MultiVehicleTripFormData | null>(null);
 
   const fetchAll = useCallback(async () => {
     setLoading(true);
@@ -101,6 +106,10 @@ export default function CashBills() {
     setCustomerPhone('');
     setDiscountEnabled(false);
     setDiscountPercent(0);
+    setBillPaymentMode('Cash');
+    setBillPaymentStatus('Pending');
+    setPaidAmountInput('');
+    setPendingBillData(null);
     setModalOpen(true);
   };
 
@@ -150,6 +159,13 @@ export default function CashBills() {
     const disc = calculateDiscount({ grandTotal: totalAmt, discountEnabled, discountPercentage: discountPercent });
     const finalPayable = disc.finalPayableAmount;
 
+    // Payment Status drives what's actually paid at creation time: Paid = full amount,
+    // Pending = nothing yet, Partially Paid = the manually entered (and clamped) figure.
+    const paidAmount = billPaymentStatus === 'Paid' ? finalPayable
+      : billPaymentStatus === 'Pending' ? 0
+      : Math.min(finalPayable, Math.max(0, Number(paidAmountInput) || 0));
+    const balanceAmount = calcBalance(finalPayable, paidAmount);
+
     const invoicePayload = {
       invoice_number: invNum,
       invoice_date: data.trip_date,
@@ -186,11 +202,11 @@ export default function CashBills() {
       up_transportation_amount: data.up_transportation_enabled ? Number(data.up_transportation_amount) || 0 : 0,
       down_transportation_enabled: data.down_transportation_enabled,
       down_transportation_amount: data.down_transportation_enabled ? Number(data.down_transportation_amount) || 0 : 0,
-      amount_received: 0,
-      balance_amount: finalPayable,
-      invoice_status: 'Pending',
-      payment_status: 'Pending',
-      payment_mode: null,
+      amount_received: paidAmount,
+      balance_amount: balanceAmount,
+      invoice_status: billPaymentStatus,
+      payment_status: billPaymentStatus,
+      payment_mode: billPaymentMode,
       payment_reference: null,
       is_cancelled: false,
     };
@@ -199,6 +215,22 @@ export default function CashBills() {
     if (invErr) throw new Error(invErr.message);
 
     await insertVehicles(invRow.id, data.vehicles);
+
+    // The invoice list's Paid/Balance/Status columns are derived from invoice_payments
+    // rows (see getTotalPaid), not the invoices.amount_received snapshot above — so a
+    // matching payment record has to exist for those to reflect what was selected here,
+    // exactly as recordPayment() does when a payment is added to an existing bill.
+    if (paidAmount > 0) {
+      const { error: payErr } = await supabase.from('invoice_payments').insert({
+        invoice_id: invRow.id,
+        amount: paidAmount,
+        payment_date: data.trip_date,
+        payment_mode: billPaymentMode,
+        reference: null,
+        remarks: null,
+      });
+      if (payErr) console.error('Initial payment record error:', payErr);
+    }
 
     show('Cash / UPI bill created successfully.', 'success');
     setModalOpen(false);
@@ -683,6 +715,16 @@ export default function CashBills() {
   const paymentModalBalance = paymentModal ? calcBalance(getPayableAmount(paymentModal), getTotalPaid(paymentModal)) : 0;
   const paymentModalNewBalance = paymentModal ? Math.max(0, paymentModalBalance - paymentForm.amount) : 0;
 
+  // New-bill Payment Status breakdown — derived from the pending bill total + discount,
+  // never a separate stored figure, so it can never drift from the actual bill amount.
+  const newBillFinalAmount = pendingBillData
+    ? calculateDiscount({ grandTotal: pendingBillData.total_amount, discountEnabled, discountPercentage: discountPercent }).finalPayableAmount
+    : 0;
+  const newBillPaidAmount = billPaymentStatus === 'Paid' ? newBillFinalAmount
+    : billPaymentStatus === 'Pending' ? 0
+    : Math.min(newBillFinalAmount, Math.max(0, Number(paidAmountInput) || 0));
+  const newBillBalanceAmount = calcBalance(newBillFinalAmount, newBillPaidAmount);
+
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between">
@@ -731,13 +773,81 @@ export default function CashBills() {
             )}
           </div>
 
-          <TripEntryForm
-            onSubmit={save}
-            onCancel={() => setModalOpen(false)}
-            submitLabel="Save Bill"
-            submitting={saving}
-            hideCustomerSelect
-          />
+          <SimpleCashBillForm onChange={setPendingBillData} />
+
+          <div>
+            <p className="text-xs font-bold uppercase tracking-wide text-slate-500 mb-2">Payment Mode</p>
+            <div className="grid grid-cols-2 gap-2 max-w-xs">
+              {(['Cash', 'UPI'] as const).map(pm => (
+                <button
+                  key={pm}
+                  type="button"
+                  onClick={() => setBillPaymentMode(pm)}
+                  className={classNames(
+                    'p-2.5 border rounded-lg text-sm font-semibold transition-colors',
+                    billPaymentMode === pm ? 'bg-blue-600 border-blue-600 text-white' : 'border-slate-200 text-slate-600 hover:bg-slate-50'
+                  )}
+                >
+                  {pm}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div>
+            <p className="text-xs font-bold uppercase tracking-wide text-slate-500 mb-2">Payment Status</p>
+            <div className="grid grid-cols-3 gap-2 max-w-md">
+              {(['Paid', 'Pending', 'Partially Paid'] as const).map(st => (
+                <button
+                  key={st}
+                  type="button"
+                  onClick={() => { setBillPaymentStatus(st); if (st !== 'Partially Paid') setPaidAmountInput(''); }}
+                  className={classNames(
+                    'p-2.5 border rounded-lg text-sm font-semibold transition-colors',
+                    billPaymentStatus === st ? 'bg-blue-600 border-blue-600 text-white' : 'border-slate-200 text-slate-600 hover:bg-slate-50'
+                  )}
+                >
+                  {st}
+                </button>
+              ))}
+            </div>
+
+            {billPaymentStatus === 'Partially Paid' && (
+              <div className="grid grid-cols-2 gap-3 mt-3 max-w-md">
+                <Field label="Paid Amount" required>
+                  <input
+                    type="number" min="0" max={newBillFinalAmount} step="0.01"
+                    className={inputClass()}
+                    value={paidAmountInput}
+                    onChange={e => {
+                      const raw = Math.min(newBillFinalAmount, Math.max(0, Number(e.target.value) || 0));
+                      setPaidAmountInput(e.target.value === '' ? '' : String(raw));
+                      // Self-correcting per spec: paying the full amount is "Paid", paying
+                      // nothing is "Pending" — "Partially Paid" only applies in between.
+                      if (raw >= newBillFinalAmount && newBillFinalAmount > 0) setBillPaymentStatus('Paid');
+                      else if (raw <= 0) setBillPaymentStatus('Pending');
+                    }}
+                    placeholder="0.00"
+                  />
+                </Field>
+                <Field label="Balance Amount">
+                  <div className={classNames(inputClass(), 'bg-slate-100 text-slate-600 font-semibold')}>{formatCurrency(newBillBalanceAmount)}</div>
+                </Field>
+              </div>
+            )}
+
+            {pendingBillData && billPaymentStatus !== 'Partially Paid' && (
+              <div className="flex gap-4 mt-3 text-sm">
+                <span className="text-slate-500">Paid: <b className="text-slate-800">{formatCurrency(newBillPaidAmount)}</b></span>
+                <span className="text-slate-500">Balance: <b className="text-slate-800">{formatCurrency(newBillBalanceAmount)}</b></span>
+              </div>
+            )}
+          </div>
+
+          <div className="flex justify-end gap-2 pt-2 border-t border-slate-100">
+            <Button variant="secondary" onClick={() => setModalOpen(false)} disabled={saving}>Cancel</Button>
+            <Button onClick={() => pendingBillData && save(pendingBillData)} disabled={!pendingBillData || saving}>{saving ? 'Saving...' : 'Save Bill'}</Button>
+          </div>
         </div>
       </Modal>
 

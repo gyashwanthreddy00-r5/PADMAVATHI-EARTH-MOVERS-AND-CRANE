@@ -76,9 +76,9 @@ export default function Employees() {
       license_number: form.license_number?.trim() || null,
       license_expiry: cleanDate(form.license_expiry),
       advance_salary: Math.max(0, Number(form.advance_salary) || 0),
-      eye_test_amount: form.role === 'Driver' ? (form.eye_test_amount != null ? Math.max(0, Number(form.eye_test_amount)) : null) : null,
-      eye_test_date: form.role === 'Driver' ? cleanDate(form.eye_test_date) : null,
-      eye_test_expiry_date: form.role === 'Driver' ? cleanDate(form.eye_test_expiry_date) : null,
+      eye_test_amount: (form.role === 'Driver' || form.role === 'Operator') ? (form.eye_test_amount != null ? Math.max(0, Number(form.eye_test_amount)) : null) : null,
+      eye_test_date: (form.role === 'Driver' || form.role === 'Operator') ? cleanDate(form.eye_test_date) : null,
+      eye_test_expiry_date: (form.role === 'Driver' || form.role === 'Operator') ? cleanDate(form.eye_test_expiry_date) : null,
       active: form.active ?? true,
       created_by: editing ? undefined : user.id,
       updated_by: user.id,
@@ -241,7 +241,7 @@ export default function Employees() {
               </Field>
             </>
           )}
-          {form.role === 'Driver' && (
+          {(form.role === 'Driver' || form.role === 'Operator') && (
             <>
               <Field label={t('eyeTestAmount')}>
                 <input type="number" min="0" step="0.01" className={inputClass()} value={form.eye_test_amount ?? ''} onChange={e => setForm(f => ({ ...f, eye_test_amount: e.target.value === '' ? null : Number(e.target.value) }))} placeholder="" />
@@ -277,7 +277,7 @@ export default function Employees() {
               <div><span className="text-slate-500">License No:</span> <span className="font-medium">{viewEmp.license_number ?? '-'}</span></div>
               <div><span className="text-slate-500">License Expiry:</span> <span className="font-medium">{viewEmp.license_expiry ? formatDate(viewEmp.license_expiry) : '-'}</span></div>
               <div><span className="text-slate-500">Advance Salary:</span> <span className="font-medium">{formatCurrency(viewEmp.advance_salary)}</span></div>
-              {viewEmp.role === 'Driver' && (
+              {(viewEmp.role === 'Driver' || viewEmp.role === 'Operator') && (
                 <>
                   <div><span className="text-slate-500">Eye Test Amount:</span> <span className="font-medium">{viewEmp.eye_test_amount != null ? formatCurrency(viewEmp.eye_test_amount) : '-'}</span></div>
                   <div><span className="text-slate-500">Eye Test Date:</span> <span className="font-medium">{viewEmp.eye_test_date ? formatDate(viewEmp.eye_test_date) : '-'}</span></div>

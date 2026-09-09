@@ -1,10 +1,52 @@
-import type { InvoiceWithRelations, InvoiceItem, CompanySettings, InvoiceSettings } from '@/types';
-import { amountInWords, buildInvoiceLineDescription } from '@/lib/utils';
+import type { InvoiceWithRelations, InvoiceItem, CompanySettings, InvoiceSettings, RateMaster, Vehicle } from '@/types';
+import { amountInWords, buildInvoiceLineDescription, formatDuration, formatNumber } from '@/lib/utils';
 import { calcSessionMinutes } from '@/lib/rentalCalc';
 import { calculateDiscount } from '@/lib/discountCalc';
+import { findRateMasterForVehicle } from '@/lib/rateLookup';
+
+type VehicleLite = Pick<Vehicle, 'registration_number' | 'type' | 'capacity'>;
 
 function round2(n: number): number {
   return Math.round(n * 100) / 100;
+}
+
+// buildInvoiceLineDescription() joins date | vehicle | duration | sessions with ' | ' —
+// e.g. "16 Tons Crane — 08 Sept 2026 | AP28BP1678 | 4 Hr 23 Min". Older invoices (saved
+// before invoice_vehicles existed, or via a flow that stores invoice_items directly) have
+// this same duration segment baked into the stored description with no separate rate
+// snapshot at all. Either way, pull the duration segment (it always looks like "6 Hr 10
+// Min" / "8 Hr" / "30 Min") out for the Quantity column and leave everything else —
+// date, vehicle number — untouched, regardless of which code path produced the description.
+function extractDurationSegment(description: string): { desc: string; durationLabel: string | null } {
+  let durationLabel: string | null = null;
+  const kept = description.split(' | ').filter(seg => {
+    const trimmed = seg.trim();
+    if (durationLabel === null && /^\d+\s*(day|days|hr|hrs|hour|hours|min|mins|minutes)\b/i.test(trimmed)) {
+      durationLabel = trimmed;
+      return false;
+    }
+    return true;
+  });
+  return { desc: kept.join(' | '), durationLabel };
+}
+
+// Live Rate Master lookup for a Hourly line with no captured first/second-hour snapshot —
+// resolved the exact same way as everywhere else in the app (findRateMasterForVehicle),
+// never a value derived from the line's own amount. Returns null (not a fabricated
+// value) when no applicable Rate Master record can be found.
+function liveHourlyRateLabel(
+  vehicleType: string | null | undefined,
+  vehicleCapacity: string | null | undefined,
+  workDate: string,
+  rateMasterRows: RateMaster[],
+): string | null {
+  if (!vehicleType || rateMasterRows.length === 0) return null;
+  const rm = findRateMasterForVehicle({ type: vehicleType as Vehicle['type'], capacity: vehicleCapacity ?? null }, rateMasterRows, workDate);
+  if (!rm) return null;
+  const r1 = Number(rm.first_hour_rate) || 0;
+  const r2 = Number(rm.second_hour_rate) || 0;
+  if (r1 <= 0 && r2 <= 0) return null;
+  return `${formatNumber(r1)} / ${formatNumber(r2)}`;
 }
 
 // Single source of truth for Master/Duplicate/Extra Copy invoice content and
@@ -27,6 +69,11 @@ export interface PreparedInvoiceItemRow {
   calcLines: string[];
   hsnSac: string;
   quantity: number;
+  /** Print-ready Quantity column text — e.g. "6 Hr 10 Min" for Hourly rows, "20.00 nos" / "1.00 day" otherwise. */
+  quantityLabel: string;
+  rate: number;
+  /** Print-ready Rate column text — "2,500.00/800.00" (1st Hr / 2nd Hr onwards) for Hourly rows, plain formatted rate otherwise. */
+  rateLabel: string;
   unit: string;
   amount: number;
 }
@@ -74,6 +121,7 @@ export interface PreparedInvoiceData {
   copyLabel: string;
   hsnSacDefault: string;
   vehicleTypesJoined: string;
+  vehicleNumbersJoined: string;
   itemRows: PreparedInvoiceItemRow[];
 }
 
@@ -83,6 +131,13 @@ export function prepareInvoiceData(
   settings: CompanySettings | null,
   invoiceSettings: InvoiceSettings | null,
   copyType: string = 'master',
+  // Live Rate Master fallback for Hourly lines that never captured a first/second-hour
+  // rate snapshot (older invoices saved before invoice_vehicles existed, or items with
+  // no linked vehicle/trip) — resolved the same way the rest of the app resolves rates,
+  // via findRateMasterForVehicle. Both optional: callers that don't pass them simply get
+  // the single derived-rate fallback for such lines, same as before.
+  rateMasterRows: RateMaster[] = [],
+  vehiclesList: VehicleLite[] = [],
 ): PreparedInvoiceData {
   const compName = settings?.company_name ?? '';
   const compAddr = (settings?.address ?? '').split('\n').filter(Boolean);
@@ -135,6 +190,10 @@ export function prepareInvoiceData(
   const copyLabel = COPY_LABELS[copyType] ?? '';
   const hsnSacDefault = invoiceSettings?.hsn_sac ?? '997319';
   const vehicleTypesJoined = (inv.invoiceVehicles ?? []).map(v => v.vehicle_type).filter(Boolean).join(', ');
+  // Deduplicated vehicle numbers straight from this invoice's actual billing entries —
+  // the authoritative source for "Motor Vehicle No." on print, since inv.motor_vehicle_numbers
+  // is a snapshot taken once and can drift if vehicles/sessions are added or edited afterward.
+  const vehicleNumbersJoined = Array.from(new Set((inv.invoiceVehicles ?? []).map(v => v.vehicle_number).filter(Boolean))).join(', ');
 
   // Build line items dynamically from all items (rental, batha, transportation).
   // Match rental items to invoiceVehicles to compute correct quantity for Daily rate type.
@@ -153,6 +212,7 @@ export function prepareInvoiceData(
     let quantity = Number(it.quantity) || 1;
     let unit = it.unit ?? 'nos';
     let amount = Number(it.amount) || 0;
+    let itemHourlyRateLabel: string | null = null;
 
     if (isRental) {
       const iv = invVehicles[vehicleIdx];
@@ -219,6 +279,22 @@ export function prepareInvoiceData(
           unit = 'day';
         }
 
+        // Hourly rows print the actual duration ("6 Hr 10 Min") in Quantity — never a
+        // meaningless "1.00 nos" — and the configured 1st/2nd-hour rate pair in Rate,
+        // instead of a single derived (amount ÷ quantity) figure.
+        if (rateType === 'Hourly') {
+          const totalHrs = Number(iv.total_hours) || 0;
+          if (totalHrs > 0) quantity = totalHrs;
+          unit = 'hr';
+          const r1 = Number(iv.first_hour_rate) || 0;
+          const r2 = Number(iv.second_hour_rate) || 0;
+          if (r1 > 0 || r2 > 0) {
+            itemHourlyRateLabel = `${formatNumber(r1)} / ${formatNumber(r2)}`;
+          } else {
+            itemHourlyRateLabel = liveHourlyRateLabel(iv.vehicle_type, iv.capacity_tons ?? iv.capacity, firstSessionDate || inv.invoice_date, rateMasterRows);
+          }
+        }
+
         // iv.rental_amount is always the authoritative total for this vehicle — it's the
         // sum of every session's amount, computed at bill-creation time (see calcRental in
         // rentalCalc.ts). Trust it as-is rather than re-deriving/adding an hourly estimate on
@@ -231,6 +307,34 @@ export function prepareInvoiceData(
         const rebuilt = buildInvoiceLineDescription(it.trip);
         desc = rebuilt.description;
         calcDetails = rebuilt.calculation_details;
+        if (it.trip.rate_type === 'Hourly') {
+          const totalHrs = Number(it.trip.total_hours) || 0;
+          if (totalHrs > 0) quantity = totalHrs;
+          unit = 'hr';
+          const r1 = Number(it.trip.first_hour_rate) || 0;
+          const r2 = Number(it.trip.second_hour_rate) || 0;
+          if (r1 > 0 || r2 > 0) {
+            itemHourlyRateLabel = `${formatNumber(r1)} / ${formatNumber(r2)}`;
+          } else {
+            const tripDate = it.trip.trip_date ?? inv.invoice_date;
+            itemHourlyRateLabel = liveHourlyRateLabel(it.trip.vehicle?.type, it.trip.vehicle?.capacity, tripDate, rateMasterRows);
+          }
+        }
+      } else {
+        // Fully legacy row — invoice_items saved directly with no invoice_vehicles or
+        // trip link at all (predates both relationships). The vehicle registration number
+        // is still embedded in the stored description text (buildInvoiceLineDescription's
+        // ' | '-joined format) — use it to identify the vehicle, then live-lookup its
+        // applicable Rate Master record, so even these old rows show a real 1st/2nd-hour
+        // rate instead of a meaningless derived (amount ÷ 1) figure.
+        const segments = desc.split(' | ').map(s => s.trim());
+        const looksHourly = segments.some(seg => /^\d+\s*(hr|hrs|hour|hours|min|mins|minutes)\b/i.test(seg));
+        if (looksHourly && vehiclesList.length > 0 && rateMasterRows.length > 0) {
+          const matchedVehicle = vehiclesList.find(v => segments.includes(v.registration_number));
+          if (matchedVehicle) {
+            itemHourlyRateLabel = liveHourlyRateLabel(matchedVehicle.type, matchedVehicle.capacity, inv.invoice_date, rateMasterRows);
+          }
+        }
       }
     }
 
@@ -242,12 +346,34 @@ export function prepareInvoiceData(
       : [];
     rentalDelta += amount - (Number(it.amount) || 0);
 
+    // Applied unconditionally — covers rows rebuilt above (iv / it.trip) AND older rows
+    // whose description was stored as-is with the duration baked directly into the text
+    // (invoice_vehicles didn't exist yet, or the item was never linked to a vehicle/trip).
+    // Either way, Description of Services never shows "4 Hr 23 Min" — it always moves to
+    // Quantity instead.
+    const { desc: cleanedDesc, durationLabel } = extractDurationSegment(desc);
+    desc = cleanedDesc;
+    if (durationLabel) {
+      // Whether or not a rate (snapshot or live-looked-up) was found, a line whose
+      // description carried a duration is an hourly line — Quantity/Per reflect that
+      // regardless. Rate falls back to the single derived (amount ÷ quantity) figure
+      // only when no applicable Rate Master record could be resolved at all.
+      unit = 'hr';
+    }
+
+    const rate = quantity > 0 ? round2(amount / quantity) : amount;
     itemRows.push({
       slNo: idx + 1,
       description: desc,
       calcLines,
       hsnSac: it.hsn_sac ?? hsnSacDefault,
       quantity,
+      // durationLabel (parsed straight from the stored description) is always the most
+      // reliable text — prefer it over reconstructing from `quantity`, which for a fully
+      // legacy row is just the raw stored value (often 1), not real hours.
+      quantityLabel: durationLabel ?? (itemHourlyRateLabel ? formatDuration(quantity) : `${formatNumber(quantity)} ${unit}`),
+      rate,
+      rateLabel: itemHourlyRateLabel ?? formatNumber(rate),
       unit,
       amount,
     });
@@ -277,7 +403,7 @@ export function prepareInvoiceData(
     cName, cAddr, cGstin, cState, cStateCode,
     conName, conAddr, conGstin, conState, conStateCode,
     taxable, cgstAmt, sgstAmt, igstAmt, totalTax, grand, received, finalPayable, balance, isIgst,
-    declaration, words, copyLabel, hsnSacDefault, vehicleTypesJoined,
+    declaration, words, copyLabel, hsnSacDefault, vehicleTypesJoined, vehicleNumbersJoined,
     itemRows,
   };
 }

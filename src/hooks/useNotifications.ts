@@ -82,7 +82,7 @@ export function useNotifications() {
         }
       }
 
-      if (emp.role === 'Driver' && emp.eye_test_expiry_date) {
+      if ((emp.role === 'Driver' || emp.role === 'Operator') && emp.eye_test_expiry_date) {
         const d = daysUntil(emp.eye_test_expiry_date);
         if (d < 0) {
           list.push({

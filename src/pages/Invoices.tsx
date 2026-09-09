@@ -8,21 +8,23 @@ import { Modal, ConfirmDialog, StatusBadge, Button, Field, inputClass, LoadingSp
 import {
   Plus, Printer, Eye, FileText,
   CheckCircle2, ArrowLeft, IndianRupee, X, Trash2,
-  Search, Mail, Bell, Send, RotateCw, Zap, ChevronRight,
+  Search, Mail, Zap, ChevronRight, FileEdit,
 } from 'lucide-react';
 import {
-  formatCurrency, formatDate, amountInWords, todayISO, buildInvoiceLineDescription,
+  formatCurrency, formatDate, amountInWords, todayISO, buildInvoiceLineDescription, classNames, addDays,
 } from '@/lib/utils';
-import { invoiceDocHTML, type PrintCopyType } from '@/components/InvoiceDocument';
+import { invoiceDocHTML, type PrintCopyType, type InvoiceDocType } from '@/components/InvoiceDocument';
 import { generateInvoicePdfFromData } from '@/lib/invoicePdf';
 import { calculateDiscount, validateDiscountPercentage } from '@/lib/discountCalc';
 import { findRateMasterForVehicle } from '@/lib/rateLookup';
 import { useAuth } from '@/context/AuthContext';
 import { TripEntryForm, type MultiVehicleTripFormData, type VehicleEntryData } from '@/components/TripEntryForm';
+import GstBillingEntry from '@/pages/GstBillingEntry';
 import { DatePicker } from '@/components/ui/DatePicker';
+import { SearchableSelect } from '@/components/ui/SearchableSelect';
 import type {
   InvoiceWithRelations, InvoiceItem, InvoicePayment,
-  Customer, InvoiceSettings, PaymentMode, InvoiceStatus, InvoiceReminder, RateMaster, VehicleType,
+  Customer, InvoiceSettings, PaymentMode, InvoiceStatus, RateMaster, VehicleType, Vehicle,
 } from '@/types';
 
 type Step = 'list' | 'step1' | 'step2';
@@ -136,6 +138,8 @@ export default function Invoices({ initialTab = 'list' }: InvoicesProps = {}) {
   const { profile } = useAuth();
   const isAdmin = profile?.role === 'admin';
   const [step, setStep] = useState<Step>(initialTab);
+  const [showNewGstFlow, setShowNewGstFlow] = useState(false);
+  const [resumeGstInvoiceId, setResumeGstInvoiceId] = useState<string | null>(null);
   const [invoices, setInvoices] = useState<InvoiceWithRelations[]>([]);
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [invoiceSettings, setInvoiceSettings] = useState<InvoiceSettings | null>(null);
@@ -152,12 +156,20 @@ export default function Invoices({ initialTab = 'list' }: InvoicesProps = {}) {
   const [invoiceSearch, setInvoiceSearch] = useState('');
   const [customerSearchMode, setCustomerSearchMode] = useState<'invoice' | 'customer'>('invoice');
   const [emailSending, setEmailSending] = useState(false);
-  const [viewReminders, setViewReminders] = useState<InvoiceReminder[]>([]);
-  const [reminderSending, setReminderSending] = useState(false);
-  const [reminderStageModal, setReminderStageModal] = useState<InvoiceWithRelations | null>(null);
-  const [reminderConfirmStage, setReminderConfirmStage] = useState<number | null>(null);
   const [printCopyModal, setPrintCopyModal] = useState<InvoiceWithRelations | null>(null);
   const [printCopyItems, setPrintCopyItems] = useState<InvoiceItem[]>([]);
+  const [printDocType, setPrintDocType] = useState<InvoiceDocType>('tax');
+
+  // Edit Invoice Details (top-right print block: delivery note, reference, buyer's order,
+  // dispatch, destination, vehicle list, terms of delivery, etc.)
+  const [editDetailsModal, setEditDetailsModal] = useState<InvoiceWithRelations | null>(null);
+  const [editDetailsForm, setEditDetailsForm] = useState({
+    delivery_note: '', terms_of_payment: '', reference_no: '', reference_date: '',
+    buyer_order_no: '', buyer_order_date: '', dispatch_doc_no: '', delivery_note_date: '',
+    dispatched_through: '', destination: '', bill_of_lading_no: '', motor_vehicle_numbers: '',
+    terms_of_delivery_days: 28,
+  });
+  const [savingDetails, setSavingDetails] = useState(false);
 
   // Capture Trip state
   const [capturing, setCapturing] = useState(false);
@@ -182,12 +194,29 @@ export default function Invoices({ initialTab = 'list' }: InvoicesProps = {}) {
   const [remarks, setRemarks] = useState('Being hire charges of crane and JCB.');
   const [discountEnabled, setDiscountEnabled] = useState(false);
   const [discountPercent, setDiscountPercent] = useState(0);
+  // Kept in state (not just a fetchAll-local var) so print/view/email can pass them into
+  // invoiceDocHTML for the live Rate Master fallback on legacy lines with no captured
+  // rate snapshot at all (see liveHourlyRateLabel in invoiceDocData.ts).
+  const [rateMasterRows, setRateMasterRows] = useState<RateMaster[]>([]);
+  const [vehiclesList, setVehiclesList] = useState<Pick<Vehicle, 'registration_number' | 'type' | 'capacity'>[]>([]);
 
-  const FULL_INVOICE_SELECT = '*, customer:customers!invoices_customer_id_fkey(*), items:invoice_items(*, trip:trips!invoice_items_trip_entry_id_fkey(id,rate_type,total_hours,rental_amount,trip_date,place_of_work,capacity_tons,first_hour_rate,second_hour_rate,weekly_rate_snapshot,daily_rate_snapshot,monthly_rate_snapshot,vehicle:vehicles!trips_vehicle_id_fkey(id,registration_number,type,capacity))), payments:invoice_payments(*), invoiceVehicles:invoice_vehicles(*, vehicle:vehicles!invoice_vehicles_vehicle_id_fkey(id,registration_number,type,capacity), driver:employees!invoice_vehicles_driver_id_fkey(id,name,role), sessions:invoice_vehicle_sessions(*))';
+  // Customer Statement — bank-statement-style view of one customer's invoices, built
+  // entirely from the invoices already loaded via FULL_INVOICE_SELECT (amount_received
+  // is kept in sync by recordPayment, see openPayment/recordPayment below — the same
+  // source the payment modal itself already trusts, so no separate payments re-summing
+  // is needed here). Empty statementCustomerId means "not in statement mode" — the
+  // existing flat invoice list/search below is shown unchanged in that case.
+  const [statementCustomerId, setStatementCustomerId] = useState('');
+  const [statementFrom, setStatementFrom] = useState('');
+  const [statementTo, setStatementTo] = useState('');
+  const [statementStatus, setStatementStatus] = useState<'All' | 'Paid' | 'Partially Paid' | 'Pending' | 'Outstanding'>('All');
+  const [sendingStatement, setSendingStatement] = useState(false);
+
+  const FULL_INVOICE_SELECT = '*, customer:customers!invoices_customer_id_fkey(*), items:invoice_items(*, trip:trips!invoice_items_trip_entry_id_fkey(id,rate_type,total_hours,rental_amount,trip_date,place_of_work,capacity_tons,first_hour_rate,second_hour_rate,weekly_rate_snapshot,daily_rate_snapshot,monthly_rate_snapshot,vehicle:vehicles!trips_vehicle_id_fkey(id,registration_number,type,capacity))), payments:invoice_payments(*), invoiceVehicles:invoice_vehicles(*, vehicle:vehicles!invoice_vehicles_vehicle_id_fkey(id,registration_number,type,capacity), driver:employees!invoice_vehicles_driver_id_fkey(id,name,role), sessions:invoice_vehicle_sessions(*)), billingLines:invoice_billing_lines(id)';
 
   const fetchAll = useCallback(async () => {
     setLoading(true);
-    const [invRes, custRes, isRes, rateMasterRes] = await Promise.all([
+    const [invRes, custRes, isRes, rateMasterRes, vehiclesRes] = await Promise.all([
       supabase
         .from('invoices')
         .select(FULL_INVOICE_SELECT)
@@ -196,6 +225,7 @@ export default function Invoices({ initialTab = 'list' }: InvoicesProps = {}) {
       supabase.from('customers').select('*').order('name'),
       supabase.from('invoice_settings').select('*').limit(1).maybeSingle(),
       supabase.from('rate_master').select('*').in('status', ['Active', 'Closed']),
+      supabase.from('vehicles').select('registration_number,type,capacity'),
     ]);
     if (invRes.error) show(t('error') + ': ' + invRes.error.message, 'error');
     const rawInvoices = (invRes.data ?? []) as unknown as InvoiceWithRelations[];
@@ -203,6 +233,8 @@ export default function Invoices({ initialTab = 'list' }: InvoicesProps = {}) {
     setInvoices(fillMissingHourlyRatesFromRateMaster(rawInvoices, rateMasterRates));
     setCustomers(custRes.data ?? []);
     setInvoiceSettings(isRes.data as InvoiceSettings | null);
+    setRateMasterRows(rateMasterRates);
+    setVehiclesList((vehiclesRes.data ?? []) as Pick<Vehicle, 'registration_number' | 'type' | 'capacity'>[]);
     setLoading(false);
   }, [show, t, FULL_INVOICE_SELECT]);
 
@@ -243,6 +275,44 @@ export default function Invoices({ initialTab = 'list' }: InvoicesProps = {}) {
       (i.customer?.company_name ?? '').toLowerCase().includes(q)
     );
   }, [invoices, invoiceSearch]);
+
+  const selectedStatementCustomer = customers.find(c => c.id === statementCustomerId) ?? null;
+
+  const statementRows = useMemo(() => {
+    if (!statementCustomerId) return [];
+    return invoices
+      .filter(inv => inv.customer_id === statementCustomerId && !inv.is_cancelled && !!inv.invoice_number)
+      .filter(inv => !statementFrom || inv.invoice_date >= statementFrom)
+      .filter(inv => !statementTo || inv.invoice_date <= statementTo)
+      .map(inv => {
+        const payable = inv.discount_enabled ? Number(inv.final_payable_amount ?? inv.grand_total) : Number(inv.grand_total);
+        const received = Number(inv.amount_received) || 0;
+        const balance = Math.max(0, Math.round((payable - received) * 100) / 100);
+        // Received Date comes from the actual invoice_payments transactions —
+        // never from invoice/billed/generated/today's date. Sorted oldest-first;
+        // an invoice with several part-payments shows every distinct date it
+        // actually received money on, not just the latest.
+        const paymentDates = Array.from(new Set((inv.payments ?? []).map(p => p.payment_date))).sort();
+        const receivedDateLabel = paymentDates.length === 0 ? '—' : paymentDates.map(d => formatDate(d)).join(', ');
+        return { inv, payable, received, balance, paymentDates, receivedDateLabel };
+      })
+      .filter(row => {
+        if (statementStatus === 'All') return true;
+        if (statementStatus === 'Outstanding') return row.balance > 0;
+        return row.inv.payment_status === statementStatus;
+      })
+      .sort((a, b) => a.inv.invoice_date.localeCompare(b.inv.invoice_date));
+  }, [invoices, statementCustomerId, statementFrom, statementTo, statementStatus]);
+
+  const statementSummary = useMemo(() => ({
+    count: statementRows.length,
+    totalAmount: statementRows.reduce((s, r) => s + r.payable, 0),
+    totalReceived: statementRows.reduce((s, r) => s + r.received, 0),
+    totalPending: statementRows.reduce((s, r) => s + r.balance, 0),
+    paidCount: statementRows.filter(r => r.balance <= 0).length,
+    partialCount: statementRows.filter(r => r.received > 0 && r.balance > 0).length,
+    unpaidCount: statementRows.filter(r => r.received <= 0).length,
+  }), [statementRows]);
 
   // Fetch preview invoice number when customer is selected (does NOT consume the number)
   useEffect(() => {
@@ -664,9 +734,58 @@ export default function Invoices({ initialTab = 'list' }: InvoicesProps = {}) {
     });
   };
 
+  const computeVehicleNumbersJoined = (inv: InvoiceWithRelations): string =>
+    Array.from(new Set((inv.invoiceVehicles ?? []).map(v => v.vehicle_number).filter(Boolean))).join(', ');
+
+  const openEditDetails = (inv: InvoiceWithRelations) => {
+    setEditDetailsModal(inv);
+    setEditDetailsForm({
+      delivery_note: inv.delivery_note ?? '',
+      terms_of_payment: inv.terms_of_payment || invoiceSettings?.default_payment_terms || '',
+      reference_no: inv.reference_no || inv.invoice_number || '',
+      reference_date: inv.reference_date || inv.invoice_date || '',
+      buyer_order_no: inv.buyer_order_no ?? '',
+      buyer_order_date: inv.buyer_order_date ?? '',
+      dispatch_doc_no: inv.dispatch_doc_no ?? '',
+      delivery_note_date: inv.delivery_note_date ?? '',
+      dispatched_through: inv.dispatched_through ?? '',
+      destination: inv.destination ?? '',
+      bill_of_lading_no: inv.bill_of_lading_no ?? '',
+      motor_vehicle_numbers: inv.motor_vehicle_numbers || computeVehicleNumbersJoined(inv),
+      terms_of_delivery_days: inv.terms_of_delivery_days || 28,
+    });
+  };
+
+  const saveEditDetails = async () => {
+    if (!editDetailsModal) return;
+    setSavingDetails(true);
+    const f = editDetailsForm;
+    const { error } = await supabase.from('invoices').update({
+      delivery_note: f.delivery_note.trim() || null,
+      terms_of_payment: f.terms_of_payment.trim() || null,
+      reference_no: f.reference_no.trim() || null,
+      reference_date: f.reference_date || null,
+      buyer_order_no: f.buyer_order_no.trim() || null,
+      buyer_order_date: f.buyer_order_date || null,
+      dispatch_doc_no: f.dispatch_doc_no.trim() || null,
+      delivery_note_date: f.delivery_note_date || null,
+      dispatched_through: f.dispatched_through.trim() || null,
+      destination: f.destination.trim() || null,
+      bill_of_lading_no: f.bill_of_lading_no.trim() || null,
+      motor_vehicle_numbers: f.motor_vehicle_numbers.trim() || null,
+      terms_of_delivery_days: Math.max(1, Number(f.terms_of_delivery_days) || 28),
+    }).eq('id', editDetailsModal.id);
+    setSavingDetails(false);
+    if (error) { show(error.message, 'error'); return; }
+    show('Invoice details saved.', 'success');
+    setEditDetailsModal(null);
+    await fetchAll();
+  };
+
   const openPrintCopyModal = (inv: InvoiceWithRelations, items: InvoiceItem[]) => {
     setPrintCopyModal(inv);
     setPrintCopyItems(items);
+    setPrintDocType('tax');
   };
 
   const printInIframe = (html: string) => {
@@ -715,15 +834,15 @@ export default function Invoices({ initialTab = 'list' }: InvoicesProps = {}) {
     return `<!DOCTYPE html><html>${head}<body>${pages}</body></html>`;
   };
 
-  const doPrint = (inv: InvoiceWithRelations, items: InvoiceItem[], copyType: PrintCopyType) => {
+  const doPrint = (inv: InvoiceWithRelations, items: InvoiceItem[], copyType: PrintCopyType, docType: InvoiceDocType = 'tax') => {
     if (copyType === 'all') {
       const docs = (['master', 'duplicate', 'extra'] as const).map(ct =>
-        invoiceDocHTML(inv, items, settings, invoiceSettings, ct)
+        invoiceDocHTML(inv, items, settings, invoiceSettings, ct, docType, rateMasterRows, vehiclesList)
       );
       const combinedHtml = combineInvoiceCopiesHTML(docs);
       printInIframe(combinedHtml);
     } else {
-      const html = invoiceDocHTML(inv, items, settings, invoiceSettings, copyType);
+      const html = invoiceDocHTML(inv, items, settings, invoiceSettings, copyType, docType, rateMasterRows, vehiclesList);
       printInIframe(html);
     }
   };
@@ -781,52 +900,123 @@ export default function Invoices({ initialTab = 'list' }: InvoicesProps = {}) {
     setEmailSending(false);
   };
 
-  const loadReminders = async (invoiceId: string) => {
-    const { data } = await supabase
-      .from('invoice_reminders')
-      .select('*')
-      .eq('invoice_id', invoiceId)
-      .order('reminder_stage', { ascending: true });
-    setViewReminders((data ?? []) as InvoiceReminder[]);
+  // Reuses the same printInIframe pipeline every other print button on this page already
+  // uses — a plain HTML statement, not a new PDF-generation path.
+  const printStatement = () => {
+    if (!selectedStatementCustomer) return;
+    const cust = selectedStatementCustomer;
+    const rows = statementRows.map((r, idx) => `<tr>
+      <td style="text-align:center">${idx + 1}</td>
+      <td>${formatDate(r.inv.invoice_date)}</td>
+      <td>${r.inv.invoice_number}</td>
+      <td style="text-align:right">${formatCurrency(r.payable)}</td>
+      <td style="text-align:right">${formatCurrency(r.received)}</td>
+      <td class="${r.receivedDateLabel === '—' ? 'muted' : ''}">${r.receivedDateLabel}</td>
+      <td style="text-align:right">${formatCurrency(r.balance)}</td>
+    </tr>`).join('');
+    const periodLabel = (statementFrom || statementTo) ? `${statementFrom ? formatDate(statementFrom) : 'Start'} &ndash; ${statementTo ? formatDate(statementTo) : 'Today'}` : 'All Time';
+    const overallStatus = statementSummary.totalPending <= 0 && statementSummary.count > 0 ? 'Paid'
+      : statementSummary.totalReceived > 0 ? 'Partially Paid' : 'Unpaid';
+    const html = `<!doctype html><html><head><meta charset="utf-8"><title>Statement - ${cust.name}</title>
+<style>
+  * { box-sizing: border-box; }
+  body { font-family: Arial, Helvetica, sans-serif; padding: 14mm 12mm; color: #1a1a1a; font-size: 11px; }
+  .co { text-align: center; font-weight: 800; font-size: 17px; text-transform: uppercase; letter-spacing: 0.3px; }
+  .addr { text-align: center; font-size: 10px; color: #444; margin-top: 2px; line-height: 1.5; }
+  h2 { text-align: center; font-size: 13px; letter-spacing: 1.5px; margin: 12px 0 10px; padding: 5px 0; border-top: 1.5px solid #000; border-bottom: 1.5px solid #000; text-transform: uppercase; }
+  .meta-wrap { display: flex; justify-content: space-between; gap: 16px; margin-bottom: 10px; }
+  .cust { font-size: 11px; line-height: 1.6; }
+  .cust .lbl { color: #666; display: inline-block; min-width: 90px; }
+  .cust .nm { font-weight: 700; font-size: 12px; }
+  .gen { text-align: right; font-size: 10px; color: #555; }
+  table { width: 100%; border-collapse: collapse; font-size: 10.5px; margin-top: 6px; }
+  th, td { border: 1px solid #999; padding: 4px 6px; }
+  th { background: #f0f0f0; text-transform: uppercase; font-size: 9px; text-align: center; }
+  td:first-child, th:first-child { text-align: center; }
+  td.muted { color: #999; text-align: center; }
+  tfoot td { font-weight: 700; background: #f7f7f7; border-top: 1.5px solid #000; }
+  .summary { margin-top: 14px; width: 260px; margin-left: auto; font-size: 11px; }
+  .summary h3 { font-size: 10px; text-transform: uppercase; letter-spacing: 1px; border-bottom: 1px solid #000; padding-bottom: 3px; margin: 0 0 6px; }
+  .summary .row { display: flex; justify-content: space-between; padding: 2px 0; }
+  .summary .row.total { border-top: 1.5px solid #000; margin-top: 4px; padding-top: 5px; font-weight: 800; font-size: 12px; }
+  .summary .row.bal { color: #b91c1c; font-weight: 700; }
+  .status-badge { display: inline-block; font-size: 9px; font-weight: 700; padding: 2px 8px; border-radius: 3px; margin-top: 4px; text-transform: uppercase; }
+  .status-Paid { background: #dcfce7; color: #15803d; }
+  .status-Partially-Paid { background: #fef9c3; color: #a16207; }
+  .status-Unpaid { background: #fee2e2; color: #b91c1c; }
+  .foot-note { margin-top: 10px; font-size: 9px; color: #777; }
+  @media print { body { padding: 0; } @page { size: A4; margin: 14mm 12mm; } }
+</style></head><body>
+  ${settings?.logo_url ? `<div style="text-align:center;margin-bottom:4px"><img src="${settings.logo_url}" alt="Logo" style="max-height:46px"/></div>` : ''}
+  <div class="co">${settings?.company_name ?? ''}</div>
+  ${settings?.address ? `<div class="addr">${settings.address.replace(/\n/g, ', ')}</div>` : ''}
+  <div class="addr">${[settings?.phone ? 'Ph: ' + settings.phone : '', settings?.email ?? '', settings?.gstin ? 'GSTIN: ' + settings.gstin : ''].filter(Boolean).join(' &middot; ')}</div>
+  <h2>Customer Account Statement</h2>
+  <div class="meta-wrap">
+    <div class="cust">
+      <div class="nm">${cust.name}</div>
+      ${cust.gstin ? `<div><span class="lbl">GSTIN:</span>${cust.gstin}</div>` : ''}
+      ${cust.phone ? `<div><span class="lbl">Phone:</span>${cust.phone}</div>` : ''}
+      ${cust.address ? `<div><span class="lbl">Address:</span>${cust.address}</div>` : ''}
+      <div><span class="lbl">Statement Period:</span>${periodLabel}</div>
+    </div>
+    <div class="gen">Generated On:<br/><strong>${formatDate(todayISO())}</strong></div>
+  </div>
+  <table>
+    <thead><tr><th>Sl.No</th><th>Invoice Date</th><th>Invoice Number</th><th>Total Amount</th><th>Received Amount</th><th>Received Date</th><th>Balance Amount</th></tr></thead>
+    <tbody>${rows || '<tr><td colspan="7" style="text-align:center;padding:16px">No invoices found for this period/filter.</td></tr>'}</tbody>
+    ${statementRows.length > 0 ? `<tfoot><tr><td colspan="3">TOTAL (${statementSummary.count} invoice${statementSummary.count === 1 ? '' : 's'})</td><td style="text-align:right">${formatCurrency(statementSummary.totalAmount)}</td><td style="text-align:right">${formatCurrency(statementSummary.totalReceived)}</td><td></td><td style="text-align:right">${formatCurrency(statementSummary.totalPending)}</td></tr></tfoot>` : ''}
+  </table>
+  <div class="summary">
+    <h3>Account Summary</h3>
+    <div class="row"><span>Total Billing Amount</span><b>${formatCurrency(statementSummary.totalAmount)}</b></div>
+    <div class="row"><span>Total Received Amount</span><b>${formatCurrency(statementSummary.totalReceived)}</b></div>
+    <div class="row total bal"><span>Outstanding Balance</span><b>${formatCurrency(statementSummary.totalPending)}</b></div>
+    <div style="text-align:right"><span class="status-badge status-${overallStatus.replace(/\s/g, '-')}">${overallStatus}</span></div>
+  </div>
+  <div class="foot-note">E.&amp;O.E. This statement is generated from our records as of the date above.</div>
+</body></html>`;
+    printInIframe(html);
   };
 
-  const sendReminder = async (inv: InvoiceWithRelations, stage: number) => {
-    const email = inv.customer?.email ?? inv.customer_email;
+  const sendBalanceStatement = async () => {
+    if (!selectedStatementCustomer) return;
+    const email = selectedStatementCustomer.email;
     if (!email) {
-      show('Customer email address is missing. Please add an email in Customer Master.', 'error');
+      show('This customer does not have an email address configured. Please add an email in Customer Master.', 'error');
       return;
     }
-    setReminderSending(true);
+    const outstanding = statementRows.filter(r => r.balance > 0);
+    if (outstanding.length === 0) {
+      show('This customer has no outstanding (unpaid/partially paid) invoices to send.', 'error');
+      return;
+    }
+    setSendingStatement(true);
     try {
-      const pdfBase64 = await generateInvoicePdfBase64(inv, inv.items ?? []);
-      const { data, error } = await supabase.functions.invoke('process-reminders', {
-        body: { action: 'send_manual', invoiceId: inv.id, reminderStage: stage, pdfBase64 },
+      const { data, error } = await supabase.functions.invoke('send-balance-statement', {
+        body: { customerId: selectedStatementCustomer.id, invoiceIds: outstanding.map(r => r.inv.id) },
       });
       if (error) {
-        let msg = 'Unable to send reminder. Please try again.';
+        let msg = 'Unable to send balance statement. Please try again.';
         if (error.context && typeof error.context.json === 'function') {
           try {
             const errBody = await error.context.json();
             if (errBody?.error) msg = errBody.error;
-          } catch { /* fall through */ }
+          } catch { /* fall through to default */ }
         } else if (typeof error.message === 'string' && error.message.length > 0) {
           msg = error.message;
         }
         show(getEmailErrorMessage(msg), 'error');
-      } else if (data?.message) {
-        show(data.message, 'success');
-        await loadReminders(inv.id);
-        await fetchAll();
+      } else if (data?.sentTo) {
+        show(`Balance statement sent to ${data.sentTo}`, 'success');
       } else {
-        show('Reminder sent successfully', 'success');
-        await loadReminders(inv.id);
-        await fetchAll();
+        show('Balance statement sent successfully', 'success');
       }
     } catch (err) {
-      const msg = err instanceof Error ? err.message : 'Unable to send reminder. Please try again.';
+      const msg = err instanceof Error ? err.message : 'Unable to send balance statement. Please try again.';
       show(getEmailErrorMessage(msg), 'error');
     }
-    setReminderSending(false);
+    setSendingStatement(false);
   };
 
   const scheduleReminders = async (invoiceId: string) => {
@@ -878,16 +1068,19 @@ export default function Invoices({ initialTab = 'list' }: InvoicesProps = {}) {
       key: 'actions', header: t('actions'), align: 'center',
       render: i => {
         const isDraft = i.invoice_status === 'Draft' || !i.invoice_number;
+        const isNewFlowDraft = isDraft && (i.billingLines?.length ?? 0) > 0;
         return (
           <div className="flex justify-center gap-1">
-            <button onClick={() => { setViewInvoice(i); setViewItems(i.items ?? []); setViewPayments(i.payments ?? []); loadReminders(i.id); }} className="p-1.5 text-slate-500 hover:text-blue-600 hover:bg-blue-50 rounded-md" title="View"><Eye className="w-4 h-4" /></button>
-            {isDraft ? (
+            <button onClick={() => { setViewInvoice(i); setViewItems(i.items ?? []); setViewPayments(i.payments ?? []); }} className="p-1.5 text-slate-500 hover:text-blue-600 hover:bg-blue-50 rounded-md" title="View"><Eye className="w-4 h-4" /></button>
+            {isNewFlowDraft ? (
+              <button onClick={() => { setResumeGstInvoiceId(i.id); setShowNewGstFlow(true); }} className="p-1.5 text-slate-500 hover:text-emerald-600 hover:bg-emerald-50 rounded-md" title="Continue Billing"><Zap className="w-4 h-4" /></button>
+            ) : isDraft ? (
               <button onClick={() => openGenerateInvoice(i)} className="p-1.5 text-slate-500 hover:text-emerald-600 hover:bg-emerald-50 rounded-md" title="Generate Invoice"><Zap className="w-4 h-4" /></button>
             ) : (
               <>
                 <button onClick={() => openPrintCopyModal(i, i.items ?? [])} className="p-1.5 text-slate-500 hover:text-blue-600 hover:bg-blue-50 rounded-md" title="Print"><Printer className="w-4 h-4" /></button>
+                <button onClick={() => openEditDetails(i)} className="p-1.5 text-slate-500 hover:text-indigo-600 hover:bg-indigo-50 rounded-md" title="Edit Invoice Details"><FileEdit className="w-4 h-4" /></button>
                 <button onClick={() => sendEmail(i)} className="p-1.5 text-slate-500 hover:text-purple-600 hover:bg-purple-50 rounded-md" title="Email"><Mail className="w-4 h-4" /></button>
-                <button onClick={() => { setReminderStageModal(i); setReminderConfirmStage(null); }} className="p-1.5 text-slate-500 hover:text-amber-600 hover:bg-amber-50 rounded-md" title="Send Reminder"><Bell className="w-4 h-4" /></button>
                 {i.invoice_status !== 'Cancelled' && i.invoice_status !== 'Paid' && (
                   <button onClick={() => openPayment(i)} className="p-1.5 text-slate-500 hover:text-emerald-600 hover:bg-emerald-50 rounded-md" title="Record Payment"><IndianRupee className="w-4 h-4" /></button>
                 )}
@@ -906,6 +1099,10 @@ export default function Invoices({ initialTab = 'list' }: InvoicesProps = {}) {
   ];
 
   if (loading) return <LoadingSpinner />;
+
+  if (showNewGstFlow) {
+    return <GstBillingEntry invoiceId={resumeGstInvoiceId} onDone={() => { setShowNewGstFlow(false); setResumeGstInvoiceId(null); fetchAll(); }} />;
+  }
 
   // ===== STEP 1: Customer Selection =====
   if (step === 'step1') {
@@ -1086,47 +1283,163 @@ export default function Invoices({ initialTab = 'list' }: InvoicesProps = {}) {
     <div className="space-y-4">
       <div className="flex items-center justify-between">
         <div />
-        <Button onClick={() => { setStep('step1'); setSelectedCustomerId(''); setReferenceNo(''); setInvoiceSelection('cgst_sgst'); setPreviewInvoiceNo(''); }}>
-          <Plus className="w-4 h-4" />Create Trip
-        </Button>
-      </div>
-
-      {/* Search Controls */}
-      <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-4">
-        <div className="flex flex-col sm:flex-row gap-3">
-          <div className="flex gap-2">
-            <button
-              onClick={() => setCustomerSearchMode('invoice')}
-              className={`px-3 py-1.5 text-sm rounded-lg font-medium transition-colors ${customerSearchMode === 'invoice' ? 'bg-blue-600 text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'}`}
-            >Search by Invoice</button>
-            <button
-              onClick={() => setCustomerSearchMode('customer')}
-              className={`px-3 py-1.5 text-sm rounded-lg font-medium transition-colors ${customerSearchMode === 'customer' ? 'bg-blue-600 text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'}`}
-            >Search by Customer</button>
-          </div>
-          <div className="flex-1 relative">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
-            <input
-              type="text"
-              className={`${inputClass()} pl-9`}
-              placeholder={customerSearchMode === 'invoice' ? 'Search by invoice number...' : 'Search by customer name or company...'}
-              value={invoiceSearch}
-              onChange={e => setInvoiceSearch(e.target.value)}
-            />
-          </div>
-          {invoiceSearch && (
-            <button onClick={() => setInvoiceSearch('')} className="px-3 py-1.5 text-sm text-slate-500 hover:text-slate-700">Clear</button>
-          )}
+        <div className="flex gap-2">
+          <Button onClick={() => setShowNewGstFlow(true)}>
+            <Plus className="w-4 h-4" />New GST Invoice
+          </Button>
         </div>
       </div>
 
-      <DataTable
-        columns={columns}
-        data={filteredInvoices}
-        searchKeys={['invoice_number', 'customer_name']}
-        searchPlaceholder={`${t('search')}...`}
-        showSerialNumber
-      />
+      {/* Customer Statement — the primary way to review a customer's billing position:
+          pick a customer to see every invoice they have in one bank-statement-style
+          ledger with running totals, instead of hunting through the flat invoice list. */}
+      <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-4 space-y-3">
+        <p className="text-xs font-bold uppercase tracking-wide text-slate-500">Customer Statement</p>
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+          <Field label="Customer / Company">
+            <SearchableSelect
+              value={statementCustomerId}
+              onChange={setStatementCustomerId}
+              placeholder="Select a customer to view their statement"
+              searchPlaceholder="Search customer..."
+              options={customers.map(c => ({ value: c.id, label: c.name, searchText: `${c.name} ${c.phone ?? ''}` }))}
+            />
+          </Field>
+          <Field label="Date From">
+            <DatePicker value={statementFrom} onChange={setStatementFrom} />
+          </Field>
+          <Field label="Date To">
+            <DatePicker value={statementTo} onChange={setStatementTo} />
+          </Field>
+          <Field label="Status">
+            <select className={inputClass()} value={statementStatus} onChange={e => setStatementStatus(e.target.value as typeof statementStatus)}>
+              <option value="All">All</option>
+              <option value="Paid">Paid</option>
+              <option value="Partially Paid">Partially Paid</option>
+              <option value="Pending">Pending</option>
+              <option value="Outstanding">Outstanding (Balance &gt; 0)</option>
+            </select>
+          </Field>
+        </div>
+
+        {statementCustomerId && selectedStatementCustomer && (
+          <>
+            <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 pt-1">
+              <div className="bg-slate-50 rounded-lg border border-slate-200 p-3">
+                <div className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-1">Total Invoices</div>
+                <div className="text-xl font-bold text-slate-800">{statementSummary.count}</div>
+              </div>
+              <div className="bg-slate-50 rounded-lg border border-slate-200 p-3">
+                <div className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-1">Total Amount</div>
+                <div className="text-xl font-bold text-slate-800">{formatCurrency(statementSummary.totalAmount)}</div>
+              </div>
+              <div className="bg-emerald-50 rounded-lg border border-emerald-200 p-3">
+                <div className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-1">Received</div>
+                <div className="text-xl font-bold text-emerald-600">{formatCurrency(statementSummary.totalReceived)}</div>
+              </div>
+              <div className="bg-red-50 rounded-lg border border-red-200 p-3">
+                <div className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-1">Pending</div>
+                <div className="text-xl font-bold text-red-600">{formatCurrency(statementSummary.totalPending)}</div>
+              </div>
+            </div>
+
+            <div className="overflow-x-auto border border-slate-200 rounded-lg">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="bg-slate-50 text-xs uppercase text-slate-600">
+                    <th className="text-center px-3 py-2 border-b border-slate-200">Sl. No.</th>
+                    <th className="text-left px-3 py-2 border-b border-slate-200">Date</th>
+                    <th className="text-left px-3 py-2 border-b border-slate-200">Invoice Number</th>
+                    <th className="text-right px-3 py-2 border-b border-slate-200">Total Amt</th>
+                    <th className="text-right px-3 py-2 border-b border-slate-200">Received Amt</th>
+                    <th className="text-left px-3 py-2 border-b border-slate-200">Received Date</th>
+                    <th className="text-right px-3 py-2 border-b border-slate-200">Balance Amt</th>
+                    <th className="text-center px-3 py-2 border-b border-slate-200">Actions</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {statementRows.length === 0 ? (
+                    <tr><td colSpan={8} className="text-center py-8 text-slate-400">No invoices found for this customer/period/filter.</td></tr>
+                  ) : statementRows.map((r, idx) => (
+                    <tr key={r.inv.id} className={idx % 2 ? 'bg-slate-50' : 'bg-white'}>
+                      <td className="text-center px-3 py-1.5 border-b border-slate-100">{idx + 1}</td>
+                      <td className="px-3 py-1.5 border-b border-slate-100">{formatDate(r.inv.invoice_date)}</td>
+                      <td className="px-3 py-1.5 border-b border-slate-100 font-medium text-slate-700">{r.inv.invoice_number}</td>
+                      <td className="text-right px-3 py-1.5 border-b border-slate-100">{formatCurrency(r.payable)}</td>
+                      <td className="text-right px-3 py-1.5 border-b border-slate-100 text-emerald-600">{formatCurrency(r.received)}</td>
+                      <td className={classNames('px-3 py-1.5 border-b border-slate-100 text-xs', r.receivedDateLabel === '—' ? 'text-slate-400' : 'text-slate-600')}>{r.receivedDateLabel}</td>
+                      <td className={classNames('text-right px-3 py-1.5 border-b border-slate-100 font-semibold', r.balance > 0 ? 'text-red-600' : 'text-slate-400')}>{formatCurrency(r.balance)}</td>
+                      <td className="text-center px-3 py-1.5 border-b border-slate-100">
+                        <button onClick={() => { setViewInvoice(r.inv); setViewItems(r.inv.items ?? []); setViewPayments(r.inv.payments ?? []); }} className="p-1 text-slate-400 hover:text-blue-600" title="View"><Eye className="w-4 h-4" /></button>
+                        <button onClick={() => openPrintCopyModal(r.inv, r.inv.items ?? [])} className="p-1 text-slate-400 hover:text-blue-600" title="Print"><Printer className="w-4 h-4" /></button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+                {statementRows.length > 0 && (
+                  <tfoot>
+                    <tr className="bg-slate-100 font-bold">
+                      <td colSpan={3} className="px-3 py-2">TOTAL</td>
+                      <td className="text-right px-3 py-2">{formatCurrency(statementSummary.totalAmount)}</td>
+                      <td className="text-right px-3 py-2 text-emerald-700">{formatCurrency(statementSummary.totalReceived)}</td>
+                      <td />
+                      <td className="text-right px-3 py-2 text-red-700">{formatCurrency(statementSummary.totalPending)}</td>
+                      <td />
+                    </tr>
+                  </tfoot>
+                )}
+              </table>
+            </div>
+
+            <div className="flex flex-wrap justify-end gap-2">
+              <Button variant="secondary" onClick={() => setStatementCustomerId('')}>Back to All Invoices</Button>
+              <Button variant="outline" onClick={printStatement}><Printer className="w-4 h-4" />Print Statement</Button>
+              <Button onClick={sendBalanceStatement} disabled={sendingStatement}><Mail className="w-4 h-4" />{sendingStatement ? 'Sending...' : 'Email Balance Statement'}</Button>
+            </div>
+          </>
+        )}
+      </div>
+
+      {!statementCustomerId && (
+        <>
+          {/* Search Controls */}
+          <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-4">
+            <div className="flex flex-col sm:flex-row gap-3">
+              <div className="flex gap-2">
+                <button
+                  onClick={() => setCustomerSearchMode('invoice')}
+                  className={`px-3 py-1.5 text-sm rounded-lg font-medium transition-colors ${customerSearchMode === 'invoice' ? 'bg-blue-600 text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'}`}
+                >Search by Invoice</button>
+                <button
+                  onClick={() => setCustomerSearchMode('customer')}
+                  className={`px-3 py-1.5 text-sm rounded-lg font-medium transition-colors ${customerSearchMode === 'customer' ? 'bg-blue-600 text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'}`}
+                >Search by Customer</button>
+              </div>
+              <div className="flex-1 relative">
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+                <input
+                  type="text"
+                  className={`${inputClass()} pl-9`}
+                  placeholder={customerSearchMode === 'invoice' ? 'Search by invoice number...' : 'Search by customer name or company...'}
+                  value={invoiceSearch}
+                  onChange={e => setInvoiceSearch(e.target.value)}
+                />
+              </div>
+              {invoiceSearch && (
+                <button onClick={() => setInvoiceSearch('')} className="px-3 py-1.5 text-sm text-slate-500 hover:text-slate-700">Clear</button>
+              )}
+            </div>
+          </div>
+
+          <DataTable
+            columns={columns}
+            data={filteredInvoices}
+            searchKeys={['invoice_number', 'customer_name']}
+            searchPlaceholder={`${t('search')}...`}
+            showSerialNumber
+          />
+        </>
+      )}
 
       {/* View Invoice Modal */}
       <Modal
@@ -1150,9 +1463,6 @@ export default function Invoices({ initialTab = 'list' }: InvoicesProps = {}) {
                     </Button>
                     <Button variant="outline" onClick={() => sendEmail(viewInvoiceData.invoice)} disabled={emailSending}>
                       <Mail className="w-4 h-4" />{emailSending ? 'Sending...' : 'Email'}
-                    </Button>
-                    <Button variant="outline" onClick={() => { setReminderStageModal(viewInvoiceData.invoice); setReminderConfirmStage(null); }} disabled={reminderSending}>
-                      <Bell className="w-4 h-4" />Send Reminder
                     </Button>
                     {viewInvoiceData.invoice.invoice_status !== 'Cancelled' && viewInvoiceData.invoice.invoice_status !== 'Paid' && (
                       <Button onClick={() => { openPayment(viewInvoiceData.invoice); setViewInvoice(null); }}>
@@ -1208,37 +1518,6 @@ export default function Invoices({ initialTab = 'list' }: InvoicesProps = {}) {
               <div><span className="text-slate-500 font-medium">Place of Work: </span><span className="font-medium text-slate-700">{viewInvoiceData.invoice.place_of_work ?? '-'}</span></div>
             </div>
 
-            {viewReminders.length > 0 && (
-              <details className="text-sm">
-                <summary className="cursor-pointer font-semibold text-slate-700 mb-1">Reminder History ({viewReminders.length})</summary>
-                <div className="mt-2 space-y-2">
-                  {viewReminders.map(r => (
-                    <div key={r.id} className="flex items-start gap-3 p-2 bg-slate-50 rounded-lg">
-                      <div className="flex-1">
-                        <div className="flex items-center gap-2">
-                          <span className="font-medium text-slate-700">Day {r.reminder_stage}</span>
-                          <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${r.status === 'sent' ? 'bg-emerald-100 text-emerald-700' : r.status === 'failed' ? 'bg-red-100 text-red-700' : r.status === 'cancelled' ? 'bg-slate-200 text-slate-500' : r.status === 'missing_email' ? 'bg-amber-100 text-amber-700' : 'bg-blue-100 text-blue-700'}`}>
-                            {r.status === 'sent' ? 'Sent' : r.status === 'failed' ? 'Failed' : r.status === 'cancelled' ? 'Cancelled' : r.status === 'missing_email' ? 'Missing Email' : 'Pending'}
-                          </span>
-                        </div>
-                        <div className="text-xs text-slate-500 mt-1">
-                          Scheduled: {formatDate(r.scheduled_at.split('T')[0])}
-                          {r.sent_at && ` | Sent: ${new Date(r.sent_at).toLocaleString('en-IN', { dateStyle: 'short', timeStyle: 'short' })}`}
-                        </div>
-                        {r.error_message && (
-                          <div className="text-xs text-red-500 mt-1">Error: {r.error_message}</div>
-                        )}
-                      </div>
-                      {r.status === 'failed' && (
-                        <button onClick={() => sendReminder(viewInvoiceData!.invoice, r.reminder_stage)} disabled={reminderSending} className="p-1.5 text-slate-500 hover:text-blue-600 hover:bg-blue-50 rounded-md" title="Retry">
-                          <RotateCw className="w-3.5 h-3.5" />
-                        </button>
-                      )}
-                    </div>
-                  ))}
-                </div>
-              </details>
-            )}
             {viewPayments.length > 0 && (
               <details className="text-sm" open>
                 <summary className="cursor-pointer font-semibold text-slate-700 mb-1">Payment History ({viewPayments.length})</summary>
@@ -1283,7 +1562,7 @@ export default function Invoices({ initialTab = 'list' }: InvoicesProps = {}) {
               <div className="border border-slate-300 rounded-lg overflow-hidden bg-white">
                 <iframe
                   title="Invoice Preview"
-                  srcDoc={invoiceDocHTML(viewInvoiceData.invoice, viewInvoiceData.items, settings, invoiceSettings)}
+                  srcDoc={invoiceDocHTML(viewInvoiceData.invoice, viewInvoiceData.items, settings, invoiceSettings, 'master', 'tax', rateMasterRows, vehiclesList)}
                   className="w-full"
                   style={{ height: '70vh', border: 'none' }}
                 />
@@ -1447,48 +1726,6 @@ export default function Invoices({ initialTab = 'list' }: InvoicesProps = {}) {
         )}
       </Modal>
 
-      {/* Reminder Stage Selection Modal */}
-      <Modal
-        open={!!reminderStageModal}
-        onClose={() => { setReminderStageModal(null); setReminderConfirmStage(null); }}
-        title="Send Reminder"
-        size="sm"
-        footer={
-          <>
-            <Button variant="secondary" onClick={() => { setReminderStageModal(null); setReminderConfirmStage(null); }}>{t('cancel')}</Button>
-            {reminderConfirmStage != null && reminderStageModal && (
-              <Button onClick={() => { sendReminder(reminderStageModal, reminderConfirmStage); setReminderStageModal(null); setReminderConfirmStage(null); }} disabled={reminderSending}>
-                <Send className="w-4 h-4" />{reminderSending ? 'Sending...' : 'Send Email'}
-              </Button>
-            )}
-          </>
-        }
-      >
-        {reminderStageModal && (
-          <div className="space-y-3">
-            <p className="text-sm text-slate-600">Select a reminder stage to send to <strong>{reminderStageModal.customer?.email ?? reminderStageModal.customer_email ?? 'No email on file'}</strong>.</p>
-            {reminderConfirmStage == null ? (
-              <div className="space-y-2">
-                {[1, 10, 20].map(stage => (
-                  <button
-                    key={stage}
-                    onClick={() => setReminderConfirmStage(stage)}
-                    className="w-full text-left p-3 border border-slate-200 rounded-lg hover:bg-blue-50 hover:border-blue-300 transition-colors"
-                  >
-                    <span className="font-medium text-slate-700">Day {stage} Reminder</span>
-                    <span className="text-xs text-slate-400 ml-2">{stage} day{stage > 1 ? 's' : ''} after service date</span>
-                  </button>
-                ))}
-              </div>
-            ) : (
-              <div className="p-3 bg-amber-50 rounded-lg border border-amber-100 text-sm">
-                <p>Send Day {reminderConfirmStage} reminder to <strong>{reminderStageModal.customer?.email ?? reminderStageModal.customer_email ?? 'No email on file'}</strong>?</p>
-              </div>
-            )}
-          </div>
-        )}
-      </Modal>
-
       <ConfirmDialog
         open={!!cancelId}
         onClose={() => setCancelId(null)}
@@ -1538,6 +1775,85 @@ export default function Invoices({ initialTab = 'list' }: InvoicesProps = {}) {
             ))}
           </div>
         </div>
+      </Modal>
+
+      {/* Edit Invoice Details Modal — the top-right print block's editable fields */}
+      <Modal
+        open={!!editDetailsModal}
+        onClose={() => !savingDetails && setEditDetailsModal(null)}
+        title="Edit Invoice Details"
+        size="lg"
+        footer={
+          <>
+            <Button variant="secondary" onClick={() => setEditDetailsModal(null)} disabled={savingDetails}>{t('cancel')}</Button>
+            <Button onClick={saveEditDetails} disabled={savingDetails}>{savingDetails ? 'Saving...' : 'Save Invoice Details'}</Button>
+          </>
+        }
+      >
+        {editDetailsModal && (
+          <div className="space-y-4">
+            <div className="grid grid-cols-2 gap-4 p-3 bg-slate-50 rounded-lg border border-slate-200">
+              <Field label="Invoice No."><div className={classNames(inputClass(), 'bg-slate-100 text-slate-500')}>{editDetailsModal.invoice_number}</div></Field>
+              <Field label="Billing Date"><div className={classNames(inputClass(), 'bg-slate-100 text-slate-500')}>{formatDate(editDetailsModal.invoice_date)}</div></Field>
+            </div>
+
+            <div className="grid grid-cols-2 gap-4">
+              <Field label="Delivery Note">
+                <input className={inputClass()} value={editDetailsForm.delivery_note} onChange={e => setEditDetailsForm(f => ({ ...f, delivery_note: e.target.value }))} />
+              </Field>
+              <Field label="Mode/Terms of Payment">
+                <input className={inputClass()} value={editDetailsForm.terms_of_payment} onChange={e => setEditDetailsForm(f => ({ ...f, terms_of_payment: e.target.value }))} placeholder={invoiceSettings?.default_payment_terms || 'e.g. 7 days'} />
+              </Field>
+              <Field label="Reference No.">
+                <input className={inputClass()} value={editDetailsForm.reference_no} onChange={e => setEditDetailsForm(f => ({ ...f, reference_no: e.target.value }))} />
+              </Field>
+              <Field label="Reference Date">
+                <DatePicker value={editDetailsForm.reference_date} onChange={v => setEditDetailsForm(f => ({ ...f, reference_date: v }))} />
+              </Field>
+              <Field label="Buyer's Order No.">
+                <input className={inputClass()} value={editDetailsForm.buyer_order_no} onChange={e => setEditDetailsForm(f => ({ ...f, buyer_order_no: e.target.value }))} />
+              </Field>
+              <Field label="Buyer's Order Date">
+                <DatePicker value={editDetailsForm.buyer_order_date} onChange={v => setEditDetailsForm(f => ({ ...f, buyer_order_date: v }))} />
+              </Field>
+              <Field label="Dispatch Doc No.">
+                <input className={inputClass()} value={editDetailsForm.dispatch_doc_no} onChange={e => setEditDetailsForm(f => ({ ...f, dispatch_doc_no: e.target.value }))} />
+              </Field>
+              <Field label="Delivery Note Date">
+                <DatePicker value={editDetailsForm.delivery_note_date} onChange={v => setEditDetailsForm(f => ({ ...f, delivery_note_date: v }))} />
+              </Field>
+              <Field label="Dispatched through">
+                <input className={inputClass()} value={editDetailsForm.dispatched_through} onChange={e => setEditDetailsForm(f => ({ ...f, dispatched_through: e.target.value }))} />
+              </Field>
+              <Field label="Destination">
+                <input className={inputClass()} value={editDetailsForm.destination} onChange={e => setEditDetailsForm(f => ({ ...f, destination: e.target.value }))} placeholder="e.g. Hyderabad" />
+              </Field>
+              <Field label="Bill of Lading/LR-RR No.">
+                <input className={inputClass()} value={editDetailsForm.bill_of_lading_no} onChange={e => setEditDetailsForm(f => ({ ...f, bill_of_lading_no: e.target.value }))} />
+              </Field>
+              <Field label="Terms of Delivery (Days)">
+                <input type="number" min="1" className={inputClass()} value={editDetailsForm.terms_of_delivery_days} onChange={e => setEditDetailsForm(f => ({ ...f, terms_of_delivery_days: Number(e.target.value) || 28 }))} />
+              </Field>
+            </div>
+
+            <Field label="Due Date">
+              <div className={classNames(inputClass(), 'bg-slate-100 text-slate-500')}>
+                {editDetailsModal.invoice_date ? formatDate(addDays(editDetailsModal.invoice_date, Math.max(1, Number(editDetailsForm.terms_of_delivery_days) || 28))) : '-'}
+                <span className="text-xs ml-1">(auto-calculated from Billing Date + Terms of Delivery)</span>
+              </div>
+            </Field>
+
+            <Field label="Motor Vehicle No.">
+              <div className="flex gap-2">
+                <input className={inputClass()} value={editDetailsForm.motor_vehicle_numbers} onChange={e => setEditDetailsForm(f => ({ ...f, motor_vehicle_numbers: e.target.value }))} placeholder="Comma-separated vehicle numbers" />
+                <Button variant="outline" onClick={() => setEditDetailsForm(f => ({ ...f, motor_vehicle_numbers: computeVehicleNumbersJoined(editDetailsModal) }))}>
+                  Auto-fill
+                </Button>
+              </div>
+              <p className="text-xs text-slate-500 mt-1">Auto-fill collects unique vehicle numbers from this invoice's billing entries. Edit freely to override.</p>
+            </Field>
+          </div>
+        )}
       </Modal>
     </div>
   );

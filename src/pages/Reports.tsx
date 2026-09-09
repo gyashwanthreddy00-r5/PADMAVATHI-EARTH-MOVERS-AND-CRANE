@@ -209,12 +209,13 @@ export default function Reports({ type }: ReportProps) {
   const fetchMonthlyReport = async () => {
     const mStart = monthStartISO(filters.year, filters.month);
     const mEnd = monthEndISO(filters.year, filters.month);
-    const [invRes, dRes, mRes, eRes, emiRes] = await Promise.all([
+    const [invRes, dRes, mRes, eRes, emiRes, purRes] = await Promise.all([
       supabase.from('invoices').select('id, invoice_number, invoice_date, invoice_type, grand_total, payment_status, payment_mode, discount_enabled, discount_amount, final_payable_amount, up_transportation_enabled, up_transportation_amount, down_transportation_enabled, down_transportation_amount, is_cancelled, invoice_vehicles:invoice_vehicles(vehicle_total, batha, total_hours, rental_amount)').gte('invoice_date', mStart).lte('invoice_date', mEnd).eq('is_cancelled', false),
       supabase.from('diesel_entries').select('*').eq('is_cancelled', false).gte('diesel_date', mStart).lte('diesel_date', mEnd),
       supabase.from('maintenance').select('*').eq('is_cancelled', false).gte('maintenance_date', mStart).lte('maintenance_date', mEnd),
       supabase.from('employees').select('salary').eq('active', true),
       supabase.from('emi_records').select('*').gte('due_date', mStart).lte('due_date', mEnd),
+      supabase.from('purchases').select('total_amount').gte('purchase_date', mStart).lte('purchase_date', mEnd),
     ]);
     if (invRes.error) { console.error('Monthly report error:', invRes.error); setErrorMsg('Unable to load monthly report.'); setData([]); return; }
     const invoices = (invRes.data ?? []) as (InvoiceWithRelations & { invoice_vehicles?: (Pick<InvoiceVehicle, 'vehicle_total' | 'batha' | 'total_hours' | 'rental_amount'>)[] })[];
@@ -222,6 +223,7 @@ export default function Reports({ type }: ReportProps) {
     const maint = (mRes.data ?? []) as MaintenanceWithRelations[];
     const emps = (eRes.data ?? []) as Employee[];
     const emis = (emiRes.data ?? []) as EmiWithRelations[];
+    const purchases = (purRes.data ?? []) as { total_amount: number }[];
 
     const totalRevenue = invoices.reduce((s, inv) => {
       const payable = inv.discount_enabled ? Number(inv.final_payable_amount ?? inv.grand_total) : Number(inv.grand_total);
@@ -236,27 +238,34 @@ export default function Reports({ type }: ReportProps) {
     const maintCount = maint.length;
     const totalSalary = emps.reduce((s, e) => s + Number(e.salary), 0);
     const emiCost = emis.filter(e => e.status === 'Paid').reduce((s, e) => s + Number(e.emi_amount), 0);
+    // Purchase expense uses each purchase's total_amount (amount + GST) — the
+    // real cost incurred with the vendor — never amount+gst_amount+total_amount
+    // summed together, and never gated on paid_amount (accrual, same as
+    // diesel/maintenance which are also counted at full transaction value
+    // regardless of what's been paid so far).
+    const purchaseCost = purchases.reduce((s, p) => s + Number(p.total_amount), 0);
     const cashCollection = invoices.filter(inv => inv.payment_mode === 'Cash' && inv.payment_status === 'Paid').reduce((s, inv) => s + Number(inv.grand_total), 0);
     const onlineCollection = invoices.filter(inv => { const pm = inv.payment_mode; return (pm === 'UPI' || pm === 'Bank Transfer' || pm === 'Cheque') && inv.payment_status === 'Paid'; }).reduce((s, inv) => s + Number(inv.grand_total), 0);
     const pendingAmount = invoices.filter(inv => inv.payment_status === 'Pending').reduce((s, inv) => s + Number(inv.grand_total), 0);
     const grossIncome = totalRevenue;
-    const totalExpenses = dieselCost + totalSalary + maintCost + emiCost;
+    const totalExpenses = dieselCost + totalSalary + maintCost + emiCost + purchaseCost;
     const netProfit = totalRevenue - totalExpenses;
 
     setData([{
       totalTrips: invoices.length, totalHours, tripRevenue, totalRevenue,
-      dieselCost, dieselLiters, maintCost, maintCount, totalSalary, emiCost, totalExpenses,
+      dieselCost, dieselLiters, maintCost, maintCount, totalSalary, emiCost, purchaseCost, totalExpenses,
       cashCollection, onlineCollection, pendingAmount, netProfit, grossIncome,
     }]);
   };
 
   const fetchProfitLossReport = async () => {
-    const [invRes, dRes, mRes, eRes, emiRes] = await Promise.all([
+    const [invRes, dRes, mRes, eRes, emiRes, purRes] = await Promise.all([
       supabase.from('invoices').select('id, invoice_number, invoice_date, invoice_type, grand_total, payment_status, discount_enabled, discount_amount, final_payable_amount, is_cancelled').gte('invoice_date', filters.from).lte('invoice_date', filters.to).eq('is_cancelled', false),
       supabase.from('diesel_entries').select('*').eq('is_cancelled', false).gte('diesel_date', filters.from).lte('diesel_date', filters.to),
       supabase.from('maintenance').select('*').eq('is_cancelled', false).gte('maintenance_date', filters.from).lte('maintenance_date', filters.to),
       supabase.from('employees').select('salary').eq('active', true),
       supabase.from('emi_records').select('*').gte('due_date', filters.from).lte('due_date', filters.to),
+      supabase.from('purchases').select('total_amount').gte('purchase_date', filters.from).lte('purchase_date', filters.to),
     ]);
     if (invRes.error) { console.error('P&L report error:', invRes.error); setErrorMsg('Unable to load profit & loss report.'); setData([]); return; }
     const invoices = (invRes.data ?? []) as InvoiceWithRelations[];
@@ -264,6 +273,7 @@ export default function Reports({ type }: ReportProps) {
     const maint = (mRes.data ?? []) as MaintenanceWithRelations[];
     const emps = (eRes.data ?? []) as Employee[];
     const emis = (emiRes.data ?? []) as EmiWithRelations[];
+    const purchases = (purRes.data ?? []) as { total_amount: number }[];
 
     const revenue = invoices.reduce((s, inv) => {
       const payable = inv.discount_enabled ? Number(inv.final_payable_amount ?? inv.grand_total) : Number(inv.grand_total);
@@ -273,10 +283,11 @@ export default function Reports({ type }: ReportProps) {
     const maintCost = maint.reduce((s, m) => s + Number(m.amount), 0);
     const salary = emps.reduce((s, e) => s + Number(e.salary), 0);
     const emiCost = emis.filter(e => e.status === 'Paid').reduce((s, e) => s + Number(e.emi_amount), 0);
-    const totalExpenses = dieselCost + salary + maintCost + emiCost;
+    const purchaseCost = purchases.reduce((s, p) => s + Number(p.total_amount), 0);
+    const totalExpenses = dieselCost + salary + maintCost + emiCost + purchaseCost;
     const netProfit = revenue - totalExpenses;
 
-    setData([{ revenue, dieselCost, salary, maintCost, emiCost, totalExpenses, netProfit }]);
+    setData([{ revenue, dieselCost, salary, maintCost, emiCost, purchaseCost, totalExpenses, netProfit }]);
   };
 
   const fetchInvoiceReport = async (invType: 'Cash') => {
@@ -419,6 +430,7 @@ export default function Reports({ type }: ReportProps) {
             [t('salary'), r.salary ?? r.totalSalary ?? 0],
             [t('maintenanceCost'), r.maintCost ?? 0],
             [t('emi'), r.emiCost ?? 0],
+            ['Purchase Expenses', r.purchaseCost ?? 0],
             [t('totalExpenses'), r.totalExpenses ?? 0],
             [r.netProfit >= 0 ? t('netProfit') : t('netLoss'), Math.abs(r.netProfit ?? 0)],
           ],
@@ -846,6 +858,7 @@ function ReportData({ type, data, t, filters }: { type: ReportType; data: unknow
                   <div className="flex justify-between"><span className="text-sm text-slate-600">{t('salary')}</span><span className="text-sm">{formatCurrency(r.salary ?? r.totalSalary ?? 0)}</span></div>
                   <div className="flex justify-between"><span className="text-sm text-slate-600">{t('maintenanceCost')}</span><span className="text-sm">{formatCurrency(r.maintCost ?? 0)}</span></div>
                   <div className="flex justify-between"><span className="text-sm text-slate-600">{t('emi')}</span><span className="text-sm">{formatCurrency(r.emiCost ?? 0)}</span></div>
+                  <div className="flex justify-between"><span className="text-sm text-slate-600">Purchase Expenses</span><span className="text-sm">{formatCurrency(r.purchaseCost ?? 0)}</span></div>
                   <div className="flex justify-between border-t pt-3"><span className="text-sm font-bold text-slate-700">{t('totalExpenses')}</span><span className="text-sm font-bold text-red-600">{formatCurrency(r.totalExpenses ?? 0)}</span></div>
                 </div>
               </div>

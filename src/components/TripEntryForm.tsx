@@ -85,6 +85,10 @@ interface TripEntryFormProps {
   initialTripDate?: string;
   perVehiclePlaceOfWork?: boolean;
   initialData?: MultiVehicleTripFormData | null;
+  /** Label for the bill-level date field — defaults to the existing "Date" label used by
+   * the Classic GST trip flow. Cash/UPI Billing passes "Working Date" to match the GST
+   * Billing module's terminology, without touching the Classic flow's label. */
+  dateLabel?: string;
 }
 
 function createEmptyVehicle(): VehicleEntryData {
@@ -133,6 +137,7 @@ export function TripEntryForm({
   initialTripDate,
   perVehiclePlaceOfWork = false,
   initialData = null,
+  dateLabel,
 }: TripEntryFormProps) {
   const { t } = useLang();
   const { show } = useToast();
@@ -444,7 +449,7 @@ export function TripEntryForm({
 
       {/* Bill-level Info */}
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-        <Field label={t('date')} required>
+        <Field label={dateLabel ?? t('date')} required>
           <DatePicker value={tripDate} onChange={v => setTripDate(v)} />
         </Field>
         {!hideCustomerSelect && (

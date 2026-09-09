@@ -135,7 +135,6 @@ export default function Maintenance() {
   };
 
   const save = async () => {
-    if (!form.vehicle_id) { show(t('required'), 'error'); return; }
     if (!form.maintenance_type) { show(`${t('maintenanceType')} - ${t('required')}`, 'error'); return; }
     const totalAmount = form.amount === null ? 0 : Number(form.amount);
     const paidAmount = form.paid_amount === null ? 0 : Number(form.paid_amount);
@@ -384,11 +383,11 @@ export default function Maintenance() {
           <Field label={t('date')} required>
             <DatePicker value={form.maintenance_date ?? ''} onChange={v => setForm(f => ({ ...f, maintenance_date: v }))} />
           </Field>
-          <Field label={t('vehicleNumber')} required>
+          <Field label={t('vehicleNumber')}>
             <SearchableSelect
               value={form.vehicle_id ?? ''}
               onChange={val => setForm(f => ({ ...f, vehicle_id: val }))}
-              placeholder="-"
+              placeholder="Optional"
               searchPlaceholder="Search vehicle number..."
               options={vehicles.map(v => ({
                 value: v.id,

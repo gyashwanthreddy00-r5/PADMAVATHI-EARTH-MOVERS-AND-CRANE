@@ -34,6 +34,8 @@ async function sendReminderEmail(
   reminder: ReminderRow,
   reminderSettings: Record<string, unknown>,
   pdfBase64Override?: string,
+  subjectOverride?: string,
+  bodyOverride?: string,
 ): Promise<{ success: boolean; error?: string }> {
   const resendApiKey = Deno.env.get("RESEND_API_KEY");
   if (!resendApiKey) {
@@ -167,8 +169,11 @@ async function sendReminderEmail(
     bodyTemplate = (reminderSettings.day20_body as string) ?? "";
   }
 
-  const subject = replaceTemplateVars(subjectTemplate, templateVars);
-  const textBody = replaceTemplateVars(bodyTemplate, templateVars);
+  // A manual send may carry a one-off edited subject/body from the confirmation
+  // preview screen — those are used verbatim (the user already reviewed them),
+  // still with placeholders resolved. Otherwise fall back to the saved template.
+  const subject = replaceTemplateVars(subjectOverride ?? subjectTemplate, templateVars);
+  const textBody = replaceTemplateVars(bodyOverride ?? bodyTemplate, templateVars);
 
   // Build HTML email body with payment info table
   const htmlBody = `<div style="font-family: Arial, Helvetica, sans-serif; font-size: 14px; color: #333; max-width: 600px; margin: 0 auto;">
@@ -257,11 +262,13 @@ Deno.serve(async (req: Request) => {
 
     // Parse request body
     const body = await req.json().catch(() => ({}));
-    const { action, invoiceId, reminderStage, pdfBase64 } = body as {
+    const { action, invoiceId, reminderStage, pdfBase64, subjectOverride, bodyOverride } = body as {
       action?: string;
       invoiceId?: string;
       reminderStage?: number;
       pdfBase64?: string;
+      subjectOverride?: string;
+      bodyOverride?: string;
     };
 
     // Load reminder settings
@@ -373,7 +380,7 @@ Deno.serve(async (req: Request) => {
         reminder.status = "pending";
       }
 
-      const result = await sendReminderEmail(adminClient, reminder, reminderSettings, pdfBase64);
+      const result = await sendReminderEmail(adminClient, reminder, reminderSettings, pdfBase64, subjectOverride, bodyOverride);
 
       if (result.success) {
         await adminClient.from("invoice_reminders").update({
@@ -452,80 +459,14 @@ Deno.serve(async (req: Request) => {
       );
     }
 
-    // === AUTOMATIC PROCESSING (CRON) ===
-    // Find all pending reminders whose scheduled_at has passed
-    const { data: pendingReminders, error: fetchError } = await adminClient
-      .from("invoice_reminders")
-      .select("*")
-      .eq("status", "pending")
-      .lte("scheduled_at", new Date().toISOString())
-      .order("scheduled_at", { ascending: true })
-      .limit(50) as { data: ReminderRow[] | null; error: { message: string } | null };
-
-    if (fetchError) {
-      return new Response(
-        JSON.stringify({ error: "Failed to fetch pending reminders." }),
-        { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } },
-      );
-    }
-
-    if (!pendingReminders || pendingReminders.length === 0) {
-      return new Response(
-        JSON.stringify({ success: true, message: "No pending reminders to process.", processed: 0 }),
-        { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } },
-      );
-    }
-
-    let sent = 0;
-    let failed = 0;
-    let cancelled = 0;
-
-    for (const reminder of pendingReminders) {
-      // Check if this stage is still enabled
-      const stageEnabled = reminder.reminder_stage === 1 ? reminderSettings.day1_enabled :
-                           reminder.reminder_stage === 10 ? reminderSettings.day10_enabled :
-                           reminder.reminder_stage === 20 ? reminderSettings.day20_enabled : false;
-      if (!reminderSettings.enabled || !stageEnabled) {
-        await adminClient.from("invoice_reminders").update({
-          status: "cancelled",
-          error_message: "Reminder stage disabled in settings.",
-        }).eq("id", reminder.id);
-        cancelled++;
-        continue;
-      }
-
-      const result = await sendReminderEmail(adminClient, reminder, reminderSettings);
-
-      if (result.success) {
-        await adminClient.from("invoice_reminders").update({
-          status: "sent",
-          sent_at: new Date().toISOString(),
-          error_message: null,
-        }).eq("id", reminder.id);
-        sent++;
-      } else if (result.error?.includes("cancelled")) {
-        cancelled++;
-      } else if (result.error?.includes("missing")) {
-        // missing_email already set in sendReminderEmail
-        failed++;
-      } else {
-        await adminClient.from("invoice_reminders").update({
-          status: "failed",
-          error_message: result.error,
-        }).eq("id", reminder.id);
-        failed++;
-      }
-    }
-
+    // No automatic/background/cron sending path exists in this function by design —
+    // reminders are informational only (see `schedule`) until a human explicitly
+    // triggers `send_manual` from the confirmation preview screen. Any request that
+    // doesn't match a known action is rejected rather than silently processing and
+    // emailing every due reminder, which is exactly the behavior this must never have.
     return new Response(
-      JSON.stringify({
-        success: true,
-        processed: pendingReminders.length,
-        sent,
-        failed,
-        cancelled,
-      }),
-      { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } },
+      JSON.stringify({ error: "Unknown or missing action. Expected 'schedule' or 'send_manual' — reminders are never sent automatically." }),
+      { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } },
     );
   } catch (err) {
     return new Response(

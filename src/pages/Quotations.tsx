@@ -474,8 +474,8 @@ export default function Quotations() {
       valid_until: q.valid_until ? formatDate(q.valid_until) : '',
       grand_total: formatCurrency(q.discount_enabled ? (q.final_payable_amount ?? q.grand_total) : q.grand_total),
       company_name: companyName,
-      company_email: '',
-      company_phone: '',
+      company_email: settings?.email ?? '',
+      company_phone: settings?.phone ?? '',
     };
     const subject = emailSet?.email_subject
       ? Object.entries(vars).reduce((s, [k, v]) => s.split(`{{${k}}}`).join(v), emailSet.email_subject)

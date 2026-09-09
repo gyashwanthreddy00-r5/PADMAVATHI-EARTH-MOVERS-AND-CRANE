@@ -4,9 +4,10 @@ import { useLang } from '@/context/LangContext';
 import { useToast } from '@/components/ui/Toast';
 import { useSettings } from '@/context/SettingsContext';
 import { Modal, StatusBadge, Button, Field, inputClass, LoadingSpinner } from '@/components/ui/common';
+import { SearchableSelect } from '@/components/ui/SearchableSelect';
 import {
   Printer, Eye, FileSpreadsheet, IndianRupee, X, Search, Mail,
-  CheckCircle2, FileText, ChevronLeft, ChevronRight, Wallet, AlertCircle,
+  CheckCircle2, FileText, ChevronLeft, ChevronRight, Wallet, AlertCircle, Send,
 } from 'lucide-react';
 import {
   formatCurrency, formatDate, todayISO, exportToExcelWithCompany, buildInvoiceLineDescription,
@@ -21,7 +22,7 @@ async function getHtml2pdf() {
 }
 import type {
   InvoiceWithRelations, InvoiceItem, InvoicePayment,
-  InvoiceSettings, PaymentMode, InvoiceStatus,
+  InvoiceSettings, PaymentMode, InvoiceStatus, Customer,
 } from '@/types';
 
 type SettlementStatus = 'All' | 'Pending' | 'Partially Paid' | 'Paid' | 'Overdue';
@@ -31,6 +32,7 @@ interface SettlementRow {
   invoice_number: string;
   invoice_date: string;
   reference_no: string | null;
+  customer_id: string | null;
   customer_name: string | null;
   vehicle_numbers: string | null;
   grand_total: number;
@@ -68,9 +70,11 @@ export default function SettlementReport() {
 
   const [invoices, setInvoices] = useState<InvoiceWithRelations[]>([]);
   const [invoiceSettings, setInvoiceSettings] = useState<InvoiceSettings | null>(null);
+  const [customers, setCustomers] = useState<Customer[]>([]);
   const [loading, setLoading] = useState(true);
 
   // Filters
+  const [selectedCustomerId, setSelectedCustomerId] = useState('');
   const [searchInvoice, setSearchInvoice] = useState('');
   const [searchCustomer, setSearchCustomer] = useState('');
   const [statusFilter, setStatusFilter] = useState<SettlementStatus>('All');
@@ -78,6 +82,7 @@ export default function SettlementReport() {
   const [dateTo, setDateTo] = useState('');
   const [paymentDateFrom, setPaymentDateFrom] = useState('');
   const [paymentDateTo, setPaymentDateTo] = useState('');
+  const [sendingStatement, setSendingStatement] = useState(false);
 
   // Pagination
   const [page, setPage] = useState(1);
@@ -100,7 +105,7 @@ export default function SettlementReport() {
 
   const fetchAll = useCallback(async () => {
     setLoading(true);
-    const [invRes, isRes] = await Promise.all([
+    const [invRes, isRes, custRes] = await Promise.all([
       supabase
         .from('invoices')
         .select('*, customer:customers!invoices_customer_id_fkey(*), items:invoice_items(*, trip:trips!invoice_items_trip_entry_id_fkey(id,rate_type,total_hours,rental_amount,trip_date,place_of_work,capacity_tons,first_hour_rate,second_hour_rate,weekly_rate_snapshot,daily_rate_snapshot,monthly_rate_snapshot,sessions:trip_sessions(*),vehicle:vehicles!trips_vehicle_id_fkey(id,registration_number,type,capacity))), payments:invoice_payments(*)')
@@ -109,6 +114,7 @@ export default function SettlementReport() {
         .order('invoice_date', { ascending: false })
         .order('created_at', { ascending: false }),
       supabase.from('invoice_settings').select('*').limit(1).maybeSingle(),
+      supabase.from('customers').select('*').eq('active', true).order('name'),
     ]);
     if (invRes.error) {
       show('Unable to load settlement data: ' + invRes.error.message, 'error');
@@ -117,14 +123,18 @@ export default function SettlementReport() {
     }
     setInvoices((invRes.data ?? []) as unknown as InvoiceWithRelations[]);
     setInvoiceSettings(isRes.data as InvoiceSettings | null);
+    setCustomers((custRes.data ?? []) as Customer[]);
     setLoading(false);
   }, [show]);
 
   useEffect(() => { fetchAll(); }, [fetchAll]);
 
-  // Build settlement rows with computed balance from payments
+  // Build settlement rows with computed balance from payments. Invoices that
+  // were started (e.g. via New GST Invoice) but never got a billing entry —
+  // zero total and no line items — are abandoned drafts, not real customer
+  // transactions, so they never appear here.
   const settlementRows: SettlementRow[] = useMemo(() => {
-    return invoices.map(inv => {
+    return invoices.filter(inv => !(Number(inv.grand_total) <= 0 && (inv.items ?? []).length === 0)).map(inv => {
       const payments = (inv.payments ?? []) as InvoicePayment[];
       const sortedPayments = [...payments].sort((a, b) =>
         new Date(a.payment_date).getTime() - new Date(b.payment_date).getTime() ||
@@ -159,9 +169,10 @@ export default function SettlementReport() {
 
       return {
         id: inv.id,
-        invoice_number: inv.invoice_number,
+        invoice_number: inv.invoice_number ?? '',
         invoice_date: inv.invoice_date,
         reference_no: inv.reference_no,
+        customer_id: inv.customer_id ?? null,
         customer_name: inv.customer_name ?? inv.customer?.name ?? null,
         vehicle_numbers: vehicleNumbers,
         grand_total: grandTotal,
@@ -189,6 +200,10 @@ export default function SettlementReport() {
   // Apply filters
   const filteredRows = useMemo(() => {
     let result = settlementRows;
+
+    if (selectedCustomerId) {
+      result = result.filter(r => r.customer_id === selectedCustomerId);
+    }
 
     if (searchInvoice.trim()) {
       const q = searchInvoice.toLowerCase().trim();
@@ -224,7 +239,7 @@ export default function SettlementReport() {
     }
 
     return result;
-  }, [settlementRows, searchInvoice, searchCustomer, statusFilter, dateFrom, dateTo, paymentDateFrom, paymentDateTo]);
+  }, [settlementRows, selectedCustomerId, searchInvoice, searchCustomer, statusFilter, dateFrom, dateTo, paymentDateFrom, paymentDateTo]);
 
   // Summary cards
   const summary = useMemo(() => {
@@ -234,11 +249,16 @@ export default function SettlementReport() {
     const totalOutstanding = Math.round(filteredRows.reduce((s, r) => s + r.balance, 0) * 100) / 100;
     const overdueCount = filteredRows.filter(r => r.is_overdue).length;
     const overdueAmount = Math.round(filteredRows.filter(r => r.is_overdue).reduce((s, r) => s + r.balance, 0) * 100) / 100;
-    return { totalInvoices, totalInvoiced, totalReceived, totalOutstanding, overdueCount, overdueAmount };
+    const paidCount = filteredRows.filter(r => r.status === 'Paid').length;
+    const partialCount = filteredRows.filter(r => r.status === 'Partially Paid').length;
+    const pendingCount = filteredRows.filter(r => r.status === 'Pending').length;
+    return { totalInvoices, totalInvoiced, totalReceived, totalOutstanding, overdueCount, overdueAmount, paidCount, partialCount, pendingCount };
   }, [filteredRows]);
 
+  const selectedCustomer = useMemo(() => customers.find(c => c.id === selectedCustomerId) ?? null, [customers, selectedCustomerId]);
+
   // Reset page when filters change
-  useEffect(() => { setPage(1); }, [searchInvoice, searchCustomer, statusFilter, dateFrom, dateTo, paymentDateFrom, paymentDateTo, pageSize]);
+  useEffect(() => { setPage(1); }, [selectedCustomerId, searchInvoice, searchCustomer, statusFilter, dateFrom, dateTo, paymentDateFrom, paymentDateTo, pageSize]);
 
   // Paginate
   const totalPages = Math.max(1, Math.ceil(filteredRows.length / pageSize));
@@ -463,7 +483,7 @@ export default function SettlementReport() {
       const rebuilt = it.trip ? buildInvoiceLineDescription(it.trip) : null;
       const sessionCount = (it.trip as { sessions?: unknown[] } | null)?.sessions?.length ?? 1;
       return [
-        inv.invoice_number, formatDate(inv.invoice_date), inv.reference_no ?? '',
+        inv.invoice_number ?? '', formatDate(inv.invoice_date), inv.reference_no ?? '',
         inv.customer_name ?? inv.customer?.name ?? '', inv.customer_gstin ?? inv.customer?.gstin ?? '',
         '', '', '', '', '',
         sessionCount,
@@ -474,7 +494,7 @@ export default function SettlementReport() {
     });
     if (rows.length === 0) {
       rows.push([
-        inv.invoice_number, formatDate(inv.invoice_date), inv.reference_no ?? '', inv.customer_name ?? '', inv.customer_gstin ?? '',
+        inv.invoice_number ?? '', formatDate(inv.invoice_date), inv.reference_no ?? '', inv.customer_name ?? '', inv.customer_gstin ?? '',
         '', '', '', '', '', '', '', '', '', '', '', '',
         inv.taxable_amount, inv.cgst_amount, inv.sgst_amount, inv.total_gst, inv.grand_total,
       ]);
@@ -516,6 +536,97 @@ export default function SettlementReport() {
     );
   };
 
+  // Consolidated customer account statement — print, one window, one A4 layout,
+  // covering every invoice currently shown for the selected customer (not one
+  // print per invoice).
+  const printCustomerStatement = () => {
+    if (!selectedCustomer) return;
+    const win = window.open('', '_blank');
+    if (!win) { show('Please allow popups to print', 'error'); return; }
+    const rows = filteredRows.map((r, idx) => `<tr>
+      <td style="text-align:center">${idx + 1}</td>
+      <td>${formatDate(r.invoice_date)}</td>
+      <td>${r.invoice_number}</td>
+      <td style="text-align:right">${formatCurrency(r.grand_total)}</td>
+      <td style="text-align:right">${formatCurrency(r.amount_received)}</td>
+      <td style="text-align:right">${formatCurrency(r.balance)}</td>
+      <td style="text-align:center">${r.status.toUpperCase()}</td>
+    </tr>`).join('');
+    const periodLabel = (dateFrom || dateTo) ? `${dateFrom ? formatDate(dateFrom) : 'Start'} – ${dateTo ? formatDate(dateTo) : 'Today'}` : 'All Time';
+    const html = `<!doctype html><html><head><meta charset="utf-8"><title>Statement - ${selectedCustomer.name}</title>
+<style>
+  * { box-sizing: border-box; }
+  body { font-family: Arial, Helvetica, sans-serif; padding: 20mm; color: #111; }
+  .co { text-align: center; font-weight: 800; font-size: 18px; text-transform: uppercase; }
+  .addr { text-align: center; font-size: 11px; color: #333; margin-top: 2px; }
+  h2 { text-align: center; font-size: 15px; letter-spacing: 1px; margin: 16px 0 4px; text-transform: uppercase; }
+  .cust { font-size: 12px; margin: 10px 0; padding: 8px 10px; background: #f8f8f8; border: 1px solid #ddd; }
+  table { width: 100%; border-collapse: collapse; font-size: 12px; margin-top: 10px; }
+  th, td { border: 1px solid #333; padding: 5px 8px; }
+  th { background: #f0f0f0; text-transform: uppercase; font-size: 10px; }
+  td:first-child, th:first-child { text-align: center; }
+  tfoot td { font-weight: 700; background: #fafafa; }
+  @media print { body { padding: 0; } @page { size: A4; margin: 12mm; } }
+</style></head><body>
+  ${settings?.logo_url ? `<div style="text-align:center"><img src="${settings.logo_url}" alt="Logo" style="max-height:50px"/></div>` : ''}
+  <div class="co">${settings?.company_name ?? ''}</div>
+  ${settings?.address ? `<div class="addr">${settings.address.replace(/\n/g, ', ')}</div>` : ''}
+  <div class="addr">${[settings?.phone ? 'Ph: ' + settings.phone : '', settings?.email ?? '', settings?.gstin ? 'GSTIN: ' + settings.gstin : ''].filter(Boolean).join(' &middot; ')}</div>
+  <h2>Customer Account Statement</h2>
+  <div class="cust">
+    <strong>${selectedCustomer.name}</strong><br/>
+    ${[selectedCustomer.phone, selectedCustomer.email, selectedCustomer.gstin ? 'GSTIN: ' + selectedCustomer.gstin : ''].filter(Boolean).join(' &middot; ')}<br/>
+    Statement Period: ${periodLabel}
+  </div>
+  <table>
+    <thead><tr><th>Sl.No</th><th>Date</th><th>Invoice Number</th><th>Total Amt</th><th>Received Amt</th><th>Balance Amt</th><th>Status</th></tr></thead>
+    <tbody>${rows || '<tr><td colspan="7" style="text-align:center;padding:16px">No invoices found for this period/filter.</td></tr>'}</tbody>
+    <tfoot><tr><td colspan="3">TOTAL (${summary.totalInvoices} invoices)</td><td style="text-align:right">${formatCurrency(summary.totalInvoiced)}</td><td style="text-align:right">${formatCurrency(summary.totalReceived)}</td><td style="text-align:right">${formatCurrency(summary.totalOutstanding)}</td><td></td></tr></tfoot>
+  </table>
+</body></html>`;
+    win.document.write(html.replace('</body></html>', '<script>window.onload = () => { window.print(); }</script></body></html>'));
+    win.document.close();
+  };
+
+  // ONE email with the customer's full statement — never one email per invoice.
+  const sendCustomerStatement = async () => {
+    if (!selectedCustomer) return;
+    if (!selectedCustomer.email) {
+      show('This customer does not have an email address configured. Please add an email in Customer Master.', 'error');
+      return;
+    }
+    if (filteredRows.length === 0) {
+      show('There are no invoices to include in this statement for the current filters.', 'error');
+      return;
+    }
+    setSendingStatement(true);
+    try {
+      const { data, error } = await supabase.functions.invoke('send-balance-statement', {
+        body: { customerId: selectedCustomer.id, invoiceIds: filteredRows.map(r => r.id) },
+      });
+      if (error) {
+        let msg = 'Unable to send statement. Please try again.';
+        if (error.context && typeof error.context.json === 'function') {
+          try {
+            const errBody = await error.context.json();
+            if (errBody?.error) msg = errBody.error;
+          } catch { /* fall through to default */ }
+        } else if (typeof error.message === 'string' && error.message.length > 0) {
+          msg = error.message;
+        }
+        show(getEmailErrorMessage(msg), 'error');
+      } else if (data?.sentTo) {
+        show(`Statement sent successfully to ${data.sentTo}`, 'success');
+      } else {
+        show('Statement sent successfully', 'success');
+      }
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Unable to send statement. Please try again.';
+      show(getEmailErrorMessage(msg), 'error');
+    }
+    setSendingStatement(false);
+  };
+
   const statusVariant = (status: InvoiceStatus): 'green' | 'amber' | 'gray' | 'red' => {
     if (status === 'Paid') return 'green';
     if (status === 'Partially Paid') return 'amber';
@@ -537,6 +648,20 @@ export default function SettlementReport() {
         </Button>
       </div>
 
+      {/* Select Customer — switches the report into a customer-wise account statement */}
+      <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-4">
+        <p className="text-xs font-bold uppercase tracking-wide text-slate-500 mb-2">Select Customer</p>
+        <div className="max-w-md">
+          <SearchableSelect
+            value={selectedCustomerId}
+            onChange={setSelectedCustomerId}
+            placeholder="All Customers — select one to view their account statement"
+            searchPlaceholder="Search customer..."
+            options={customers.map(c => ({ value: c.id, label: c.name, searchText: `${c.name} ${c.phone ?? ''}` }))}
+          />
+        </div>
+      </div>
+
       {/* Summary Cards */}
       <div className="grid grid-cols-2 lg:grid-cols-5 gap-3">
         <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-4">
@@ -545,6 +670,7 @@ export default function SettlementReport() {
             <span className="text-xs font-semibold text-slate-500 uppercase tracking-wider">{t('totalInvoices')}</span>
           </div>
           <p className="text-2xl font-bold text-slate-800">{summary.totalInvoices}</p>
+          <p className="text-xs text-slate-400 mt-0.5">{summary.paidCount} paid · {summary.partialCount} partial · {summary.pendingCount} pending</p>
         </div>
         <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-4">
           <div className="flex items-center gap-2 mb-1">
@@ -625,7 +751,82 @@ export default function SettlementReport() {
         </div>
       </div>
 
-      {/* Settlement Table */}
+      {/* Customer Account Statement — shown instead of the flat table once a customer is selected */}
+      {selectedCustomer && (
+        <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-4 space-y-3">
+          <div className="flex items-center justify-between flex-wrap gap-2">
+            <div>
+              <p className="text-xs font-bold uppercase tracking-wide text-slate-500">Customer Account Statement</p>
+              <p className="text-sm font-semibold text-slate-800">{selectedCustomer.name}</p>
+              <p className="text-xs text-slate-500">{[selectedCustomer.phone, selectedCustomer.email, selectedCustomer.gstin ? `GSTIN: ${selectedCustomer.gstin}` : null].filter(Boolean).join(' · ')}</p>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              <Button variant="outline" onClick={printCustomerStatement} disabled={filteredRows.length === 0}><Printer className="w-4 h-4" />Print Statement</Button>
+              <Button variant="outline" onClick={exportSettlementExcel} disabled={filteredRows.length === 0}><FileSpreadsheet className="w-4 h-4" />Export Statement</Button>
+              <Button onClick={sendCustomerStatement} disabled={sendingStatement || filteredRows.length === 0}><Send className="w-4 h-4" />{sendingStatement ? 'Sending...' : 'Email Statement'}</Button>
+            </div>
+          </div>
+
+          <div className="overflow-x-auto border border-slate-200 rounded-lg">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="bg-slate-50 text-xs uppercase text-slate-600">
+                  <th className="text-center px-3 py-2 border-b border-slate-200">Sl.No</th>
+                  <th className="text-left px-3 py-2 border-b border-slate-200">Date</th>
+                  <th className="text-left px-3 py-2 border-b border-slate-200">Invoice Number</th>
+                  <th className="text-right px-3 py-2 border-b border-slate-200">Total Amt</th>
+                  <th className="text-right px-3 py-2 border-b border-slate-200">Received Amt</th>
+                  <th className="text-right px-3 py-2 border-b border-slate-200">Balance Amt</th>
+                  <th className="text-center px-3 py-2 border-b border-slate-200">Status</th>
+                  <th className="text-center px-3 py-2 border-b border-slate-200">Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                {filteredRows.length === 0 ? (
+                  <tr><td colSpan={8} className="text-center py-8 text-slate-400">No invoices found for this customer/period/filter.</td></tr>
+                ) : filteredRows.map((r, idx) => (
+                  <tr key={r.id} className={idx % 2 ? 'bg-slate-50' : 'bg-white'}>
+                    <td className="text-center px-3 py-1.5 border-b border-slate-100">{idx + 1}</td>
+                    <td className="px-3 py-1.5 border-b border-slate-100">{formatDate(r.invoice_date)}</td>
+                    <td className="px-3 py-1.5 border-b border-slate-100 font-medium text-blue-700">{r.invoice_number}</td>
+                    <td className="text-right px-3 py-1.5 border-b border-slate-100">{formatCurrency(r.grand_total)}</td>
+                    <td className="text-right px-3 py-1.5 border-b border-slate-100 text-emerald-600">{formatCurrency(r.amount_received)}</td>
+                    <td className={`text-right px-3 py-1.5 border-b border-slate-100 font-semibold ${r.balance > 0 ? 'text-red-600' : 'text-slate-400'}`}>{formatCurrency(r.balance)}</td>
+                    <td className="text-center px-3 py-1.5 border-b border-slate-100">
+                      <div className="flex items-center justify-center gap-1">
+                        <StatusBadge status={r.status} variant={statusVariant(r.status)} />
+                        {r.is_overdue && <StatusBadge status="Overdue" variant="red" />}
+                      </div>
+                    </td>
+                    <td className="text-center px-3 py-1.5 border-b border-slate-100">
+                      <div className="flex gap-1 justify-center">
+                        <button onClick={() => { setViewInvoice(r.raw); setViewItems(r.items); setViewPayments(r.payments); }} className="p-1 text-slate-400 hover:text-blue-600" title={t('view')}><Eye className="w-4 h-4" /></button>
+                        {r.status !== 'Paid' && (
+                          <button onClick={() => openPayment(r.raw)} className="p-1 text-slate-400 hover:text-emerald-600" title={t('recordPayment')}><IndianRupee className="w-4 h-4" /></button>
+                        )}
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+              {filteredRows.length > 0 && (
+                <tfoot>
+                  <tr className="bg-slate-100 font-bold">
+                    <td colSpan={3} className="px-3 py-2">TOTAL</td>
+                    <td className="text-right px-3 py-2">{formatCurrency(summary.totalInvoiced)}</td>
+                    <td className="text-right px-3 py-2 text-emerald-700">{formatCurrency(summary.totalReceived)}</td>
+                    <td className="text-right px-3 py-2 text-red-700">{formatCurrency(summary.totalOutstanding)}</td>
+                    <td colSpan={2} />
+                  </tr>
+                </tfoot>
+              )}
+            </table>
+          </div>
+        </div>
+      )}
+
+      {/* Settlement Table — flat All-Customers view, unchanged, shown when no customer is selected */}
+      {!selectedCustomer && (
       <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
         {paginatedRows.length === 0 ? (
           <div className="p-12 text-center text-sm text-slate-400">
@@ -725,6 +926,7 @@ export default function SettlementReport() {
           </div>
         )}
       </div>
+      )}
 
       {/* View Invoice Modal */}
       <Modal

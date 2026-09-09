@@ -245,7 +245,7 @@ export interface EmiRecord {
 
 export interface Invoice {
   id: string;
-  invoice_number: string;
+  invoice_number: string | null;
   invoice_date: string;
   invoice_type: InvoiceType;
   customer_id: string | null;
@@ -294,9 +294,14 @@ export interface Invoice {
   terms_of_payment: string | null;
   delivery_note: string | null;
   reference_no: string | null;
+  reference_date: string | null;
   buyer_order_no: string | null;
+  buyer_order_date: string | null;
   dispatch_doc_no: string | null;
   delivery_note_date: string | null;
+  dispatched_through: string | null;
+  bill_of_lading_no: string | null;
+  terms_of_delivery_days: number;
   amount_received: number;
   balance_amount: number;
   invoice_status: InvoiceStatus;
@@ -307,6 +312,10 @@ export interface Invoice {
   up_transportation_amount: number;
   down_transportation_enabled: boolean;
   down_transportation_amount: number;
+  tax_type: 'cgst_sgst' | 'igst' | 'no_tax';
+  additional_charges_enabled: boolean;
+  additional_charges_amount: number;
+  additional_charges_description: string | null;
   created_by_name: string | null;
   email_status: string | null;
   email_sent_at: string | null;
@@ -511,6 +520,7 @@ export interface InvoiceWithRelations extends Invoice {
     driver?: Pick<Employee, 'id' | 'name' | 'role'> | null;
     sessions?: InvoiceVehicleSession[] | null;
   })[] | null;
+  billingLines?: Pick<InvoiceBillingLine, 'id'>[] | null;
 }
 
 export interface AttendanceWithEmployee extends AttendanceRecord {
@@ -745,4 +755,107 @@ export interface QuotationEmailHistory {
   error_message: string | null;
   sent_by: string | null;
   sent_at: string;
+}
+
+export type PoRateType = 'Hourly' | 'Daily';
+export type PoOrderStatus = 'Active' | 'Closed';
+
+/** The PO header: a customer's Purchase Order, under which working-day billing records are maintained. */
+export interface PoOrder {
+  id: string;
+  customer_id: string;
+  po_number: string;
+  po_date: string;
+  status: PoOrderStatus;
+  /** Optional — entered once, at the end, and applied to every working record under this PO. */
+  invoice_number: string | null;
+  /** Optional — entered once, at the end, and applied to every working record under this PO. */
+  bill_date: string | null;
+  created_by: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+/**
+ * One working-day billing line under a PO Order — this IS the billing record
+ * (there is no separate invoice-creation step or junction table). Rate/amount
+ * fields are computed and stored once when the row is added. Invoice Number
+ * and Bill Date are optional and can be filled in or edited at any time.
+ */
+export interface PoWorkingRecord {
+  id: string;
+  po_order_id: string;
+  customer_id: string;
+  working_date: string;
+  vehicle_id: string;
+  vehicle_number: string;
+  ton: number;
+  vl_no: string;
+  rate_type: PoRateType;
+  hours: number;
+  minutes: number;
+  first_hour_rate: number | null;
+  second_hour_rate: number | null;
+  first_hour_amount: number | null;
+  second_hour_amount: number | null;
+  subtotal: number | null;
+  gst_amount: number | null;
+  total_amount: number | null;
+  created_by: string | null;
+  created_at: string;
+}
+
+/**
+ * One (working date + vehicle) billing line under a GST invoice — see
+ * `invoice_billing_lines`. Independent of `invoice_vehicles`/
+ * `invoice_vehicle_sessions` (which remain used by Cash/UPI Billing).
+ */
+export interface InvoiceBillingLine {
+  id: string;
+  invoice_id: string;
+  working_date: string;
+  vehicle_id: string | null;
+  vehicle_number: string;
+  vehicle_type: string;
+  ton: number | null;
+  rate_type: PoRateType;
+  hours: number;
+  minutes: number;
+  first_hour_rate: number | null;
+  second_hour_rate: number | null;
+  first_hour_amount: number | null;
+  second_hour_amount: number | null;
+  batha: number;
+  total_amount: number;
+  sort_order: number;
+  created_by: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface Vendor {
+  id: string;
+  name: string;
+  phone: string | null;
+  address: string | null;
+  gst_number: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface Purchase {
+  id: string;
+  vendor_id: string;
+  bill_no: string | null;
+  remark: string | null;
+  purchase_date: string;
+  amount: number;
+  gst_rate: number;
+  gst_amount: number;
+  total_amount: number;
+  paid_amount: number;
+  balance_amount: number;
+  created_by: string | null;
+  created_at: string;
+  updated_at: string;
 }
