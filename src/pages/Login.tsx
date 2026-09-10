@@ -133,7 +133,7 @@ export default function Login() {
 
   return (
     <div className={`relative min-h-screen overflow-hidden flex items-center justify-center p-4 ${isBlueprint ? 'login-blueprint' : ''}`} style={{ backgroundColor: isDarkGradient ? '#071426' : '#0a1628' }}>
-      {/* Full-viewport image layers — no black center panel */}
+      {/* Full-viewport image layers - no black center panel */}
       <div className="absolute inset-0 flex flex-col md:flex-row">
         <div
           className="relative h-[42vh] min-h-[240px] w-full md:h-full md:w-1/2 bg-cover bg-center transition-all duration-500"
@@ -162,7 +162,7 @@ export default function Login() {
           }
         />
       </div>
-      {/* Subtle transparent center readability gradient — images stay visible */}
+      {/* Subtle transparent center readability gradient - images stay visible */}
       <div
         className="pointer-events-none absolute inset-0 transition-all duration-500"
         style={{

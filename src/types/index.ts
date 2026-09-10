@@ -248,6 +248,12 @@ export interface Invoice {
   invoice_number: string | null;
   invoice_date: string;
   invoice_type: InvoiceType;
+  /** Monthly Contract invoices only — which monthly_contracts row generated this
+   *  invoice. Null for every other invoice, and for historical Monthly Contract
+   *  invoices generated before this column existed. */
+  contract_id: string | null;
+  /** Monthly Contract invoices only — first day of the month this invoice bills for. */
+  billing_period_month: string | null;
   customer_id: string | null;
   customer_name: string | null;
   customer_address: string | null;
@@ -767,9 +773,9 @@ export interface PoOrder {
   po_number: string;
   po_date: string;
   status: PoOrderStatus;
-  /** Optional — entered once, at the end, and applied to every working record under this PO. */
+  /** Optional - entered once, at the end, and applied to every working record under this PO. */
   invoice_number: string | null;
-  /** Optional — entered once, at the end, and applied to every working record under this PO. */
+  /** Optional - entered once, at the end, and applied to every working record under this PO. */
   bill_date: string | null;
   created_by: string | null;
   created_at: string;
@@ -777,7 +783,7 @@ export interface PoOrder {
 }
 
 /**
- * One working-day billing line under a PO Order — this IS the billing record
+ * One working-day billing line under a PO Order - this IS the billing record
  * (there is no separate invoice-creation step or junction table). Rate/amount
  * fields are computed and stored once when the row is added. Invoice Number
  * and Bill Date are optional and can be filled in or edited at any time.
@@ -806,7 +812,7 @@ export interface PoWorkingRecord {
 }
 
 /**
- * One (working date + vehicle) billing line under a GST invoice — see
+ * One (working date + vehicle) billing line under a GST invoice - see
  * `invoice_billing_lines`. Independent of `invoice_vehicles`/
  * `invoice_vehicle_sessions` (which remain used by Cash/UPI Billing).
  */
@@ -821,6 +827,9 @@ export interface InvoiceBillingLine {
   rate_type: PoRateType;
   hours: number;
   minutes: number;
+  /** No. of full days billed (Full Day / "Daily" rows only). Null on rows saved before
+   *  this column existed — treat as 1 for display, never backfill the stored value. */
+  days: number | null;
   first_hour_rate: number | null;
   second_hour_rate: number | null;
   first_hour_amount: number | null;

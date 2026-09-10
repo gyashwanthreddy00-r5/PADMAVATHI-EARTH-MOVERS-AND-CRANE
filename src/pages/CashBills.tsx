@@ -19,7 +19,7 @@ import type { InvoiceWithRelations, InvoicePayment, PaymentMode, BillStatus } fr
 type CashPayStatus = 'Unpaid' | 'Partial' | 'Paid';
 
 // A session's saved duration_minutes can be 0 even when real in/out times (or meter
-// readings) were recorded — derive the real duration from those for display when that
+// readings) were recorded - derive the real duration from those for display when that
 // happens, so each session still shows its own accurate hours/amount.
 function deriveSessionMinutes(s: { duration_minutes: number; in_time: string | null; out_time: string | null; opening_hour_meter: number | null; closing_hour_meter: number | null }): number {
   if (s.duration_minutes > 0) return s.duration_minutes;
@@ -29,6 +29,60 @@ function deriveSessionMinutes(s: { duration_minutes: number; in_time: string | n
     opening_hour_meter: s.opening_hour_meter,
     closing_hour_meter: s.closing_hour_meter,
   });
+}
+
+// Full Day entries don't store a separate "days" count — it's derived the same way
+// elsewhere in the app (see invoiceDocData.ts): rental_amount was saved as
+// Full Day Rate x Number of Days (see SimpleCashBillForm.tsx), and daily_rate_snapshot
+// is the un-multiplied per-day rate, so dividing recovers the day count exactly. For a
+// bill saved before Number of Days existed, rental_amount === daily_rate_snapshot and
+// this correctly resolves to 1, so old receipts are unaffected.
+function deriveFullDayCount(dailyRateSnapshot: number | null, rentalAmount: number | null): number {
+  const dailyRate = Number(dailyRateSnapshot) || 0;
+  if (dailyRate <= 0) return 1;
+  return Math.max(1, Math.round((Number(rentalAmount) || 0) / dailyRate));
+}
+
+/**
+ * Clean, formula-free service/rate lines for the Cash/UPI receipt and view — shows the
+ * applicable rate (and, for Full Day, the day count/Batha-per-day) but never the
+ * underlying calculation formula. This replaces buildInvoiceLineDescription's verbose
+ * calculation text for Cash/UPI print/view only; GST invoices and Trips keep using
+ * buildInvoiceLineDescription unchanged.
+ */
+function buildCleanRateLines(v: {
+  rate_type: string | null;
+  first_hour_rate: number | null;
+  second_hour_rate: number | null;
+  daily_rate_snapshot: number | null;
+  rental_amount: number | null;
+  batha: number | null;
+}): string[] {
+  const rateType = v.rate_type ?? 'Hourly';
+  if (rateType === 'Daily') {
+    const dailyRate = Number(v.daily_rate_snapshot) || 0;
+    const days = deriveFullDayCount(v.daily_rate_snapshot, v.rental_amount);
+    const lines = ['Full Day'];
+    if (dailyRate > 0) lines.push(`Rate: ${formatCurrency(dailyRate)} / Day`);
+    lines.push(`Days: ${days}`);
+    const totalBatha = Number(v.batha) || 0;
+    if (totalBatha > 0) {
+      const bathaPerDay = Math.round((totalBatha / days) * 100) / 100;
+      lines.push(`Batha: ${formatCurrency(bathaPerDay)} / Day`);
+    }
+    return lines;
+  }
+  if (rateType === 'Hourly') {
+    const r1 = Number(v.first_hour_rate) || 0;
+    const r2 = Number(v.second_hour_rate) || 0;
+    const lines = ['Hourly'];
+    if (r1 > 0 || r2 > 0) {
+      lines.push(`Rate: ${formatCurrency(r1)} / First Hour`);
+      lines.push(`${formatCurrency(r2)} / Additional Hour`);
+    }
+    return lines;
+  }
+  return [rateType];
 }
 
 function calcBalance(total: number, paid: number): number {
@@ -217,7 +271,7 @@ export default function CashBills() {
     await insertVehicles(invRow.id, data.vehicles);
 
     // The invoice list's Paid/Balance/Status columns are derived from invoice_payments
-    // rows (see getTotalPaid), not the invoices.amount_received snapshot above — so a
+    // rows (see getTotalPaid), not the invoices.amount_received snapshot above - so a
     // matching payment record has to exist for those to reflect what was selected here,
     // exactly as recordPayment() does when a payment is added to an existing bill.
     if (paidAmount > 0) {
@@ -466,7 +520,7 @@ export default function CashBills() {
       const vNum = v.vehicle_number ?? v.vehicle?.registration_number ?? '';
 
       // Rate/hourly breakdown description (e.g. "1st Hr ₹X + 2nd Hr Onwards ₹Y × N Hr = Z"),
-      // shown as extra detail lines under the description — reuses the same, already-correct
+      // shown as extra detail lines under the description - reuses the same, already-correct
       // breakdown builder used for GST invoices. Purely descriptive text; the Hours/Rate/Amount
       // columns below still come from their own existing values, unchanged.
       const rateDescLines = buildInvoiceLineDescription({
@@ -498,13 +552,14 @@ export default function CashBills() {
       const hasUsableSessions = sessions.some(s => deriveSessionMinutes(s) > 0 || (!!s.rate_type && s.rate_type !== 'Hourly'));
 
       if (!hasUsableSessions) {
-        const hours = v.total_hours ? formatDuration(Number(v.total_hours)) : '-';
+        // Clean, formula-free rate/day lines (see buildCleanRateLines) — no calculation
+        // breakdown shown here, just the applicable rate and (for Full Day) day count.
+        const cleanLines = buildCleanRateLines(v).map(l => `<div style="font-size:9px;color:#555;margin-top:2px">${l}</div>`).join('');
         const rateType = (v.rate_type ?? 'Hourly') as string;
-        const isFlat = rateType === 'Daily' || rateType === 'Weekly' || rateType === 'Monthly';
-        const rateLabel = isFlat
-          ? formatCurrency(Number(v.rental_amount))
-          : `${formatCurrency(Number(v.first_hour_rate) || 0)}/Hr`;
-        return `<tr><td>${craneDesc}${vNum ? ' (' + vNum + ')' : ''}${rateDescLines}</td><td style="text-align:center">${hours}</td><td style="text-align:right">${formatCurrency(Number(v.rental_amount))}</td></tr>`;
+        const hours = rateType === 'Daily'
+          ? `${deriveFullDayCount(v.daily_rate_snapshot, v.rental_amount)} Day${deriveFullDayCount(v.daily_rate_snapshot, v.rental_amount) > 1 ? 's' : ''}`
+          : (v.total_hours ? formatDuration(Number(v.total_hours)) : '-');
+        return `<tr><td>${craneDesc}${vNum ? ' (' + vNum + ')' : ''}${cleanLines}</td><td style="text-align:center">${hours}</td><td style="text-align:right">${formatCurrency(Number(v.rental_amount))}</td></tr>`;
       }
 
       return sessions.map((s, sIdx) => {
@@ -561,8 +616,8 @@ export default function CashBills() {
     }).join('');
 
     const transportRows: string[] = [];
-    if (upTransport > 0) transportRows.push(`<tr><td>UP Transportation Charges</td><td style="text-align:center">—</td><td style="text-align:right">${formatCurrency(upTransport)}</td></tr>`);
-    if (downTransport > 0) transportRows.push(`<tr><td>Down Transportation Charges</td><td style="text-align:center">—</td><td style="text-align:right">${formatCurrency(downTransport)}</td></tr>`);
+    if (upTransport > 0) transportRows.push(`<tr><td>UP Transportation Charges</td><td style="text-align:center">-</td><td style="text-align:right">${formatCurrency(upTransport)}</td></tr>`);
+    if (downTransport > 0) transportRows.push(`<tr><td>Down Transportation Charges</td><td style="text-align:center">-</td><td style="text-align:right">${formatCurrency(downTransport)}</td></tr>`);
 
     const paymentHistoryRows = payments.length > 0 ? payments.map(p => `<tr><td style="text-align:center">${formatDate(p.payment_date)}</td><td style="text-align:center">${p.payment_mode ?? '-'}</td><td style="text-align:center">${p.reference ?? '-'}</td><td style="text-align:right">${formatCurrency(Number(p.amount))}</td></tr>`).join('') : '';
     const paymentHistorySection = payments.length > 0 ? `
@@ -715,7 +770,7 @@ export default function CashBills() {
   const paymentModalBalance = paymentModal ? calcBalance(getPayableAmount(paymentModal), getTotalPaid(paymentModal)) : 0;
   const paymentModalNewBalance = paymentModal ? Math.max(0, paymentModalBalance - paymentForm.amount) : 0;
 
-  // New-bill Payment Status breakdown — derived from the pending bill total + discount,
+  // New-bill Payment Status breakdown - derived from the pending bill total + discount,
   // never a separate stored figure, so it can never drift from the actual bill amount.
   const newBillFinalAmount = pendingBillData
     ? calculateDiscount({ grandTotal: pendingBillData.total_amount, discountEnabled, discountPercentage: discountPercent }).finalPayableAmount
@@ -823,7 +878,7 @@ export default function CashBills() {
                       const raw = Math.min(newBillFinalAmount, Math.max(0, Number(e.target.value) || 0));
                       setPaidAmountInput(e.target.value === '' ? '' : String(raw));
                       // Self-correcting per spec: paying the full amount is "Paid", paying
-                      // nothing is "Pending" — "Partially Paid" only applies in between.
+                      // nothing is "Pending" - "Partially Paid" only applies in between.
                       if (raw >= newBillFinalAmount && newBillFinalAmount > 0) setBillPaymentStatus('Paid');
                       else if (raw <= 0) setBillPaymentStatus('Pending');
                     }}
@@ -1014,7 +1069,7 @@ export default function CashBills() {
                     const label = `${craneDesc}${vNum ? ' (' + vNum + ')' : ''}`;
 
                     // Rate/hourly breakdown description (e.g. "1st Hr ₹X + 2nd Hr Onwards ₹Y ×
-                    // N Hr = Z"), shown as extra muted lines under the description — reuses the
+                    // N Hr = Z"), shown as extra muted lines under the description - reuses the
                     // same, already-correct breakdown builder used for GST invoices. Purely
                     // descriptive text; the Hours/Rate/Amount columns below are unchanged.
                     const rateDescLines = buildInvoiceLineDescription({
@@ -1050,13 +1105,23 @@ export default function CashBills() {
                     const hasUsableSessions = sessions.some(s => deriveSessionMinutes(s) > 0 || (!!s.rate_type && s.rate_type !== 'Hourly'));
 
                     if (!hasUsableSessions) {
-                      const hours = v.total_hours ? formatDuration(Number(v.total_hours)) : '-';
+                      // Clean, formula-free rate/day lines (see buildCleanRateLines) — no
+                      // calculation breakdown, just the applicable rate and (for Full Day)
+                      // the day count.
+                      const cleanLines = buildCleanRateLines(v);
+                      const cleanDesc = cleanLines.length > 0 ? (
+                        <div className="mt-1 space-y-0.5">
+                          {cleanLines.map((l, li) => <div key={li} className="text-[10px] text-slate-500">{l}</div>)}
+                        </div>
+                      ) : null;
                       const rateType = (v.rate_type ?? 'Hourly') as string;
-                      const isFlat = rateType === 'Daily' || rateType === 'Weekly' || rateType === 'Monthly';
-                      const rateLabel = isFlat ? formatCurrency(Number(v.rental_amount)) : `${formatCurrency(Number(v.first_hour_rate) || 0)}/Hr`;
+                      const fullDayCount = deriveFullDayCount(v.daily_rate_snapshot, v.rental_amount);
+                      const hours = rateType === 'Daily'
+                        ? `${fullDayCount} Day${fullDayCount > 1 ? 's' : ''}`
+                        : (v.total_hours ? formatDuration(Number(v.total_hours)) : '-');
                       return [(
                         <tr key={v.id}>
-                          <td className="px-3 py-2 border-b border-slate-100">{label}{rateDesc}</td>
+                          <td className="px-3 py-2 border-b border-slate-100">{label}{cleanDesc}</td>
                           <td className="text-center px-3 py-2 border-b border-slate-100">{hours}</td>
                           <td className="text-right px-3 py-2 border-b border-slate-100">{formatCurrency(Number(v.rental_amount))}</td>
                         </tr>
@@ -1117,10 +1182,10 @@ export default function CashBills() {
                     });
                   })}
                   {upTransport > 0 && (
-                    <tr><td className="px-3 py-2 border-b border-slate-100">UP Transportation</td><td className="text-center px-3 py-2 border-b border-slate-100">—</td><td className="text-right px-3 py-2 border-b border-slate-100">{formatCurrency(upTransport)}</td></tr>
+                    <tr><td className="px-3 py-2 border-b border-slate-100">UP Transportation</td><td className="text-center px-3 py-2 border-b border-slate-100">-</td><td className="text-right px-3 py-2 border-b border-slate-100">{formatCurrency(upTransport)}</td></tr>
                   )}
                   {downTransport > 0 && (
-                    <tr><td className="px-3 py-2 border-b border-slate-100">Down Transportation</td><td className="text-center px-3 py-2 border-b border-slate-100">—</td><td className="text-right px-3 py-2 border-b border-slate-100">{formatCurrency(downTransport)}</td></tr>
+                    <tr><td className="px-3 py-2 border-b border-slate-100">Down Transportation</td><td className="text-center px-3 py-2 border-b border-slate-100">-</td><td className="text-right px-3 py-2 border-b border-slate-100">{formatCurrency(downTransport)}</td></tr>
                   )}
                 </tbody>
               </table>

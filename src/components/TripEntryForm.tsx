@@ -85,7 +85,7 @@ interface TripEntryFormProps {
   initialTripDate?: string;
   perVehiclePlaceOfWork?: boolean;
   initialData?: MultiVehicleTripFormData | null;
-  /** Label for the bill-level date field — defaults to the existing "Date" label used by
+  /** Label for the bill-level date field - defaults to the existing "Date" label used by
    * the Classic GST trip flow. Cash/UPI Billing passes "Working Date" to match the GST
    * Billing module's terminology, without touching the Classic flow's label. */
   dateLabel?: string;
@@ -543,7 +543,7 @@ export function TripEntryForm({
                             const isUsed = usedIds.has(v.id);
                             return {
                               value: v.id,
-                              label: `${v.registration_number}${isBooked ? ' — Booked' : ''}${isUsed ? ' — Selected' : ''}`,
+                              label: `${v.registration_number}${isBooked ? ' - Booked' : ''}${isUsed ? ' - Selected' : ''}`,
                               disabled: isBooked || isUsed,
                               searchText: v.registration_number,
                             };

@@ -121,7 +121,7 @@ export default function Attendance() {
     setSaving(false);
   };
 
-  // Individual override — updates single record
+  // Individual override - updates single record
   const overrideStatus = async (employeeId: string, status: AttendanceStatus) => {
     setAttendanceMap(prev => ({ ...prev, [employeeId]: status }));
     const { data: existing } = await supabase
@@ -293,7 +293,7 @@ export default function Attendance() {
         </div>
         {selectedIds.size > 0 && (
           <p className="text-xs text-slate-500 mt-2">
-            {selectedIds.size} {selectedIds.size === 1 ? 'employee' : 'employees'} selected — will be marked as {bulkStatus}
+            {selectedIds.size} {selectedIds.size === 1 ? 'employee' : 'employees'} selected - will be marked as {bulkStatus}
           </p>
         )}
       </div>
@@ -301,7 +301,7 @@ export default function Attendance() {
       {/* Attendance Report */}
       <div className="space-y-3">
         <div className="flex items-center justify-between">
-          <h3 className="text-sm font-semibold text-slate-700">{t('attendanceReport')} — {formatDate(date)}</h3>
+          <h3 className="text-sm font-semibold text-slate-700">{t('attendanceReport')} - {formatDate(date)}</h3>
           <Button variant="outline" size="sm" onClick={exportReport}><FileSpreadsheet className="w-4 h-4" />Excel</Button>
         </div>
         <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-4">

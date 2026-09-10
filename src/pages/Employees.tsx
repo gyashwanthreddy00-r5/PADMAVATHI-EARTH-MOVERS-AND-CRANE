@@ -103,7 +103,7 @@ export default function Employees() {
 
   const handleDelete = async () => {
     if (!deleteId) return;
-    // Check if employee has attendance or trips — deactivate instead of deleting
+    // Check if employee has attendance or trips - deactivate instead of deleting
     const { count: attCount } = await supabase.from('attendance').select('id', { count: 'exact', head: true }).eq('employee_id', deleteId);
     const { count: tripCount } = await supabase.from('trips').select('id', { count: 'exact', head: true }).eq('driver_id', deleteId);
     if ((attCount && attCount > 0) || (tripCount && tripCount > 0)) {

@@ -25,7 +25,7 @@ function cellText(v: number | null): string {
 }
 
 // Hourly rows show the First Hour Rate / Second Hour Rate pair (from Rate Master) in a
-// single Rate column — display only, does not affect First/Second Hour Amount or Total
+// single Rate column - display only, does not affect First/Second Hour Amount or Total
 // Amount, which keep using the existing calculated values.
 function rateCellText(l: InvoiceBillingLine): string {
   if (l.rate_type === 'Daily') return '';
@@ -65,7 +65,7 @@ export function printGstBillingData(ctx: GstExportContext, lines: InvoiceBilling
   const rowsHtml = lines.map((l, idx) => `<tr>${rowCells(l, idx).map(c => `<td>${c}</td>`).join('')}</tr>`).join('');
 
   win.document.write(`<!doctype html>
-<html><head><title>${ctx.invoiceNumber || 'GST Invoice'} — Working Day Billing</title>
+<html><head><title>${ctx.invoiceNumber || 'GST Invoice'} - Working Day Billing</title>
 <style>
   * { box-sizing: border-box; }
   body { font-family: Arial, Helvetica, sans-serif; padding: 24px; color: #111; }
@@ -121,7 +121,7 @@ export function exportGstBillingDataToExcel(ctx: GstExportContext, lines: Invoic
   aoa.push([ctx.companyName]);
   if (ctx.companyAddress) aoa.push([ctx.companyAddress + (ctx.companyGstin ? `   GSTIN: ${ctx.companyGstin}` : '')]);
   aoa.push([]);
-  const metaRowCells = [`Customer: ${ctx.customerName}`, '', '', `Invoice No: ${ctx.invoiceNumber || 'Not yet assigned'}`, '', '', `Bill Date: ${ctx.billDate ? formatDate(ctx.billDate) : '—'}`];
+  const metaRowCells = [`Customer: ${ctx.customerName}`, '', '', `Invoice No: ${ctx.invoiceNumber || 'Not yet assigned'}`, '', '', `Bill Date: ${ctx.billDate ? formatDate(ctx.billDate) : '-'}`];
   aoa.push(metaRowCells);
   aoa.push([]);
   const headerRowIdx = aoa.length;

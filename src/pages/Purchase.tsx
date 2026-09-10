@@ -408,7 +408,7 @@ export default function Purchase() {
             searchKeys={['name', 'phone', 'gst_number']}
             searchPlaceholder="Search vendor by name, phone, or GST number..."
             showSerialNumber
-            emptyMessage="No vendors yet — click Add Vendor to create one."
+            emptyMessage="No vendors yet - click Add Vendor to create one."
           />
         </>
       ) : (

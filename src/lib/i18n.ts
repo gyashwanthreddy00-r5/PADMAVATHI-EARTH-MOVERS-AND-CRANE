@@ -723,7 +723,7 @@ export const translations = {
     dieselEntries: 'Diesel Entries',
     draft: 'Draft',
     expiring: 'Expiring',
-    upcomingNext7Days: 'Upcoming — Next 7 Days',
+    upcomingNext7Days: 'Upcoming - Next 7 Days',
     noUpcomingEvents: 'No upcoming events in the next 7 days',
     jobsPending: 'pending',
     jobsDoneToday: 'Jobs done today',

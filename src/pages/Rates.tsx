@@ -134,7 +134,7 @@ export default function Rates() {
       if (editing) {
         const newEffFrom = form.effective_from ?? TODAY;
         if (newEffFrom <= editing.effective_from) {
-          show(`Effective From must be after ${formatDate(editing.effective_from)} — the current version (V${editing.version_number}) already starts on that date. Pick a later date to create a new version.`, 'error');
+          show(`Effective From must be after ${formatDate(editing.effective_from)} - the current version (V${editing.version_number}) already starts on that date. Pick a later date to create a new version.`, 'error');
           setSaving(false);
           return;
         }
@@ -369,7 +369,7 @@ export default function Rates() {
 
       <Modal
         open={historyOpen} onClose={() => setHistoryOpen(false)}
-        title={`${t('rateHistory')} — ${historyLabel}`}
+        title={`${t('rateHistory')} - ${historyLabel}`}
         size="lg"
       >
         <div className="overflow-x-auto">

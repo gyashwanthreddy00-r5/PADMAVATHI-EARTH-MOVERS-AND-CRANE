@@ -191,7 +191,7 @@ export default function VehicleWiseReport() {
     .logo-block{display:flex;align-items:center;gap:12px;margin-bottom:8px}.logo-block img{width:48px;height:36px;object-fit:contain}
     </style></head><body>
     <div class="logo-block"><img src="${getReportLogoUrl()}" alt="logo"/><div><h1 style="margin:0">${settings?.company_name ?? 'PADMAVATHI EARTH MOVERS AND CRANE SERVICES'}</h1></div></div>
-    <h2>Vehicle-Wise Report (${formatDate(filters.from)} — ${formatDate(filters.to)})</h2>
+    <h2>Vehicle-Wise Report (${formatDate(filters.from)} - ${formatDate(filters.to)})</h2>
     <table><thead><tr>
     <th>Vehicle</th><th>Type</th><th>Trips</th><th>Days</th><th>Contracts</th><th>Revenue</th><th>Diesel</th><th>Maint.</th><th>Expenses</th><th>EMI Paid</th><th>Net</th><th>Status</th>
     </tr></thead><tbody>

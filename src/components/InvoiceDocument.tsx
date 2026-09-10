@@ -13,7 +13,7 @@ export function invoiceDocHTML(
   invoiceSettings: InvoiceSettings | null,
   copyType: string = 'master',
   docType: InvoiceDocType = 'tax',
-  // Optional — lets older invoice lines with no captured rate snapshot still show a real
+  // Optional - lets older invoice lines with no captured rate snapshot still show a real
   // 1st/2nd-hour rate via a live Rate Master lookup instead of a derived (amount ÷ qty)
   // figure. See prepareInvoiceData / liveHourlyRateLabel in invoiceDocData.ts.
   rateMasterRows: RateMaster[] = [],
@@ -31,7 +31,7 @@ export function invoiceDocHTML(
   } = d;
 
   // Reference No. & Date default to this invoice's own number/date but are editable
-  // per-invoice overrides (see Invoices.tsx "Edit Invoice Details") — inv.reference_no /
+  // per-invoice overrides (see Invoices.tsx "Edit Invoice Details") - inv.reference_no /
   // inv.reference_date win once a user has set them.
   const refNo = inv.reference_no || inv.invoice_number;
   const refDate = inv.reference_date || inv.invoice_date;
@@ -40,7 +40,7 @@ export function invoiceDocHTML(
   // otherwise falls back to the company-wide Invoice Settings default so it stays in sync
   // automatically when that setting changes.
   const modeTermsOfPayment = inv.terms_of_payment || invoiceSettings?.default_payment_terms || null;
-  // Terms of Delivery: editable day-count per invoice (defaults to 28 — no separate
+  // Terms of Delivery: editable day-count per invoice (defaults to 28 - no separate
   // "configurable setting" for this exists), due date always computed from it, never a
   // hardcoded calendar date.
   const termDays = inv.terms_of_delivery_days || 28;
@@ -49,7 +49,7 @@ export function invoiceDocHTML(
 
   const addrLine = (lines: string[]) => lines.map(l => `<p style="margin:1px 0">${l}</p>`).join('');
 
-  // Description of Services shows only the service description — never the
+  // Description of Services shows only the service description - never the
   // hour-by-hour rate/amount breakdown (that stays available on row.calcLines
   // for callers that want it, e.g. the app's own invoice edit view).
   const itemsRows = itemRows.map(row => isProforma ? `<tr>
@@ -73,45 +73,64 @@ export function invoiceDocHTML(
   const totalQtyUnits = Array.from(new Set(itemRows.map(r => r.unit).filter(Boolean)));
   const totalQtyLabel = `${formatNumber(Math.round(totalQty * 100) / 100)}${totalQtyUnits.length === 1 ? ' ' + totalQtyUnits[0] : ''}`;
 
-  // Every row occupies the same 4-column grid (label|value|label|value) so column
-  // boundaries line up top to bottom — a single-field row spans its value across the
-  // remaining 3 columns (colspan) instead of only 1 of 4, which is what let single-field
-  // rows collapse to half-width and drift out of alignment with the paired rows above/below.
-  const metaRow = (label: string, val: string | null | undefined) =>
-    `<tr><td class="dg-lbl">${label}</td><td class="dg-val" colspan="3">${val ?? ''}</td></tr>`;
-  const metaRowPair = (label1: string, val1: string | null | undefined, label2: string, val2: string | null | undefined) =>
-    `<tr><td class="dg-lbl">${label1}</td><td class="dg-val">${val1 ?? ''}</td><td class="dg-lbl">${label2}</td><td class="dg-val">${val2 ?? ''}</td></tr>`;
+  // The item table keeps a fixed, physical-form-sized "box" (TABLE_TARGET_HEIGHT) by
+  // filling whatever is left over with a blank spacer row - but only ever a real
+  // remainder, never a fixed amount piled on top of however much content already
+  // exists. A rough per-row height estimate (description text length -> wrapped line
+  // count) decides how much of that budget is already used; only the true leftover
+  // becomes the spacer, so a heavier invoice (more lines, more items) naturally uses
+  // less spacer and only overflows to a next page once it genuinely needs to.
+  const CHARS_PER_DESC_LINE = 60;
+  const estimateItemRowPx = (desc: string) => {
+    const lines = Math.max(1, Math.ceil((desc?.length || 1) / CHARS_PER_DESC_LINE));
+    return 8 + lines * 15;
+  };
+  const itemRowsEstPx = itemRows.reduce((sum, r) => sum + estimateItemRowPx(r.description), 0);
+  const taxRowCount = (!isProforma ? ((isIgst ? (igstAmt > 0 ? 1 : 0) : (cgstAmt > 0 ? 1 : 0) + (sgstAmt > 0 ? 1 : 0)) + (inv.discount_enabled ? 1 : 0)) : 0);
+  const TABLE_TARGET_PX = 420;
+  const usedTablePx = 30 /* thead */ + itemRowsEstPx + taxRowCount * 22 + 30 /* Total row */;
+  const tableSpacerPx = Math.max(0, TABLE_TARGET_PX - usedTablePx);
 
-  // Proforma keeps a plain, tax-inclusive Total row — no CGST/SGST rows, no
+  // Each metadata field is its own label-above-value cell (matching a physical TallyPrime
+  // GST invoice), not label-beside-value - metaRow is a single full-width cell (its row has
+  // just one dg-cell, so there's no vertical divider through it), metaRowPair is two cells
+  // side by side sharing one row (with a divider between them).
+  const dgCell = (label: string, val: string | null | undefined, full = false) =>
+    `<div class="dg-cell"${full ? ' style="flex:1 1 100%"' : ''}><div class="dg-lbl-text">${label}</div><div class="dg-val-text">${val || '&nbsp;'}</div></div>`;
+  const metaRow = (label: string, val: string | null | undefined) =>
+    `<div class="dg-row">${dgCell(label, val, true)}</div>`;
+  const metaRowPair = (label1: string, val1: string | null | undefined, label2: string, val2: string | null | undefined) =>
+    `<div class="dg-row">${dgCell(label1, val1)}${dgCell(label2, val2)}</div>`;
+
+  // Proforma keeps a plain, tax-inclusive Total row - no CGST/SGST rows, no
   // HSN-wise GST summary table. Tax Invoice reproduces TallyPrime's own layout:
   // CGST/SGST appended as plain rows directly under the item rows (inside the
   // same bordered item table, not a separate boxed "card"), then a Total row,
-  // then — further down, after Amount Chargeable in words — a second, genuinely
+  // then - further down, after Amount Chargeable in words - a second, genuinely
   // separate HSN-wise GST summary table (see gstSummaryHtml below), exactly as
   // a physical TallyPrime GST Tax Invoice prints it.
   const totalRowHtml = isProforma ? `
     <tr>
-      <td colspan="3" style="text-align:right;font-weight:bold;border-top:2px solid #000">Total</td>
-      <td style="border-top:2px solid #000"></td>
-      <td style="border-top:2px solid #000"></td>
-      <td style="text-align:right;font-weight:bold;border-top:2px solid #000">${formatNumber(finalPayable)}</td>
+      <td colspan="3" style="text-align:right;font-weight:bold;border-top:1px solid #000">Total</td>
+      <td style="border-top:1px solid #000"></td>
+      <td style="border-top:1px solid #000"></td>
+      <td style="text-align:right;font-weight:bold;border-top:1px solid #000">${formatNumber(finalPayable)}</td>
     </tr>` : `
-    <tr>
-      <td colspan="6"></td>
-      <td style="text-align:right">${formatNumber(taxable)}</td>
-    </tr>
     ${isIgst
-      ? (igstAmt > 0 ? `<tr><td colspan="4" style="text-align:right;font-style:italic">IGST ${inv.igst_percent}%</td><td style="text-align:right">${inv.igst_percent}</td><td style="text-align:center">%</td><td style="text-align:right">${formatNumber(igstAmt)}</td></tr>` : '')
-      : `${cgstAmt > 0 ? `<tr><td colspan="4" style="text-align:right;font-style:italic">CGST ${inv.cgst_percent}%</td><td style="text-align:right">${inv.cgst_percent}</td><td style="text-align:center">%</td><td style="text-align:right">${formatNumber(cgstAmt)}</td></tr>` : ''}
-         ${sgstAmt > 0 ? `<tr><td colspan="4" style="text-align:right;font-style:italic">SGST ${inv.sgst_percent}%</td><td style="text-align:right">${inv.sgst_percent}</td><td style="text-align:center">%</td><td style="text-align:right">${formatNumber(sgstAmt)}</td></tr>` : ''}`
+      ? (igstAmt > 0 ? `<tr><td></td><td style="text-align:right;font-style:italic">IGST ${inv.igst_percent}%</td><td></td><td></td><td style="text-align:right">${inv.igst_percent}</td><td style="text-align:center">%</td><td style="text-align:right">${formatNumber(igstAmt)}</td></tr>` : '')
+      : `${cgstAmt > 0 ? `<tr><td></td><td style="text-align:right;font-style:italic">CGST ${inv.cgst_percent}%</td><td></td><td></td><td style="text-align:right">${inv.cgst_percent}</td><td style="text-align:center">%</td><td style="text-align:right">${formatNumber(cgstAmt)}</td></tr>` : ''}
+         ${sgstAmt > 0 ? `<tr><td></td><td style="text-align:right;font-style:italic">SGST ${inv.sgst_percent}%</td><td></td><td></td><td style="text-align:right">${inv.sgst_percent}</td><td style="text-align:center">%</td><td style="text-align:right">${formatNumber(sgstAmt)}</td></tr>` : ''}`
     }
     ${inv.discount_enabled ? `<tr><td colspan="6" style="text-align:right;color:#dc2626">Discount (${inv.discount_percent}%)</td><td style="text-align:right;color:#dc2626">-${formatNumber(Number(inv.discount_amount) || 0)}</td></tr>` : ''}
+    ${tableSpacerPx > 0 ? `<tr><td style="height:${tableSpacerPx}px"></td><td></td><td></td><td></td><td></td><td></td><td></td></tr>` : ''}
     <tr>
-      <td colspan="3" style="font-weight:bold;border-top:2px solid #000;border-bottom:2px solid #000">Total</td>
-      <td style="text-align:center;font-weight:bold;border-top:2px solid #000;border-bottom:2px solid #000">${totalQtyLabel}</td>
-      <td style="border-top:2px solid #000;border-bottom:2px solid #000"></td>
-      <td style="border-top:2px solid #000;border-bottom:2px solid #000"></td>
-      <td style="text-align:right;font-weight:bold;font-size:12px;border-top:2px solid #000;border-bottom:2px solid #000">&#8377;${formatNumber(finalPayable)}</td>
+      <td style="border-top:1px solid #000;border-bottom:1px solid #000"></td>
+      <td style="font-weight:bold;border-top:1px solid #000;border-bottom:1px solid #000">Total</td>
+      <td style="border-top:1px solid #000;border-bottom:1px solid #000"></td>
+      <td style="border-top:1px solid #000;border-bottom:1px solid #000"></td>
+      <td style="border-top:1px solid #000;border-bottom:1px solid #000"></td>
+      <td style="border-top:1px solid #000;border-bottom:1px solid #000"></td>
+      <td style="text-align:right;font-weight:bold;font-size:12px;border-top:1px solid #000;border-bottom:1px solid #000">&#8377;${formatNumber(finalPayable)}</td>
     </tr>`;
 
   const amountWordsBlockHtml = `
@@ -125,10 +144,10 @@ export function invoiceDocHTML(
     </td>
   </tr></table>`;
 
-  // HSN-wise GST summary — a second, separate bordered table (not merged into
+  // HSN-wise GST summary - a second, separate bordered table (not merged into
   // the item table), exactly as TallyPrime prints it below Amount Chargeable.
   const gstSummaryHtml = (!isProforma && totalTax > 0) ? `
-  <table class="gst-sum">
+  <table class="gst-sum" style="margin-top:4px">
     <thead>
       <tr>
         <th rowspan="2">HSN/SAC</th><th rowspan="2">Taxable<br/>Value</th>
@@ -160,7 +179,7 @@ export function invoiceDocHTML(
       </tr>
     </tbody>
   </table>
-  <p style="margin:3px 0"><strong>Tax Amount (in words):</strong> INR ${amountInWords(totalTax)}</p>` : '';
+  <p style="margin:2px 0"><strong>Tax Amount (in words):</strong> INR ${amountInWords(totalTax)}</p>` : '';
 
   return `<!DOCTYPE html><html><head><meta charset="utf-8">
 <title>${isProforma ? 'Proforma Invoice' : 'Tax Invoice'} - ${inv.invoice_number}</title>
@@ -178,44 +197,51 @@ export function invoiceDocHTML(
   .copy-label span { font-size: 10px; font-weight: bold; font-style: italic; }
   .ti-heading { text-align: center; margin: 2px 0 4px 0; }
   .ti-heading h2 { font-size: 15px; margin: 0; font-weight: bold; color: #000; }
-  table.hdr { width: 100%; border-collapse: collapse; border: 1px solid #000; }
-  table.hdr > tr > td { vertical-align: top; padding: 0; }
-  .hdr-left { width: 55%; border-right: 1px solid #000; }
+  /* A flex row (not a table) so the shorter side (whichever of hdr-left / hdr-right has
+     less content) stretches to match the taller one - see .dg-row:last-child below,
+     which is what actually uses that stretched height to make its last row (and the
+     divider line inside it) reach all the way down to this box's own bottom border. */
+  .hdr-flex { display: flex; align-items: stretch; width: 100%; border: 1px solid #000; }
+  .hdr-left { width: 53%; border-right: 1px solid #000; }
   .hdr-left > div { padding: 4px 6px; border-bottom: 1px solid #000; }
   .hdr-left > div:last-child { border-bottom: none; }
   .hdr-left h3 { font-size: 10px; margin: 0 0 2px 0; font-weight: bold; color: #000; }
   .hdr-left .nm { font-weight: bold; font-size: 11px; margin: 1px 0; color: #000; }
-  /* table-layout: fixed + the colgroup on this table (see markup) is what keeps every
-     row's label/value column boundaries lined up top to bottom, regardless of how long
-     an individual value is (e.g. a multi-vehicle Motor Vehicle No. list) — long content
-     wraps inside its own cell instead of growing that row's columns wider than the rest. */
-  table.dg { width: 100%; border-collapse: collapse; table-layout: fixed; }
-  table.dg td.dg-lbl { font-size: 9px; color: #000; padding: 3px 4px; border-bottom: 1px solid #999; border-right: 1px solid #999; vertical-align: top; word-wrap: break-word; overflow-wrap: break-word; line-height: 1.3; }
-  table.dg td.dg-val { font-size: 10px; font-weight: bold; color: #000; padding: 3px 4px; border-bottom: 1px solid #999; vertical-align: top; word-wrap: break-word; overflow-wrap: break-word; word-break: break-word; line-height: 1.3; }
-  table.dg tr:last-child td { border-bottom: none; }
+  /* Each metadata row is a flex row of one or two label-above-value cells - a physical
+     TallyPrime GST invoice stacks the value directly under its own label rather than
+     beside it. The last row is given flex: 1 so it grows to fill any leftover height
+     when hdr-left (company/consignee/buyer) has more content than this side does. */
+  .hdr-right { width: 47%; display: flex; flex-direction: column; }
+  .dg-row { display: flex; border-bottom: 1px solid #999; }
+  .dg-row:last-child { border-bottom: none; flex: 1; }
+  .dg-cell { flex: 1; padding: 3px 4px; min-width: 0; }
+  .dg-cell + .dg-cell { border-left: 1px solid #999; }
+  .dg-lbl-text { font-size: 8px; color: #000; }
+  .dg-val-text { font-size: 10px; font-weight: bold; color: #000; margin-top: 1px; word-wrap: break-word; overflow-wrap: break-word; }
   .party { padding: 6px 6px; font-size: 10px; vertical-align: top; }
   .party h3 { font-size: 9px; text-transform: uppercase; margin: 0 0 3px 0; border-bottom: 1px solid #ccc; padding-bottom: 2px; font-weight: bold; color: #000; }
   .party .nm { font-weight: bold; font-size: 11px; margin: 2px 0; color: #000; }
   .party p { margin: 1px 0; color: #000; }
-  table.it { width: 100%; border-collapse: collapse; margin: 0; table-layout: fixed; border: 1px solid #000; }
+  /* border-collapse: separate + border-spacing: 0 (not collapse) - each cell draws its own
+     left/right border independently instead of merging with its neighbor's, which is what
+     was leaving hairline gaps in the vertical column dividers at every row boundary. */
+  table.it { width: 100%; border-collapse: separate; border-spacing: 0; margin: 0; table-layout: fixed; border: 1px solid #000; }
   table.it th { background: #f0f0f0 !important; color: #000; padding: 4px 4px; font-size: 9px; border: 1px solid #000; font-weight: bold; text-align: center; }
-  /* Only vertical column separators inside the Description of Services area —
+  /* Only vertical column separators inside the Description of Services area -
      no horizontal line between the service row, the taxable subtotal spacer,
      or CGST/SGST (Tally's open/clean look). Only the header row and the final
      Total row set their own border-top/border-bottom where a horizontal line
      is actually wanted. */
   table.it td { padding: 4px 4px; border-left: 1px solid #999; border-right: 1px solid #999; border-top: none; border-bottom: none; font-size: 10px; font-variant-numeric: tabular-nums; color: #000; word-wrap: break-word; overflow-wrap: break-word; }
   table.it td:nth-child(2) { line-height: 1.4; }
-  table.gst-sum { width: 100%; border-collapse: collapse; font-size: 9px; margin-top: 6px; }
-  table.gst-sum th, table.gst-sum td { border: 1px solid #999; padding: 3px 4px; text-align: center; color: #000; }
+  table.gst-sum { width: 100%; border-collapse: collapse; font-size: 9px; margin-top: 4px; }
+  table.gst-sum th, table.gst-sum td { border: 1px solid #999; padding: 2px 4px; text-align: center; color: #000; }
   table.gst-sum th { background: #f0f0f0 !important; font-weight: bold; }
-  .bot-left { padding: 6px 6px 0 0; }
-  .bot-right { padding: 6px 0 0 6px; border-left: 1px solid #ccc; }
-  .bot h3 { font-size: 9px; text-transform: uppercase; margin: 0 0 3px 0; font-weight: bold; color: #000; }
-  .bot p { margin: 2px 0; font-size: 10px; color: #000; }
-  .sign-r { text-align: right; margin-top: 16px; }
-  .sign-r p { margin: 2px 0; font-size: 10px; color: #000; }
-  .footer { text-align: center; margin-top: 6px; font-size: 8px; color: #444; border-top: 1px solid #999; padding-top: 3px; }
+  .bot-left { padding: 4px 6px 0 0; }
+  .bot-right { padding: 4px 0 0 6px; border-left: 1px solid #ccc; }
+  .bot h3 { font-size: 9px; text-transform: uppercase; margin: 0 0 2px 0; font-weight: bold; color: #000; }
+  .bot p { margin: 1px 0; font-size: 10px; color: #000; }
+  .footer { text-align: center; margin-top: 4px; font-size: 8px; color: #444; border-top: 1px solid #999; padding-top: 2px; }
   @media print {
     body { font-size: 11px; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
     .inv { width: 100%; max-width: 100%; }
@@ -226,18 +252,17 @@ export function invoiceDocHTML(
 <div class="inv">
 
   <table class="layout"><tr>
-    <td style="width:100%"></td>
+    <td style="width:140px"></td>
+    <td class="ti-heading" style="width:auto">
+      <h2>${isProforma ? 'Proforma Invoice' : 'Tax Invoice'}</h2>
+    </td>
     <td class="copy-label" style="width:140px;white-space:nowrap">
       ${copyLabel ? `<span>(${copyLabel})</span>` : ''}
     </td>
   </tr></table>
 
-  <div class="ti-heading">
-    <h2>${isProforma ? 'Proforma Invoice' : 'Tax Invoice'}</h2>
-  </div>
-
-  <table class="hdr"><tr>
-    <td class="hdr-left">
+  <div class="hdr-flex">
+    <div class="hdr-left">
       <div>
         ${compLogo ? `<img src="${compLogo}" alt="Logo" style="max-height:40px;max-width:100px;margin-bottom:2px"/>` : ''}
         <h1>${compName}</h1>
@@ -262,31 +287,24 @@ export function invoiceDocHTML(
         ${cGstin && cGstin !== '-' ? `<p>GSTIN/UIN: ${cGstin}</p>` : ''}
         ${cState && cState !== '-' ? `<p>State Name: ${cState}${cStateCode && cStateCode !== '-' ? `, Code: ${cStateCode}` : ''}</p>` : ''}
       </div>
-    </td>
-    <td style="width:45%">
-      <table class="dg">
-        <colgroup><col style="width:22%"/><col style="width:28%"/><col style="width:22%"/><col style="width:28%"/></colgroup>
-        <tbody>
+    </div>
+    <div class="hdr-right">
       ${metaRowPair('Invoice No.', inv.invoice_number, 'Dated', formatDate(inv.invoice_date))}
       ${metaRowPair('Delivery Note', inv.delivery_note, 'Mode/Terms of Payment', modeTermsOfPayment)}
-      ${metaRow('Reference No. &amp; Date', referenceNoAndDate)}
+      ${metaRowPair('Reference No. &amp; Date', referenceNoAndDate, 'Other References', null)}
       ${metaRowPair("Buyer's Order No.", inv.buyer_order_no, 'Dated', inv.buyer_order_date ? formatDate(inv.buyer_order_date) : null)}
       ${metaRowPair('Dispatch Doc No.', inv.dispatch_doc_no, 'Delivery Note Date', inv.delivery_note_date ? formatDate(inv.delivery_note_date) : null)}
-      ${metaRow('Dispatched through', inv.dispatched_through)}
-      ${metaRow('Destination', inv.destination)}
-      ${metaRow('Bill of Lading/LR-RR No.', inv.bill_of_lading_no)}
-      ${metaRow('Motor Vehicle No.', inv.motor_vehicle_numbers || vehicleNumbersJoined)}
+      ${metaRowPair('Dispatched through', inv.dispatched_through, 'Destination', inv.destination)}
+      ${metaRowPair('Bill of Lading/LR-RR No.', inv.bill_of_lading_no, 'Motor Vehicle No.', inv.motor_vehicle_numbers || vehicleNumbersJoined)}
       ${metaRow('Terms of Delivery', termsOfDelivery)}
-        </tbody>
-      </table>
-    </td>
-  </tr></table>
+    </div>
+  </div>
 
   <table class="it">
     <colgroup>
       ${isProforma
-        ? '<col style="width:4%"/><col style="width:44%"/><col style="width:10%"/><col style="width:14%"/><col style="width:8%"/><col style="width:20%"/>'
-        : '<col style="width:4%"/><col style="width:31%"/><col style="width:9%"/><col style="width:15%"/><col style="width:15%"/><col style="width:6%"/><col style="width:20%"/>'}
+        ? '<col style="width:4%"/><col style="width:50%"/><col style="width:9%"/><col style="width:12%"/><col style="width:7%"/><col style="width:18%"/>'
+        : '<col style="width:3%"/><col style="width:50%"/><col style="width:7%"/><col style="width:11%"/><col style="width:11%"/><col style="width:4%"/><col style="width:14%"/>'}
     </colgroup>
     <thead>
       <tr>
@@ -300,11 +318,10 @@ export function invoiceDocHTML(
   ${amountWordsBlockHtml}
   ${gstSummaryHtml}
 
-  <table class="layout bot" style="margin-top:6px"><tr>
+  <table class="layout bot" style="margin-top:4px"><tr>
     <td class="bot-left" style="width:55%">
-      <p><strong>Remarks:</strong></p>
-      <p>${inv.remarks ?? ''}</p>
-      <h3 style="margin-top:8px">Declaration</h3>
+      ${inv.remarks ? `<p><strong>Remarks:</strong></p><p>${inv.remarks}</p>` : ''}
+      <h3 style="margin-top:5px">Declaration</h3>
       <p>${declaration}</p>
     </td>
     <td class="bot-right" style="width:45%">
@@ -314,16 +331,9 @@ export function invoiceDocHTML(
       ${bankName ? `<p>Bank Name: ${bankName}</p>` : ''}
       ${bankAcctNo ? `<p>A/c No.: ${bankAcctNo}</p>` : ''}
       ${bankBranch || bankIfsc ? `<p>Branch &amp; IFS Code: ${[bankBranch, bankIfsc].filter(Boolean).join(' - ')}</p>` : ''}` : ''}
-      <div class="sign-r">
-        <p>for ${compName}</p>
-        ${compSign ? `<img src="${compSign}" alt="Signature" style="max-height:45px;max-width:120px;margin:3px 0"/>` : '<br/><br/><br/>'}
-        <p><strong>Authorised Signatory</strong></p>
-        ${compAuth ? `<p>${compAuth}</p>` : ''}
-      </div>
     </td>
   </tr></table>
 
-  ${!isProforma ? `<p style="text-align:center;margin-top:4px">Received: &#8377;${formatNumber(received)} &nbsp;|&nbsp; Balance: &#8377;${formatNumber(balance)}</p>` : ''}
   <div class="footer">This is a Computer Generated Invoice</div>
 </div>
 </body></html>`;

@@ -18,7 +18,7 @@ let _logoLoaded = false;
     });
     _logoLoaded = true;
   } catch {
-    // logo unavailable — exports will work without it
+    // logo unavailable - exports will work without it
   }
 })();
 

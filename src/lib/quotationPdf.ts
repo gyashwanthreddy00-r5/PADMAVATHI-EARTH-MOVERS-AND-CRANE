@@ -269,7 +269,7 @@ export async function generateQuotationPdf(
   const contact = [quotation.customer_phone && `Phone: ${quotation.customer_phone}`, quotation.customer_gstin && `GSTIN: ${quotation.customer_gstin}`, quotation.customer_email && `Email: ${quotation.customer_email}`].filter(Boolean).join('  |  ');
   if (contact) paragraph(contact, 9, 8);
 
-  // Subject — simple bold line, no box
+  // Subject - simple bold line, no box
   if (quotation.subject) {
     ensure(16);
     current.page.drawText(`Sub: ${text(quotation.subject)}`, { x: LEFT, y: current.y, size: 10, font: bold, color: BLACK, maxWidth: CONTENT_WIDTH });
@@ -279,7 +279,7 @@ export async function generateQuotationPdf(
   if (quotation.site_location) paragraph(`Work Location: ${text(quotation.site_location)}`, 9, 4);
   paragraph('With reference to the above subject, we hereby quote for the supply of our crane/services as per the charges detailed below.', 9, 10);
 
-  // Build active charges array — filter out inactive/zero items
+  // Build active charges array - filter out inactive/zero items
   const otherCharges = quotation.other_charges_json ?? (quotation.other_charges_description ? [{ description: quotation.other_charges_description, amount: quotation.other_charges_amount ?? 0 }] : []);
 
   const chargesRows: { desc: string; amt: number }[] = [];
@@ -324,7 +324,7 @@ export async function generateQuotationPdf(
     };
     if (showSubtotal) totalRow('Subtotal', money(quotation.subtotal));
     if (quotation.gst_enabled) totalRow(`GST (${quotation.gst_percent}%)`, money(quotation.gst_amount));
-    // Clean separator line above GRAND TOTAL — spans only the totals column
+    // Clean separator line above GRAND TOTAL - spans only the totals column
     current.page.drawLine({ start: { x: totalX, y: current.y + 4 }, end: { x: RIGHT, y: current.y + 4 }, thickness: 0.5, color: NAVY });
     totalRow('GRAND TOTAL', `${money(quotation.grand_total)} RS`, true);
     current.y -= 2;

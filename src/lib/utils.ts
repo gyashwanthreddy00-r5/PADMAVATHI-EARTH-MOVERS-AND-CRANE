@@ -233,7 +233,7 @@ export function exportToExcelWithCompany(
 }
 
 // @deprecated Use calcSessionAmount from rentalCalc.ts instead.
-// Kept for backward compatibility — delegates to the unified engine.
+// Kept for backward compatibility - delegates to the unified engine.
 export function calcHourlyBilling(totalHours: number, rate1hr: number, rate2hr: number, fullDayRate: number): number {
   if (totalHours <= 0) return 0;
   const totalMinutes = Math.round(totalHours * 60);
@@ -375,11 +375,11 @@ export function buildInvoiceLineDescription(tr: Pick<Trip,
   const coupleRate = Number(tr.weekly_rate_snapshot) || 0;
   const monthlyRate = Number(tr.monthly_rate_snapshot) || 0;
 
-  const description = `${typeLabel}${metaStr ? ' — ' + metaStr : ''}`;
+  const description = `${typeLabel}${metaStr ? ' - ' + metaStr : ''}`;
 
   // A recorded session is only "usable" for a per-session breakdown if it carries a real
   // duration, or it's a flat rate type (Daily/Weekly/Monthly) that doesn't need one. Some
-  // older/other save paths record sessions with duration_minutes stuck at 0 — in that case
+  // older/other save paths record sessions with duration_minutes stuck at 0 - in that case
   // there's nothing per-session worth showing, so we fall back to the vehicle-level total
   // (total_hours / rental_amount, which are always saved correctly) instead of showing blanks.
   const hasUsableSessions = !!sessions && sessions.some(s =>
@@ -389,8 +389,8 @@ export function buildInvoiceLineDescription(tr: Pick<Trip,
   const hasMultipleSessions = hasUsableSessions && sessions!.length > 1;
 
   // These flat-rate shortcuts only apply when there's a single (or no) session to describe.
-  // A vehicle with multiple usable recorded sessions — even if its overall rate_type is
-  // Daily/Weekly/Monthly — is always handled per-session below so each session's own detail
+  // A vehicle with multiple usable recorded sessions - even if its overall rate_type is
+  // Daily/Weekly/Monthly - is always handled per-session below so each session's own detail
   // still shows.
   if (rateType === 'Daily' && !hasMultipleSessions) {
     return {
@@ -412,7 +412,7 @@ export function buildInvoiceLineDescription(tr: Pick<Trip,
   }
 
   // If rates are missing but rental_amount exists (e.g. JCB with no rate snapshot), show the stored amount.
-  // Only applies to the single-session fallback — a vehicle with multiple usable (possibly mixed
+  // Only applies to the single-session fallback - a vehicle with multiple usable (possibly mixed
   // rate-type) sessions is always handled per-session below so each session's own rate is respected.
   if (r1 <= 0 && r2 <= 0 && rentalAmount > 0 && !hasMultipleSessions) {
     return {
@@ -421,7 +421,7 @@ export function buildInvoiceLineDescription(tr: Pick<Trip,
     };
   }
 
-  // Per-session breakdown. When no sessions are recorded (or none are usable — see above),
+  // Per-session breakdown. When no sessions are recorded (or none are usable - see above),
   // treat the whole booking as one synthetic session derived from total_hours so the same
   // logic handles both cases.
   const parts: string[] = [];
@@ -460,7 +460,7 @@ export function buildInvoiceLineDescription(tr: Pick<Trip,
       const fullHours = Math.floor(sMinutes / 60);
       const remainingMinutes = sMinutes % 60;
       if (!isFirstSession) {
-        // Entire duration billed at the 2nd-hour rate — a flat rate x duration line.
+        // Entire duration billed at the 2nd-hour rate - a flat rate x duration line.
         const durationLabel = fullHours > 0 ? `${fullHours} Hr${remainingMinutes > 0 ? ` ${remainingMinutes} Min` : ''}` : `${sMinutes} Min`;
         sLabel = `${durationLabel} × ${formatCurrency(r2)} = ${formatCurrency(sAmount)}`;
       } else {

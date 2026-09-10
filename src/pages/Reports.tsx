@@ -238,8 +238,8 @@ export default function Reports({ type }: ReportProps) {
     const maintCount = maint.length;
     const totalSalary = emps.reduce((s, e) => s + Number(e.salary), 0);
     const emiCost = emis.filter(e => e.status === 'Paid').reduce((s, e) => s + Number(e.emi_amount), 0);
-    // Purchase expense uses each purchase's total_amount (amount + GST) — the
-    // real cost incurred with the vendor — never amount+gst_amount+total_amount
+    // Purchase expense uses each purchase's total_amount (amount + GST) - the
+    // real cost incurred with the vendor - never amount+gst_amount+total_amount
     // summed together, and never gated on paid_amount (accrual, same as
     // diesel/maintenance which are also counted at full transaction value
     // regardless of what's been paid so far).

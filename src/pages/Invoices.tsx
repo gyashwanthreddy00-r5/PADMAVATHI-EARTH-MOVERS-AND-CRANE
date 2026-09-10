@@ -8,13 +8,13 @@ import { Modal, ConfirmDialog, StatusBadge, Button, Field, inputClass, LoadingSp
 import {
   Plus, Printer, Eye, FileText,
   CheckCircle2, ArrowLeft, IndianRupee, X, Trash2,
-  Search, Mail, Zap, ChevronRight, FileEdit,
+  Search, Mail, Zap, ChevronRight, FileEdit, Bell, Send, Clock, AlertCircle,
 } from 'lucide-react';
 import {
   formatCurrency, formatDate, amountInWords, todayISO, buildInvoiceLineDescription, classNames, addDays,
 } from '@/lib/utils';
 import { invoiceDocHTML, type PrintCopyType, type InvoiceDocType } from '@/components/InvoiceDocument';
-import { generateInvoicePdfFromData } from '@/lib/invoicePdf';
+import { generateInvoicePdfBase64 } from '@/lib/invoicePdf';
 import { calculateDiscount, validateDiscountPercentage } from '@/lib/discountCalc';
 import { findRateMasterForVehicle } from '@/lib/rateLookup';
 import { useAuth } from '@/context/AuthContext';
@@ -22,9 +22,15 @@ import { TripEntryForm, type MultiVehicleTripFormData, type VehicleEntryData } f
 import GstBillingEntry from '@/pages/GstBillingEntry';
 import { DatePicker } from '@/components/ui/DatePicker';
 import { SearchableSelect } from '@/components/ui/SearchableSelect';
+import {
+  computeReminderRows, buildReminderTemplateVars, replaceReminderVars, getReminderEmailErrorMessage,
+  type ReminderRowData,
+} from '@/lib/reminderCalc';
+import { htmlToPdfBase64 } from '@/lib/htmlToPdf';
 import type {
   InvoiceWithRelations, InvoiceItem, InvoicePayment,
   Customer, InvoiceSettings, PaymentMode, InvoiceStatus, RateMaster, VehicleType, Vehicle,
+  InvoiceReminder, ReminderSettings,
 } from '@/types';
 
 type Step = 'list' | 'step1' | 'step2';
@@ -46,7 +52,7 @@ function getEmailErrorMessage(message: string): string {
 // rental amount was correctly billed. When that happens, look up the
 // applicable Rate Master record so the printed/viewed/emailed invoice can
 // still show the "1st Hr + N Hr + Min" breakdown instead of collapsing to
-// a flat "Full Day Amt" line. This only fills in-memory display fields —
+// a flat "Full Day Amt" line. This only fills in-memory display fields -
 // it never writes back to the database.
 function fillMissingHourlyRatesFromRateMaster(
   invoicesData: InvoiceWithRelations[],
@@ -200,11 +206,11 @@ export default function Invoices({ initialTab = 'list' }: InvoicesProps = {}) {
   const [rateMasterRows, setRateMasterRows] = useState<RateMaster[]>([]);
   const [vehiclesList, setVehiclesList] = useState<Pick<Vehicle, 'registration_number' | 'type' | 'capacity'>[]>([]);
 
-  // Customer Statement — bank-statement-style view of one customer's invoices, built
+  // Customer Statement - bank-statement-style view of one customer's invoices, built
   // entirely from the invoices already loaded via FULL_INVOICE_SELECT (amount_received
-  // is kept in sync by recordPayment, see openPayment/recordPayment below — the same
+  // is kept in sync by recordPayment, see openPayment/recordPayment below - the same
   // source the payment modal itself already trusts, so no separate payments re-summing
-  // is needed here). Empty statementCustomerId means "not in statement mode" — the
+  // is needed here). Empty statementCustomerId means "not in statement mode" - the
   // existing flat invoice list/search below is shown unchanged in that case.
   const [statementCustomerId, setStatementCustomerId] = useState('');
   const [statementFrom, setStatementFrom] = useState('');
@@ -212,20 +218,70 @@ export default function Invoices({ initialTab = 'list' }: InvoicesProps = {}) {
   const [statementStatus, setStatementStatus] = useState<'All' | 'Paid' | 'Partially Paid' | 'Pending' | 'Outstanding'>('All');
   const [sendingStatement, setSendingStatement] = useState(false);
 
+  // Email Balance Statement attachment options — both default on, per spec.
+  const [attachStatementPdf, setAttachStatementPdf] = useState(true);
+  const [attachPerInvoicePdfs, setAttachPerInvoicePdfs] = useState(true);
+
+  // Reminders — moved in from the old standalone Balance Reminders page (see
+  // reminderCalc.ts). Data is loaded for all invoices in fetchAll; the rows shown here
+  // are always filtered down to the selected statement customer (see
+  // customerReminderRows below), so reminder info never leaks across customers.
+  const [reminders, setReminders] = useState<InvoiceReminder[]>([]);
+  const [reminderSettings, setReminderSettings] = useState<ReminderSettings | null>(null);
+  const [reminderPreviewRow, setReminderPreviewRow] = useState<ReminderRowData | null>(null);
+  const [reminderPreviewSubject, setReminderPreviewSubject] = useState('');
+  const [reminderPreviewBody, setReminderPreviewBody] = useState('');
+  const [sendingReminder, setSendingReminder] = useState(false);
+
+  // Date Quick Filter — defaults to 'Custom' with empty statementFrom/statementTo, which
+  // is exactly the pre-existing "no date filter" behavior, so the default invoice list
+  // is unchanged. 'Today'/'Yesterday' just drive the SAME statementFrom/statementTo state
+  // the existing Date From/To pickers already filter on (see statementRows below) — no
+  // separate filtering logic needed, so this can never drift from the existing inclusive
+  // From/To range filter.
+  type DateQuickFilter = 'Today' | 'Yesterday' | 'Custom';
+  const [dateQuickFilter, setDateQuickFilter] = useState<DateQuickFilter>('Custom');
+
+  function applyDateQuickFilter(option: DateQuickFilter) {
+    setDateQuickFilter(option);
+    // Local business date, not UTC — same todayISO()/addDays() helpers already used
+    // everywhere else in the app (e.g. default Payment Date, invoice date defaults).
+    if (option === 'Today') {
+      const d = todayISO();
+      setStatementFrom(d);
+      setStatementTo(d);
+    } else if (option === 'Yesterday') {
+      const d = addDays(todayISO(), -1);
+      setStatementFrom(d);
+      setStatementTo(d);
+    }
+    // 'Custom' leaves statementFrom/statementTo exactly as they are — whatever the last
+    // Today/Yesterday pick left them at, now editable via the Date From/To pickers.
+  }
+
   const FULL_INVOICE_SELECT = '*, customer:customers!invoices_customer_id_fkey(*), items:invoice_items(*, trip:trips!invoice_items_trip_entry_id_fkey(id,rate_type,total_hours,rental_amount,trip_date,place_of_work,capacity_tons,first_hour_rate,second_hour_rate,weekly_rate_snapshot,daily_rate_snapshot,monthly_rate_snapshot,vehicle:vehicles!trips_vehicle_id_fkey(id,registration_number,type,capacity))), payments:invoice_payments(*), invoiceVehicles:invoice_vehicles(*, vehicle:vehicles!invoice_vehicles_vehicle_id_fkey(id,registration_number,type,capacity), driver:employees!invoice_vehicles_driver_id_fkey(id,name,role), sessions:invoice_vehicle_sessions(*)), billingLines:invoice_billing_lines(id)';
 
   const fetchAll = useCallback(async () => {
     setLoading(true);
-    const [invRes, custRes, isRes, rateMasterRes, vehiclesRes] = await Promise.all([
+    const [invRes, custRes, isRes, rateMasterRes, vehiclesRes, remRes, remSettingsRes] = await Promise.all([
+      // Customer Invoices shows GST invoices and Monthly Full-Time Contract invoices —
+      // Cash/UPI bills have their own page. Monthly Contract invoices were previously
+      // excluded here entirely (this was a GST-only filter), which is why they never
+      // appeared even though Contracts.tsx was already creating real invoice rows for
+      // them (invoice_type = 'MONTHLY_CONTRACT').
       supabase
         .from('invoices')
         .select(FULL_INVOICE_SELECT)
-        .eq('invoice_type', 'GST')
+        .in('invoice_type', ['GST', 'MONTHLY_CONTRACT'])
         .order('invoice_date', { ascending: false }),
       supabase.from('customers').select('*').order('name'),
       supabase.from('invoice_settings').select('*').limit(1).maybeSingle(),
       supabase.from('rate_master').select('*').in('status', ['Active', 'Closed']),
       supabase.from('vehicles').select('registration_number,type,capacity'),
+      // Moved in from the old standalone Balance Reminders page — Customer Statements
+      // now surfaces this same reminder data, scoped per selected customer.
+      supabase.from('invoice_reminders').select('*'),
+      supabase.from('reminder_settings').select('*').limit(1).maybeSingle(),
     ]);
     if (invRes.error) show(t('error') + ': ' + invRes.error.message, 'error');
     const rawInvoices = (invRes.data ?? []) as unknown as InvoiceWithRelations[];
@@ -235,6 +291,8 @@ export default function Invoices({ initialTab = 'list' }: InvoicesProps = {}) {
     setInvoiceSettings(isRes.data as InvoiceSettings | null);
     setRateMasterRows(rateMasterRates);
     setVehiclesList((vehiclesRes.data ?? []) as Pick<Vehicle, 'registration_number' | 'type' | 'capacity'>[]);
+    setReminders((remRes.data ?? []) as InvoiceReminder[]);
+    setReminderSettings(remSettingsRes.data as ReminderSettings | null);
     setLoading(false);
   }, [show, t, FULL_INVOICE_SELECT]);
 
@@ -288,12 +346,12 @@ export default function Invoices({ initialTab = 'list' }: InvoicesProps = {}) {
         const payable = inv.discount_enabled ? Number(inv.final_payable_amount ?? inv.grand_total) : Number(inv.grand_total);
         const received = Number(inv.amount_received) || 0;
         const balance = Math.max(0, Math.round((payable - received) * 100) / 100);
-        // Received Date comes from the actual invoice_payments transactions —
+        // Received Date comes from the actual invoice_payments transactions -
         // never from invoice/billed/generated/today's date. Sorted oldest-first;
         // an invoice with several part-payments shows every distinct date it
         // actually received money on, not just the latest.
         const paymentDates = Array.from(new Set((inv.payments ?? []).map(p => p.payment_date))).sort();
-        const receivedDateLabel = paymentDates.length === 0 ? '—' : paymentDates.map(d => formatDate(d)).join(', ');
+        const receivedDateLabel = paymentDates.length === 0 ? '-' : paymentDates.map(d => formatDate(d)).join(', ');
         return { inv, payable, received, balance, paymentDates, receivedDateLabel };
       })
       .filter(row => {
@@ -313,6 +371,72 @@ export default function Invoices({ initialTab = 'list' }: InvoicesProps = {}) {
     partialCount: statementRows.filter(r => r.received > 0 && r.balance > 0).length,
     unpaidCount: statementRows.filter(r => r.received <= 0).length,
   }), [statementRows]);
+
+  // Reminders, scoped to the selected statement customer only — computed from the SAME
+  // invoices/reminders/reminderSettings already loaded above, via the shared
+  // computeReminderRows (moved from the old Balance Reminders page, not duplicated).
+  const customerReminderRows = useMemo(() => {
+    if (!statementCustomerId) return [];
+    return computeReminderRows(invoices, reminders, reminderSettings)
+      .filter(r => r.invoice.customer_id === statementCustomerId);
+  }, [invoices, reminders, reminderSettings, statementCustomerId]);
+
+  const reminderSummary = useMemo(() => ({
+    day1Due: customerReminderRows.filter(r => r.stage === 1 && r.status === 'Due').length,
+    day10Due: customerReminderRows.filter(r => r.stage === 10 && r.status === 'Due').length,
+    day20Due: customerReminderRows.filter(r => r.stage === 20 && r.status === 'Due').length,
+    sentCount: customerReminderRows.filter(r => r.status === 'Sent').length,
+  }), [customerReminderRows]);
+
+  function openReminderPreview(row: ReminderRowData) {
+    if (!reminderSettings) { show('Reminder settings are not configured yet.', 'error'); return; }
+    const subjectTemplate = row.stage === 1 ? reminderSettings.day1_subject : row.stage === 10 ? reminderSettings.day10_subject : reminderSettings.day20_subject;
+    const bodyTemplate = row.stage === 1 ? reminderSettings.day1_body : row.stage === 10 ? reminderSettings.day10_body : reminderSettings.day20_body;
+    const vars = buildReminderTemplateVars(row, settings);
+    setReminderPreviewRow(row);
+    setReminderPreviewSubject(replaceReminderVars(subjectTemplate, vars));
+    setReminderPreviewBody(replaceReminderVars(bodyTemplate, vars));
+  }
+
+  async function sendReminderPreview() {
+    if (!reminderPreviewRow) return;
+    const email = reminderPreviewRow.invoice.customer?.email ?? reminderPreviewRow.invoice.customer_email;
+    if (!email) { show('This customer does not have an email address configured. Please add an email in Customer Master.', 'error'); return; }
+    setSendingReminder(true);
+    try {
+      const { data, error } = await supabase.functions.invoke('process-reminders', {
+        body: {
+          action: 'send_manual',
+          invoiceId: reminderPreviewRow.invoice.id,
+          reminderStage: reminderPreviewRow.stage,
+          subjectOverride: reminderPreviewSubject,
+          bodyOverride: reminderPreviewBody,
+        },
+      });
+      if (error) {
+        let msg = 'Unable to send reminder. Please try again.';
+        if (error.context && typeof error.context.json === 'function') {
+          try {
+            const errBody = await error.context.json();
+            if (errBody?.error) msg = errBody.error;
+          } catch { /* fall through */ }
+        } else if (typeof error.message === 'string' && error.message.length > 0) {
+          msg = error.message;
+        }
+        show(getReminderEmailErrorMessage(msg), 'error');
+      } else if (data?.error) {
+        show(getReminderEmailErrorMessage(data.error), 'error');
+      } else {
+        show(`Day ${reminderPreviewRow.stage} reminder sent to ${email}.`, 'success');
+        setReminderPreviewRow(null);
+        await fetchAll();
+      }
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Unable to send reminder. Please try again.';
+      show(getReminderEmailErrorMessage(msg), 'error');
+    }
+    setSendingReminder(false);
+  }
 
   // Fetch preview invoice number when customer is selected (does NOT consume the number)
   useEffect(() => {
@@ -847,22 +971,6 @@ export default function Invoices({ initialTab = 'list' }: InvoicesProps = {}) {
     }
   };
 
-  const generateInvoicePdfBase64 = async (inv: InvoiceWithRelations, items: InvoiceItem[]): Promise<string> => {
-    // Drawn directly with pdf-lib from the same prepared invoice data the Master
-    // Copy print view renders (see src/lib/invoiceDocData.ts) — this is the only
-    // PDF generation source for invoices, so the email attachment always matches
-    // the print Master Copy exactly, instead of a separate (and previously stale)
-    // html2pdf.js screenshot pipeline.
-    const bytes = await generateInvoicePdfFromData(inv, items, settings, invoiceSettings, 'master');
-    let binary = '';
-    const chunkSize = 8192;
-    for (let i = 0; i < bytes.length; i += chunkSize) {
-      const chunk = bytes.subarray(i, i + chunkSize);
-      binary += String.fromCharCode(...chunk);
-    }
-    return btoa(binary);
-  };
-
   const sendEmail = async (inv: InvoiceWithRelations) => {
     const email = inv.customer?.email ?? inv.customer_email;
     if (!email) {
@@ -871,7 +979,7 @@ export default function Invoices({ initialTab = 'list' }: InvoicesProps = {}) {
     }
     setEmailSending(true);
     try {
-      const pdfBase64 = await generateInvoicePdfBase64(inv, inv.items ?? []);
+      const pdfBase64 = await generateInvoicePdfBase64(inv, inv.items ?? [], settings, invoiceSettings, 'master');
       const { data, error } = await supabase.functions.invoke('send-invoice-email', {
         body: { invoiceId: inv.id, pdfBase64 },
       });
@@ -900,10 +1008,12 @@ export default function Invoices({ initialTab = 'list' }: InvoicesProps = {}) {
     setEmailSending(false);
   };
 
-  // Reuses the same printInIframe pipeline every other print button on this page already
-  // uses — a plain HTML statement, not a new PDF-generation path.
-  const printStatement = () => {
-    if (!selectedStatementCustomer) return;
+  // Builds the exact same statement HTML used both for Print Statement (printInIframe,
+  // unchanged) and for the Statement PDF email attachment (htmlToPdfBase64) below — one
+  // source of statement markup, so the emailed PDF always matches what Print Statement
+  // and the on-screen Customer Statement show for the currently selected customer/filters.
+  const buildStatementHtml = (): string | null => {
+    if (!selectedStatementCustomer) return null;
     const cust = selectedStatementCustomer;
     const rows = statementRows.map((r, idx) => `<tr>
       <td style="text-align:center">${idx + 1}</td>
@@ -911,7 +1021,7 @@ export default function Invoices({ initialTab = 'list' }: InvoicesProps = {}) {
       <td>${r.inv.invoice_number}</td>
       <td style="text-align:right">${formatCurrency(r.payable)}</td>
       <td style="text-align:right">${formatCurrency(r.received)}</td>
-      <td class="${r.receivedDateLabel === '—' ? 'muted' : ''}">${r.receivedDateLabel}</td>
+      <td class="${r.receivedDateLabel === '-' ? 'muted' : ''}">${r.receivedDateLabel}</td>
       <td style="text-align:right">${formatCurrency(r.balance)}</td>
     </tr>`).join('');
     const periodLabel = (statementFrom || statementTo) ? `${statementFrom ? formatDate(statementFrom) : 'Start'} &ndash; ${statementTo ? formatDate(statementTo) : 'Today'}` : 'All Time';
@@ -976,7 +1086,14 @@ export default function Invoices({ initialTab = 'list' }: InvoicesProps = {}) {
   </div>
   <div class="foot-note">E.&amp;O.E. This statement is generated from our records as of the date above.</div>
 </body></html>`;
-    printInIframe(html);
+    return html;
+  };
+
+  // Reuses the same printInIframe pipeline every other print button on this page
+  // already uses — a plain HTML statement, not a new PDF-generation path.
+  const printStatement = () => {
+    const html = buildStatementHtml();
+    if (html) printInIframe(html);
   };
 
   const sendBalanceStatement = async () => {
@@ -993,8 +1110,30 @@ export default function Invoices({ initialTab = 'list' }: InvoicesProps = {}) {
     }
     setSendingStatement(true);
     try {
+      // Attachments reuse existing PDF generation exactly — the same buildStatementHtml()
+      // that Print Statement uses (via htmlToPdfBase64), and the same generateInvoicePdfBase64
+      // already used by the per-invoice Email action — nothing new is generated here,
+      // just optionally bundled onto this one customer-level email per the two checkboxes.
+      const attachments: { filename: string; content: string }[] = [];
+      const periodSlug = (statementFrom || statementTo)
+        ? `${statementFrom || 'start'}_to_${statementTo || 'today'}`
+        : 'all-time';
+      if (attachStatementPdf) {
+        const html = buildStatementHtml();
+        if (html) {
+          const filename = `Balance_Statement_${selectedStatementCustomer.name.replace(/[^a-zA-Z0-9]+/g, '_')}_${periodSlug}.pdf`;
+          const content = await htmlToPdfBase64(html, filename);
+          attachments.push({ filename, content });
+        }
+      }
+      if (attachPerInvoicePdfs) {
+        for (const r of outstanding) {
+          const content = await generateInvoicePdfBase64(r.inv, r.inv.items ?? [], settings, invoiceSettings, 'master');
+          attachments.push({ filename: `Invoice_${r.inv.invoice_number}.pdf`, content });
+        }
+      }
       const { data, error } = await supabase.functions.invoke('send-balance-statement', {
-        body: { customerId: selectedStatementCustomer.id, invoiceIds: outstanding.map(r => r.inv.id) },
+        body: { customerId: selectedStatementCustomer.id, invoiceIds: outstanding.map(r => r.inv.id), attachments },
       });
       if (error) {
         let msg = 'Unable to send balance statement. Please try again.';
@@ -1290,12 +1429,12 @@ export default function Invoices({ initialTab = 'list' }: InvoicesProps = {}) {
         </div>
       </div>
 
-      {/* Customer Statement — the primary way to review a customer's billing position:
+      {/* Customer Statement - the primary way to review a customer's billing position:
           pick a customer to see every invoice they have in one bank-statement-style
           ledger with running totals, instead of hunting through the flat invoice list. */}
       <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-4 space-y-3">
         <p className="text-xs font-bold uppercase tracking-wide text-slate-500">Customer Statement</p>
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3">
           <Field label="Customer / Company">
             <SearchableSelect
               value={statementCustomerId}
@@ -1305,12 +1444,35 @@ export default function Invoices({ initialTab = 'list' }: InvoicesProps = {}) {
               options={customers.map(c => ({ value: c.id, label: c.name, searchText: `${c.name} ${c.phone ?? ''}` }))}
             />
           </Field>
-          <Field label="Date From">
-            <DatePicker value={statementFrom} onChange={setStatementFrom} />
+          <Field label="Date Quick Filter">
+            <select
+              className={inputClass()}
+              value={dateQuickFilter}
+              onChange={e => applyDateQuickFilter(e.target.value as DateQuickFilter)}
+            >
+              <option value="Today">Today</option>
+              <option value="Yesterday">Yesterday</option>
+              <option value="Custom">Custom</option>
+            </select>
           </Field>
-          <Field label="Date To">
-            <DatePicker value={statementTo} onChange={setStatementTo} />
-          </Field>
+          {dateQuickFilter === 'Custom' ? (
+            <>
+              <Field label="Date From">
+                <DatePicker value={statementFrom} onChange={setStatementFrom} />
+              </Field>
+              <Field label="Date To">
+                <DatePicker value={statementTo} onChange={setStatementTo} />
+              </Field>
+            </>
+          ) : (
+            <div className="sm:col-span-2 lg:col-span-2">
+              <Field label="Selected Date Range">
+                <div className={classNames(inputClass(), 'bg-slate-100 text-slate-500')}>
+                  {formatDate(statementFrom)}{statementTo !== statementFrom ? ` – ${formatDate(statementTo)}` : ''}
+                </div>
+              </Field>
+            </div>
+          )}
           <Field label="Status">
             <select className={inputClass()} value={statementStatus} onChange={e => setStatementStatus(e.target.value as typeof statementStatus)}>
               <option value="All">All</option>
@@ -1359,7 +1521,9 @@ export default function Invoices({ initialTab = 'list' }: InvoicesProps = {}) {
                 </thead>
                 <tbody>
                   {statementRows.length === 0 ? (
-                    <tr><td colSpan={8} className="text-center py-8 text-slate-400">No invoices found for this customer/period/filter.</td></tr>
+                    <tr><td colSpan={8} className="text-center py-8 text-slate-400">
+                      {(dateQuickFilter !== 'Custom' || statementFrom || statementTo) ? 'No invoices found for the selected date range.' : 'No invoices found for this customer/period/filter.'}
+                    </td></tr>
                   ) : statementRows.map((r, idx) => (
                     <tr key={r.inv.id} className={idx % 2 ? 'bg-slate-50' : 'bg-white'}>
                       <td className="text-center px-3 py-1.5 border-b border-slate-100">{idx + 1}</td>
@@ -1367,7 +1531,7 @@ export default function Invoices({ initialTab = 'list' }: InvoicesProps = {}) {
                       <td className="px-3 py-1.5 border-b border-slate-100 font-medium text-slate-700">{r.inv.invoice_number}</td>
                       <td className="text-right px-3 py-1.5 border-b border-slate-100">{formatCurrency(r.payable)}</td>
                       <td className="text-right px-3 py-1.5 border-b border-slate-100 text-emerald-600">{formatCurrency(r.received)}</td>
-                      <td className={classNames('px-3 py-1.5 border-b border-slate-100 text-xs', r.receivedDateLabel === '—' ? 'text-slate-400' : 'text-slate-600')}>{r.receivedDateLabel}</td>
+                      <td className={classNames('px-3 py-1.5 border-b border-slate-100 text-xs', r.receivedDateLabel === '-' ? 'text-slate-400' : 'text-slate-600')}>{r.receivedDateLabel}</td>
                       <td className={classNames('text-right px-3 py-1.5 border-b border-slate-100 font-semibold', r.balance > 0 ? 'text-red-600' : 'text-slate-400')}>{formatCurrency(r.balance)}</td>
                       <td className="text-center px-3 py-1.5 border-b border-slate-100">
                         <button onClick={() => { setViewInvoice(r.inv); setViewItems(r.inv.items ?? []); setViewPayments(r.inv.payments ?? []); }} className="p-1 text-slate-400 hover:text-blue-600" title="View"><Eye className="w-4 h-4" /></button>
@@ -1391,14 +1555,118 @@ export default function Invoices({ initialTab = 'list' }: InvoicesProps = {}) {
               </table>
             </div>
 
-            <div className="flex flex-wrap justify-end gap-2">
-              <Button variant="secondary" onClick={() => setStatementCustomerId('')}>Back to All Invoices</Button>
-              <Button variant="outline" onClick={printStatement}><Printer className="w-4 h-4" />Print Statement</Button>
-              <Button onClick={sendBalanceStatement} disabled={sendingStatement}><Mail className="w-4 h-4" />{sendingStatement ? 'Sending...' : 'Email Balance Statement'}</Button>
+            <div className="flex flex-wrap items-center justify-end gap-4">
+              <div className="flex flex-wrap items-center gap-3 text-sm text-slate-600">
+                <label className="flex items-center gap-1.5">
+                  <input type="checkbox" checked={attachStatementPdf} onChange={e => setAttachStatementPdf(e.target.checked)} className="w-4 h-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500" />
+                  Statement PDF
+                </label>
+                <label className="flex items-center gap-1.5">
+                  <input type="checkbox" checked={attachPerInvoicePdfs} onChange={e => setAttachPerInvoicePdfs(e.target.checked)} className="w-4 h-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500" />
+                  Per Invoice Mail
+                </label>
+              </div>
+              <div className="flex flex-wrap gap-2">
+                <Button variant="secondary" onClick={() => setStatementCustomerId('')}>Back to All Invoices</Button>
+                <Button variant="outline" onClick={printStatement}><Printer className="w-4 h-4" />Print Statement</Button>
+                <Button onClick={sendBalanceStatement} disabled={sendingStatement}><Mail className="w-4 h-4" />{sendingStatement ? 'Sending...' : 'Email Balance Statement'}</Button>
+              </div>
+            </div>
+
+            {/* Reminders — moved in from the old standalone Balance Reminders page,
+                scoped to this one selected customer (see customerReminderRows above). */}
+            <div className="pt-2 border-t border-slate-200 space-y-3">
+              <p className="text-xs font-bold uppercase tracking-wide text-slate-500 flex items-center gap-1.5"><Bell className="w-3.5 h-3.5" />Reminders</p>
+              <div className="grid grid-cols-3 gap-3">
+                <div className="bg-slate-50 rounded-lg border border-slate-200 p-3">
+                  <div className="flex items-center gap-1.5 mb-1"><Clock className="w-3.5 h-3.5 text-amber-500" /><span className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Day 1 Due</span></div>
+                  <div className="text-lg font-bold text-slate-800">{reminderSummary.day1Due}</div>
+                </div>
+                <div className="bg-slate-50 rounded-lg border border-slate-200 p-3">
+                  <div className="flex items-center gap-1.5 mb-1"><Clock className="w-3.5 h-3.5 text-amber-500" /><span className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Day 10 Due</span></div>
+                  <div className="text-lg font-bold text-slate-800">{reminderSummary.day10Due}</div>
+                </div>
+                <div className="bg-slate-50 rounded-lg border border-slate-200 p-3">
+                  <div className="flex items-center gap-1.5 mb-1"><AlertCircle className="w-3.5 h-3.5 text-amber-500" /><span className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Day 20 Due</span></div>
+                  <div className="text-lg font-bold text-slate-800">{reminderSummary.day20Due}</div>
+                </div>
+              </div>
+
+              {customerReminderRows.length === 0 ? (
+                <p className="text-sm text-slate-400 py-2">No reminders applicable for this customer/period.</p>
+              ) : (
+                <div className="overflow-x-auto border border-slate-200 rounded-lg">
+                  <table className="w-full text-sm">
+                    <thead>
+                      <tr className="bg-slate-50 text-xs uppercase text-slate-600">
+                        <th className="text-left px-3 py-2 border-b border-slate-200">Invoice No</th>
+                        <th className="text-right px-3 py-2 border-b border-slate-200">Balance</th>
+                        <th className="text-center px-3 py-2 border-b border-slate-200">Reminder</th>
+                        <th className="text-left px-3 py-2 border-b border-slate-200">Due Date</th>
+                        <th className="text-center px-3 py-2 border-b border-slate-200">Status</th>
+                        <th className="text-center px-3 py-2 border-b border-slate-200">Action</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {customerReminderRows.filter(r => r.status !== 'Not Required').map(r => (
+                        <tr key={`${r.invoice.id}-${r.stage}`} className="hover:bg-slate-50">
+                          <td className="px-3 py-1.5 border-b border-slate-100 text-blue-700 font-medium whitespace-nowrap">{r.invoice.invoice_number}</td>
+                          <td className="text-right px-3 py-1.5 border-b border-slate-100 font-semibold text-red-600">{formatCurrency(r.balance)}</td>
+                          <td className="text-center px-3 py-1.5 border-b border-slate-100 whitespace-nowrap">Day {r.stage}</td>
+                          <td className="px-3 py-1.5 border-b border-slate-100 whitespace-nowrap">{formatDate(r.dueDate)}</td>
+                          <td className="text-center px-3 py-1.5 border-b border-slate-100">
+                            <span className={classNames('inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold border',
+                              r.status === 'Due' ? 'bg-amber-50 text-amber-700 border-amber-200' :
+                              r.status === 'Sent' ? 'bg-emerald-50 text-emerald-700 border-emerald-200' :
+                              'bg-slate-100 text-slate-600 border-slate-200')}>{r.status}</span>
+                          </td>
+                          <td className="text-center px-3 py-1.5 border-b border-slate-100">
+                            <button onClick={() => openReminderPreview(r)} className="inline-flex items-center gap-1 px-2.5 py-1 text-xs font-semibold text-blue-700 bg-blue-50 hover:bg-blue-100 rounded-md">
+                              {r.status === 'Sent' ? <><Eye className="w-3.5 h-3.5" />Send Again</> : <><Send className="w-3.5 h-3.5" />Send</>}
+                            </button>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
             </div>
           </>
         )}
       </div>
+
+      {/* Reminder Preview / Confirm / Send Modal — reused from the old Balance Reminders
+          page; the email is not sent until Send Email is clicked. */}
+      <Modal
+        open={!!reminderPreviewRow}
+        onClose={() => setReminderPreviewRow(null)}
+        title={`Day ${reminderPreviewRow?.stage ?? ''} Reminder Preview`}
+        size="lg"
+        footer={
+          <>
+            <Button variant="secondary" onClick={() => setReminderPreviewRow(null)}>Cancel</Button>
+            <Button onClick={sendReminderPreview} disabled={sendingReminder}><Send className="w-4 h-4" />{sendingReminder ? 'Sending...' : 'Send Email'}</Button>
+          </>
+        }
+      >
+        {reminderPreviewRow && (
+          <div className="space-y-3">
+            <div className="grid grid-cols-2 gap-2 text-sm p-3 bg-slate-50 rounded-lg border border-slate-200">
+              <div><span className="text-slate-500">Customer: </span><b>{reminderPreviewRow.invoice.customer?.name ?? reminderPreviewRow.invoice.customer_name}</b></div>
+              <div><span className="text-slate-500">Invoice: </span><b>{reminderPreviewRow.invoice.invoice_number}</b></div>
+              <div><span className="text-slate-500">Balance: </span><b className="text-red-600">{formatCurrency(reminderPreviewRow.balance)}</b></div>
+              <div><span className="text-slate-500">Email: </span><b>{reminderPreviewRow.invoice.customer?.email ?? reminderPreviewRow.invoice.customer_email ?? <span className="text-red-500">Not on file</span>}</b></div>
+            </div>
+            <Field label="Subject">
+              <input type="text" className={inputClass()} value={reminderPreviewSubject} onChange={e => setReminderPreviewSubject(e.target.value)} />
+            </Field>
+            <Field label="Body" hint="You can edit this before sending — the saved Day templates in Settings are not changed.">
+              <textarea className={inputClass()} rows={10} value={reminderPreviewBody} onChange={e => setReminderPreviewBody(e.target.value)} />
+            </Field>
+          </div>
+        )}
+      </Modal>
 
       {!statementCustomerId && (
         <>
@@ -1777,7 +2045,7 @@ export default function Invoices({ initialTab = 'list' }: InvoicesProps = {}) {
         </div>
       </Modal>
 
-      {/* Edit Invoice Details Modal — the top-right print block's editable fields */}
+      {/* Edit Invoice Details Modal - the top-right print block's editable fields */}
       <Modal
         open={!!editDetailsModal}
         onClose={() => !savingDetails && setEditDetailsModal(null)}

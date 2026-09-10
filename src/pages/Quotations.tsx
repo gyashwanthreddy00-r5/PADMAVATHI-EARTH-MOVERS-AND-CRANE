@@ -513,7 +513,7 @@ export default function Quotations() {
       });
       if (error) {
         // supabase-js's `error.message` for a non-2xx response is just the generic
-        // "Edge Function returned a non-2xx status code" — the actual server-provided
+        // "Edge Function returned a non-2xx status code" - the actual server-provided
         // reason lives in the response body, reachable via error.context.
         let msg = error.message || 'Failed to send email';
         if (error.context && typeof error.context.json === 'function') {
@@ -640,7 +640,7 @@ export default function Quotations() {
             </Field>
           </div>
 
-          {/* Customer Details — Manual Entry */}
+          {/* Customer Details - Manual Entry */}
           <div className="border border-slate-200 rounded-lg p-4 bg-slate-50/50">
             <h4 className="text-sm font-bold text-slate-700 mb-3">Customer Details</h4>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
@@ -673,7 +673,7 @@ export default function Quotations() {
             </div>
           </div>
 
-          {/* Service Amount — clean toggle + input, no card box */}
+          {/* Service Amount - clean toggle + input, no card box */}
           <div className="space-y-3">
             <div className="flex items-center gap-2">
               <input type="checkbox" id="svc-enabled" checked={form.service_amount_enabled} onChange={e => setForm(f => ({ ...f, service_amount_enabled: e.target.checked }))} className="w-4 h-4 accent-blue-600" />
@@ -708,7 +708,7 @@ export default function Quotations() {
             )}
           </div>
 
-          {/* Other Charges — Multiple */}
+          {/* Other Charges - Multiple */}
           <div className="border-t border-slate-100 pt-3">
             <div className="flex items-center justify-between mb-2">
               <label className="text-sm font-semibold text-slate-700">{t('otherCharges')}</label>
@@ -816,7 +816,7 @@ export default function Quotations() {
       <Modal
         open={!!viewQuotation || viewLoading}
         onClose={() => { setViewQuotation(null); setViewError(null); setViewLoading(false); if (previewObjUrl) { URL.revokeObjectURL(previewObjUrl); setPreviewObjUrl(null); } }}
-        title={viewQuotation ? `Quotation ${viewQuotation.quotation_number ?? ''} — ${viewQuotation.customer_name ?? ''}` : 'Quotation Preview'}
+        title={viewQuotation ? `Quotation ${viewQuotation.quotation_number ?? ''} - ${viewQuotation.customer_name ?? ''}` : 'Quotation Preview'}
         size="2xl"
         footer={
           viewQuotation && !viewLoading && !viewError ? (

@@ -271,7 +271,7 @@ export default function Maintenance() {
       {/* Summary KPIs */}
       <div className="grid grid-cols-1 sm:grid-cols-4 gap-3">
         <div className="bg-white rounded-lg border border-slate-200 p-3 shadow-sm">
-          <p className="text-xs text-slate-500">{t('maintenance')} — {filteredRecords.length}</p>
+          <p className="text-xs text-slate-500">{t('maintenance')} - {filteredRecords.length}</p>
           <p className="text-lg font-bold text-slate-800">{filteredRecords.length}</p>
         </div>
         <div className="bg-white rounded-lg border border-slate-200 p-3 shadow-sm">

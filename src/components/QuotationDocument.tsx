@@ -74,7 +74,7 @@ export function QuotationDocument({
           <span style={{ fontSize: '18px', fontWeight: 700, color: navy, letterSpacing: '1px' }}>QUOTATION</span>
         </div>
 
-        {/* Quotation meta — right aligned */}
+        {/* Quotation meta - right aligned */}
         <div style={{ display: 'flex', justifyContent: 'flex-end', fontSize: '11px', marginBottom: '10px' }}>
           <div style={{ textAlign: 'left' }}>
             <div>Quotation No: <b>{txt(quotation.quotation_number) || '-'}</b></div>
@@ -92,14 +92,14 @@ export function QuotationDocument({
           {[quotation.customer_phone && `Phone: ${quotation.customer_phone}`, quotation.customer_gstin && `GSTIN: ${quotation.customer_gstin}`, quotation.customer_email && `Email: ${quotation.customer_email}`].filter(Boolean).join('  |  ')}
         </div>
 
-        {/* Subject — simple bold line, no box */}
+        {/* Subject - simple bold line, no box */}
         {quotation.subject && (
           <div style={{ fontSize: '11px', fontWeight: 700, marginBottom: '6px' }}>
             Sub: {txt(quotation.subject)}
           </div>
         )}
 
-        {/* Reference details — simple text lines */}
+        {/* Reference details - simple text lines */}
         {(quotation.reference_no || quotation.site_location) && (
           <div style={{ fontSize: '10px', marginBottom: '12px', lineHeight: 1.7 }}>
             {quotation.reference_no && <div>Reference No: {txt(quotation.reference_no)}</div>}
@@ -112,7 +112,7 @@ export function QuotationDocument({
           With reference to the above subject, we hereby quote for the supply of our crane/services as per the charges detailed below.
         </div>
 
-        {/* CHARGES DETAILS — only render if at least one active charge with amount > 0 */}
+        {/* CHARGES DETAILS - only render if at least one active charge with amount > 0 */}
         {(() => {
           const activeCharges: { desc: string; amt: number }[] = [];
           if (quotation.service_amount_enabled !== false && (quotation.quotation_amount ?? 0) > 0)
@@ -147,7 +147,7 @@ export function QuotationDocument({
                 </tbody>
               </table>
 
-              {/* Totals — right-aligned, all on same right edge */}
+              {/* Totals - right-aligned, all on same right edge */}
               <div style={{ display: 'flex', justifyContent: 'flex-end', fontSize: '10px', marginTop: '10px', marginBottom: '6px' }}>
                 <div style={{ width: '260px' }}>
                   {showSubtotal && (
@@ -222,7 +222,7 @@ export function QuotationDocument({
           <div>IFS Code: {bankIfsc}</div>
         </div>
 
-        {/* Signature — right side, clean */}
+        {/* Signature - right side, clean */}
         <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: '24px' }}>
           <div style={{ textAlign: 'center' }}>
             <div style={{ fontSize: '10px', fontWeight: 700, marginBottom: '6px' }}>For {companyName}</div>

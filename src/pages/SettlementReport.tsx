@@ -14,12 +14,7 @@ import {
 } from '@/lib/utils';
 import { DatePicker } from '@/components/ui/DatePicker';
 import { invoiceDocHTML } from '@/components/InvoiceDocument';
-
-let html2pdfLoader: Promise<typeof import('html2pdf.js')['default']> | null = null;
-async function getHtml2pdf() {
-  if (!html2pdfLoader) html2pdfLoader = import('html2pdf.js').then(m => (m as typeof import('html2pdf.js')).default);
-  return html2pdfLoader;
-}
+import { generateInvoicePdfBase64 } from '@/lib/invoicePdf';
 import type {
   InvoiceWithRelations, InvoiceItem, InvoicePayment,
   InvoiceSettings, PaymentMode, InvoiceStatus, Customer,
@@ -130,8 +125,8 @@ export default function SettlementReport() {
   useEffect(() => { fetchAll(); }, [fetchAll]);
 
   // Build settlement rows with computed balance from payments. Invoices that
-  // were started (e.g. via New GST Invoice) but never got a billing entry —
-  // zero total and no line items — are abandoned drafts, not real customer
+  // were started (e.g. via New GST Invoice) but never got a billing entry -
+  // zero total and no line items - are abandoned drafts, not real customer
   // transactions, so they never appear here.
   const settlementRows: SettlementRow[] = useMemo(() => {
     return invoices.filter(inv => !(Number(inv.grand_total) <= 0 && (inv.items ?? []).length === 0)).map(inv => {
@@ -369,69 +364,6 @@ export default function SettlementReport() {
     win.document.close();
   };
 
-  const generateInvoicePdfBase64 = async (inv: InvoiceWithRelations, items: InvoiceItem[]): Promise<string> => {
-    const html = invoiceDocHTML(inv, items, settings, invoiceSettings, 'master');
-    const iframe = document.createElement('iframe');
-    iframe.style.position = 'fixed';
-    iframe.style.left = '-9999px';
-    iframe.style.top = '0';
-    iframe.style.width = '190mm';
-    iframe.style.height = '277mm';
-    iframe.style.border = 'none';
-    document.body.appendChild(iframe);
-
-    const iframeDoc = iframe.contentWindow?.document;
-    if (!iframeDoc) {
-      if (iframe.parentNode) document.body.removeChild(iframe);
-      throw new Error('Unable to create PDF document');
-    }
-
-    iframeDoc.open();
-    iframeDoc.write(html);
-    iframeDoc.close();
-
-    const emailStyles = iframeDoc.createElement('style');
-    emailStyles.textContent = `
-      html, body { width: 718px !important; min-width: 718px !important; margin: 0 !important; }
-      .inv { width: 718px !important; max-width: 718px !important; margin: 0 !important; }
-      .tax-break, .sign, .bot { break-inside: avoid; page-break-inside: avoid; }
-    `;
-    iframeDoc.head.appendChild(emailStyles);
-
-    await new Promise(resolve => { iframe.onload = resolve; });
-    await new Promise(resolve => setTimeout(resolve, 500));
-    try {
-      await (iframe.contentWindow as any).document.fonts.ready;
-    } catch { /* fonts API unavailable, proceed */ }
-    await new Promise(resolve => setTimeout(resolve, 500));
-
-    const target = iframeDoc.body;
-    const opt = {
-      margin: [10, 10, 10, 10] as [number, number, number, number],
-      filename: `Invoice_${inv.invoice_number ?? 'draft'}.pdf`,
-      image: { type: 'png', quality: 1.0 },
-      html2canvas: { scale: 2, width: 718, windowWidth: 718, useCORS: true, logging: false, backgroundColor: '#ffffff' },
-      pagebreak: { mode: ['css', 'legacy'] as const },
-      jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' as const },
-    };
-
-    try {
-      const html2pdf = await getHtml2pdf();
-      const blob: Blob = await html2pdf().set(opt).from(target).outputPdf('blob');
-      const arrayBuffer = await blob.arrayBuffer();
-      const bytes = new Uint8Array(arrayBuffer);
-      let binary = '';
-      const chunkSize = 8192;
-      for (let i = 0; i < bytes.length; i += chunkSize) {
-        const chunk = bytes.subarray(i, i + chunkSize);
-        binary += String.fromCharCode(...chunk);
-      }
-      return btoa(binary);
-    } finally {
-      if (iframe.parentNode) document.body.removeChild(iframe);
-    }
-  };
-
   // Email
   const sendEmail = async (inv: InvoiceWithRelations) => {
     const email = inv.customer?.email ?? inv.customer_email;
@@ -441,7 +373,7 @@ export default function SettlementReport() {
     }
     setEmailSending(true);
     try {
-      const pdfBase64 = await generateInvoicePdfBase64(inv, inv.items ?? []);
+      const pdfBase64 = await generateInvoicePdfBase64(inv, inv.items ?? [], settings, invoiceSettings, 'master');
       const { data, error } = await supabase.functions.invoke('send-invoice-email', {
         body: { invoiceId: inv.id, pdfBase64 },
       });
@@ -536,7 +468,7 @@ export default function SettlementReport() {
     );
   };
 
-  // Consolidated customer account statement — print, one window, one A4 layout,
+  // Consolidated customer account statement - print, one window, one A4 layout,
   // covering every invoice currently shown for the selected customer (not one
   // print per invoice).
   const printCustomerStatement = () => {
@@ -588,7 +520,7 @@ export default function SettlementReport() {
     win.document.close();
   };
 
-  // ONE email with the customer's full statement — never one email per invoice.
+  // ONE email with the customer's full statement - never one email per invoice.
   const sendCustomerStatement = async () => {
     if (!selectedCustomer) return;
     if (!selectedCustomer.email) {
@@ -648,14 +580,14 @@ export default function SettlementReport() {
         </Button>
       </div>
 
-      {/* Select Customer — switches the report into a customer-wise account statement */}
+      {/* Select Customer - switches the report into a customer-wise account statement */}
       <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-4">
         <p className="text-xs font-bold uppercase tracking-wide text-slate-500 mb-2">Select Customer</p>
         <div className="max-w-md">
           <SearchableSelect
             value={selectedCustomerId}
             onChange={setSelectedCustomerId}
-            placeholder="All Customers — select one to view their account statement"
+            placeholder="All Customers - select one to view their account statement"
             searchPlaceholder="Search customer..."
             options={customers.map(c => ({ value: c.id, label: c.name, searchText: `${c.name} ${c.phone ?? ''}` }))}
           />
@@ -746,12 +678,12 @@ export default function SettlementReport() {
         <div className="flex items-center gap-3 mt-3 pt-3 border-t border-slate-100">
           <span className="text-xs font-semibold text-slate-500 whitespace-nowrap">{t('paymentDateFilter')}:</span>
           <div className="max-w-[160px]"><DatePicker value={paymentDateFrom} onChange={v => setPaymentDateFrom(v)} /></div>
-          <span className="text-slate-400 text-sm">—</span>
+          <span className="text-slate-400 text-sm">-</span>
           <div className="max-w-[160px]"><DatePicker value={paymentDateTo} onChange={v => setPaymentDateTo(v)} /></div>
         </div>
       </div>
 
-      {/* Customer Account Statement — shown instead of the flat table once a customer is selected */}
+      {/* Customer Account Statement - shown instead of the flat table once a customer is selected */}
       {selectedCustomer && (
         <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-4 space-y-3">
           <div className="flex items-center justify-between flex-wrap gap-2">
@@ -825,7 +757,7 @@ export default function SettlementReport() {
         </div>
       )}
 
-      {/* Settlement Table — flat All-Customers view, unchanged, shown when no customer is selected */}
+      {/* Settlement Table - flat All-Customers view, unchanged, shown when no customer is selected */}
       {!selectedCustomer && (
       <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
         {paginatedRows.length === 0 ? (

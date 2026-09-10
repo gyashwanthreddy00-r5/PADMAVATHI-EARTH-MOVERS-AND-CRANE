@@ -29,8 +29,8 @@ export default function GstBillingEntry({ invoiceId, onDone }: { invoiceId?: str
 
   // Two-step workflow: pick the customer + confirm the invoice number first,
   // then move to the actual working-day entry screen. Nothing is written to
-  // the database on Continue — the invoice row is still only created lazily
-  // on the first captured entry (see saveLine) — Continue just moves the UI
+  // the database on Continue - the invoice row is still only created lazily
+  // on the first captured entry (see saveLine) - Continue just moves the UI
   // forward, so opening/backing out of either step never wastes anything.
   const [step, setStep] = useState<Step>('select');
   const [customerId, setCustomerId] = useState('');
@@ -38,7 +38,7 @@ export default function GstBillingEntry({ invoiceId, onDone }: { invoiceId?: str
   const [previewInvoiceNumber, setPreviewInvoiceNumber] = useState('');
 
   // activeInvoice is null until the user's first "Capture Trip" click actually
-  // inserts a real invoice row — merely opening/selecting a customer/vehicle
+  // inserts a real invoice row - merely opening/selecting a customer/vehicle
   // never touches the database, so backing out never leaves an empty invoice
   // or wastes an invoice number.
   const [activeInvoice, setActiveInvoice] = useState<Invoice | null>(null);
@@ -50,13 +50,14 @@ export default function GstBillingEntry({ invoiceId, onDone }: { invoiceId?: str
   const [entRateType, setEntRateType] = useState<PoRateType>('Hourly');
   const [entHours, setEntHours] = useState('');
   const [entMinutes, setEntMinutes] = useState('');
+  const [entDays, setEntDays] = useState('1');
   const [entBatha, setEntBatha] = useState('');
   const [bathaTouched, setBathaTouched] = useState(false);
   const [editingLineId, setEditingLineId] = useState<string | null>(null);
   const [savingLine, setSavingLine] = useState(false);
   const [deleteLineId, setDeleteLineId] = useState<string | null>(null);
 
-  // Invoice Details — Invoice Number is auto-generated; Billed Date defaults to
+  // Invoice Details - Invoice Number is auto-generated; Billed Date defaults to
   // today but can be changed, and can still be set later once the invoice exists.
   const [billDateDraft, setBillDateDraft] = useState(todayISO());
   const [gstType, setGstType] = useState<'cgst_sgst' | 'igst' | 'no_tax'>('cgst_sgst');
@@ -127,10 +128,10 @@ export default function GstBillingEntry({ invoiceId, onDone }: { invoiceId?: str
 
   // ---------------- Invoice-number preview (non-consuming) ----------------
   // Shows the customer the number their invoice WILL get, the moment they
-  // pick a customer — without reserving/consuming it. The real number is
+  // pick a customer - without reserving/consuming it. The real number is
   // only generated (via next_pcs_invoice_number) inside saveLine(), at the
   // moment the first billing entry is actually captured, so it's the same
-  // number shown here all the way through — nothing is regenerated later.
+  // number shown here all the way through - nothing is regenerated later.
   useEffect(() => {
     if (!customerId || activeInvoice) { setPreviewInvoiceNumber(''); return; }
     let cancelled = false;
@@ -153,6 +154,7 @@ export default function GstBillingEntry({ invoiceId, onDone }: { invoiceId?: str
 
   function resetEntryForm() {
     setEntDate(todayISO()); setEntVehicleId(''); setEntRateType('Hourly'); setEntHours(''); setEntMinutes('');
+    setEntDays('1');
     setEntBatha(''); setBathaTouched(false);
     setEditingLineId(null);
   }
@@ -164,18 +166,24 @@ export default function GstBillingEntry({ invoiceId, onDone }: { invoiceId?: str
     setEntRateType(l.rate_type);
     setEntHours(l.rate_type === 'Daily' ? '' : String(l.hours));
     setEntMinutes(l.rate_type === 'Daily' ? '' : String(l.minutes));
+    setEntDays(l.rate_type === 'Daily' ? String(l.days || 1) : '1');
     setEntBatha(String(Number(l.batha) || 0));
     setBathaTouched(true);
   }
 
   const selectedEntVehicle = entVehicleId ? vehiclesById.get(entVehicleId) ?? null : null;
   const entRate = (entDate && entVehicleId) ? rateFor(entVehicleId, entDate) : null;
+  const entDaysNum = Math.max(1, Number(entDays) || 1);
   const entCalc = (entDate && entVehicleId)
-    ? computeBillingLineAmounts(entRateType, entRateType === 'Daily' ? 0 : Number(entHours) || 0, entRateType === 'Daily' ? 0 : Number(entMinutes) || 0, entRate)
+    ? computeBillingLineAmounts(entRateType, entRateType === 'Daily' ? 0 : Number(entHours) || 0, entRateType === 'Daily' ? 0 : Number(entMinutes) || 0, entRate, entDaysNum)
     : null;
-  const canSaveLine = !!(entDate && entVehicleId && (entRateType === 'Daily' || entHours !== '' || entMinutes !== '') && entCalc?.rateFound);
+  const canSaveLine = !!(entDate && entVehicleId && (entRateType === 'Daily' ? Number(entDays) > 0 : (entHours !== '' || entMinutes !== '')) && entCalc?.rateFound);
   const entBathaNum = Number(entBatha) || 0;
-  const entTotalWithBatha = (entCalc?.rentalAmount ?? 0) + entBathaNum;
+  // For Full Day entries, entBatha is the PER-DAY Batha rate (auto-filled from Rate
+  // Master) — the total Batha amount scales with No. of Days, same as Rental Amount.
+  // Hourly entries keep entBatha as a single flat amount for the entry, unchanged.
+  const entBathaAmount = entRateType === 'Daily' ? round2(entBathaNum * entDaysNum) : entBathaNum;
+  const entTotalWithBatha = (entCalc?.rentalAmount ?? 0) + entBathaAmount;
 
   // Batha auto-fills from Rate Master whenever the resolved rate changes,
   // but only until the user edits it by hand for this specific entry.
@@ -190,7 +198,7 @@ export default function GstBillingEntry({ invoiceId, onDone }: { invoiceId?: str
     setSavingLine(true);
     const { data: { user } } = await supabase.auth.getUser();
 
-    // Lazily create the invoice on the FIRST captured entry only — opening
+    // Lazily create the invoice on the FIRST captured entry only - opening
     // this screen, picking a customer/vehicle, or backing out never inserts
     // anything and never consumes an invoice number.
     let invoice = activeInvoice;
@@ -237,6 +245,9 @@ export default function GstBillingEntry({ invoiceId, onDone }: { invoiceId?: str
 
     const hours = entRateType === 'Daily' ? 0 : Number(entHours) || 0;
     const minutes = entRateType === 'Daily' ? 0 : Number(entMinutes) || 0;
+    const days = entRateType === 'Daily' ? entDaysNum : 1;
+    // batha stays the RATE (per-day for Full Day, flat for Hourly — unchanged);
+    // entBathaAmount is the days-scaled total actually billed for this line.
     const batha = entBathaNum;
     const payload = {
       invoice_id: invoice.id,
@@ -246,19 +257,19 @@ export default function GstBillingEntry({ invoiceId, onDone }: { invoiceId?: str
       vehicle_type: selectedEntVehicle.type,
       ton: selectedEntVehicle.tons,
       rate_type: entRateType,
-      hours, minutes,
+      hours, minutes, days,
       first_hour_rate: entCalc.firstRate,
       second_hour_rate: entCalc.secondRate,
       first_hour_amount: entCalc.firstAmt,
       second_hour_amount: entCalc.secondAmt,
       batha,
-      total_amount: (entCalc.rentalAmount ?? 0) + batha,
+      total_amount: round2((entCalc.rentalAmount ?? 0) + entBathaAmount),
     };
     const result = editingLineId
       ? await supabase.from('invoice_billing_lines').update(payload).eq('id', editingLineId)
       : await supabase.from('invoice_billing_lines').insert({ ...payload, sort_order: lines.length, created_by: user?.id ?? null });
     if (result.error) {
-      // The line never made it in — if we just created the invoice for this
+      // The line never made it in - if we just created the invoice for this
       // capture, undo that too so a failed capture never leaves an empty
       // invoice behind or wastes the invoice number.
       if (justCreatedInvoice) await supabase.from('invoices').delete().eq('id', invoice.id);
@@ -306,10 +317,10 @@ export default function GstBillingEntry({ invoiceId, onDone }: { invoiceId?: str
     return { totalHours, rentalSubtotal, up, down, additional, taxable, cgstAmt, sgstAmt, igstAmt, totalGst, grandTotal, gstLabel };
   }, [lines, upEnabled, upAmount, downEnabled, downAmount, additionalEnabled, additionalAmount, gstType]);
 
-  /** Recomputes and persists totals + rebuilds invoice_items — called after every line add/edit/delete and from Save Invoice. */
-  async function syncInvoiceTotals(currentLines: InvoiceBillingLine[], opts?: { billDate?: string | null; finalize?: boolean }, invoiceOverride?: Invoice) {
+  /** Recomputes and persists totals + rebuilds invoice_items - called after every line add/edit/delete and from Save Invoice. Returns whether the invoice row itself was saved successfully. */
+  async function syncInvoiceTotals(currentLines: InvoiceBillingLine[], opts?: { billDate?: string | null; finalize?: boolean }, invoiceOverride?: Invoice): Promise<boolean> {
     const invoice = invoiceOverride ?? activeInvoice;
-    if (!invoice) return;
+    if (!invoice) return false;
     const totalHours = round2(currentLines.reduce((s, l) => s + l.hours + l.minutes / 60, 0));
     const rentalSubtotal = round2(currentLines.reduce((s, l) => s + l.total_amount, 0));
     const up = upEnabled ? Number(upAmount) || 0 : 0;
@@ -328,7 +339,7 @@ export default function GstBillingEntry({ invoiceId, onDone }: { invoiceId?: str
     const updatePayload = {
       invoice_date: billDate || invoice.invoice_date,
       total_hours: totalHours,
-      description: `${currentLines.length} working-day entr${currentLines.length === 1 ? 'y' : 'ies'}${vehicleList ? ' — ' + vehicleList : ''}`,
+      description: `${currentLines.length} working-day entr${currentLines.length === 1 ? 'y' : 'ies'}${vehicleList ? ' - ' + vehicleList : ''}`,
       motor_vehicle_numbers: vehicleList || null,
       taxable_amount: taxable,
       tax_type: gstType,
@@ -346,16 +357,55 @@ export default function GstBillingEntry({ invoiceId, onDone }: { invoiceId?: str
       invoice_status: (opts?.finalize && billDate) ? 'Generated' as const : invoice.invoice_status,
     };
     const { error: updErr } = await supabase.from('invoices').update(updatePayload).eq('id', invoice.id);
-    if (updErr) { show(updErr.message, 'error'); return; }
+    if (updErr) { show(updErr.message, 'error'); return false; }
     setActiveInvoice({ ...invoice, ...updatePayload });
 
     // Rebuild invoice_items from scratch so Print/PDF/email always reflect current lines
     await supabase.from('invoice_items').delete().eq('invoice_id', invoice.id);
-    const items = currentLines.map((l, idx) => {
+    const hsnSac = invoiceSettings?.hsn_sac || '997319';
+    const items: { invoice_id: string; sl_no: number; description: string; hsn_sac: string; quantity: number; rate: number; unit: string; amount: number; batha: number; calculation_details: string }[] = [];
+    currentLines.forEach(l => {
+      if (l.rate_type !== 'Daily') {
+        // Hourly — completely unchanged: single combined line (rental + its flat Batha).
+        const { description, calculation_details } = buildInvoiceLineDescription({
+          rate_type: l.rate_type,
+          total_hours: l.hours + l.minutes / 60,
+          rental_amount: l.total_amount,
+          trip_date: l.working_date,
+          work_date: l.working_date,
+          place_of_work: placeOfWork.trim() || '',
+          capacity_tons: l.ton != null ? String(l.ton) : null,
+          first_hour_rate: l.first_hour_rate,
+          second_hour_rate: l.second_hour_rate,
+          weekly_rate_snapshot: null,
+          daily_rate_snapshot: null,
+          monthly_rate_snapshot: null,
+          vehicle: { registration_number: l.vehicle_number, type: l.vehicle_type, capacity: l.ton },
+        });
+        items.push({
+          invoice_id: invoice.id, sl_no: items.length + 1, description,
+          hsn_sac: hsnSac, quantity: 1, rate: l.total_amount,
+          unit: 'nos', amount: l.total_amount, batha: 0,
+          calculation_details,
+        });
+        return;
+      }
+
+      // Full Day: Rental Amount = No. of Days x per-day Rate (the Rate itself is never
+      // multiplied/changed) and, when Batha applies, a separate "OPERATOR BATHA" line of
+      // Quantity = No. of Days x per-day Batha rate — the same rental/batha split the
+      // app already uses for the old Invoices flow's combined Operator Batha line (see
+      // invoiceCalc.ts), just per line instead of per invoice.
+      const days = Math.max(1, Number(l.days) || 1);
+      const dayRate = Number(l.first_hour_rate) || 0;
+      const bathaPerDay = Number(l.batha) || 0;
+      const rentalAmount = round2(dayRate * days);
+      const bathaAmount = round2(bathaPerDay * days);
+
       const { description, calculation_details } = buildInvoiceLineDescription({
         rate_type: l.rate_type,
-        total_hours: l.hours + l.minutes / 60,
-        rental_amount: l.total_amount,
+        total_hours: 0,
+        rental_amount: rentalAmount,
         trip_date: l.working_date,
         work_date: l.working_date,
         place_of_work: placeOfWork.trim() || '',
@@ -363,16 +413,25 @@ export default function GstBillingEntry({ invoiceId, onDone }: { invoiceId?: str
         first_hour_rate: l.first_hour_rate,
         second_hour_rate: l.second_hour_rate,
         weekly_rate_snapshot: null,
-        daily_rate_snapshot: l.rate_type === 'Daily' ? l.first_hour_rate : null,
+        daily_rate_snapshot: l.first_hour_rate,
         monthly_rate_snapshot: null,
         vehicle: { registration_number: l.vehicle_number, type: l.vehicle_type, capacity: l.ton },
       });
-      return {
-        invoice_id: invoice.id, sl_no: idx + 1, description,
-        hsn_sac: invoiceSettings?.hsn_sac || '997319', quantity: 1, rate: l.total_amount,
-        unit: l.rate_type === 'Daily' ? 'day' : 'nos', amount: l.total_amount, batha: 0,
+
+      items.push({
+        invoice_id: invoice.id, sl_no: items.length + 1, description,
+        hsn_sac: hsnSac, quantity: days, rate: dayRate,
+        unit: 'day', amount: rentalAmount, batha: 0,
         calculation_details,
-      };
+      });
+      if (bathaAmount > 0) {
+        items.push({
+          invoice_id: invoice.id, sl_no: items.length + 1, description: 'OPERATOR BATHA',
+          hsn_sac: hsnSac, quantity: days, rate: bathaPerDay,
+          unit: 'day', amount: bathaAmount, batha: bathaAmount,
+          calculation_details: `Operator Batha: ${days} day${days > 1 ? 's' : ''} x ${formatCurrency(bathaPerDay)} = ${formatCurrency(bathaAmount)}`,
+        });
+      }
     });
     if (up > 0) {
       items.push({ invoice_id: invoice.id, sl_no: items.length + 1, description: 'UP TRANSPORTATION CHARGES', hsn_sac: invoiceSettings?.hsn_sac || '997319', quantity: 1, rate: up, unit: 'nos', amount: up, batha: 0, calculation_details: `UP Transportation: ${formatCurrency(up)}` });
@@ -387,15 +446,18 @@ export default function GstBillingEntry({ invoiceId, onDone }: { invoiceId?: str
       const { error: itemsErr } = await supabase.from('invoice_items').insert(items);
       if (itemsErr) show(itemsErr.message, 'error');
     }
+    return true;
   }
 
   async function saveInvoice() {
     if (!activeInvoice) return;
     if (lines.length === 0) { show('Please add at least one billing entry before saving the invoice.', 'error'); return; }
     setSavingInvoice(true);
-    await syncInvoiceTotals(lines, { billDate: billDateDraft || null, finalize: true });
-    show('Invoice saved.', 'success');
+    const saved = await syncInvoiceTotals(lines, { billDate: billDateDraft || null, finalize: true });
     setSavingInvoice(false);
+    if (!saved) return;
+    show('Invoice saved.', 'success');
+    onDone();
   }
 
   function handlePrint() {
@@ -436,7 +498,7 @@ export default function GstBillingEntry({ invoiceId, onDone }: { invoiceId?: str
         <p className="text-sm text-slate-500 mt-0.5">
           {step === 'select'
             ? 'Select a customer to see their invoice number, then continue to add working days.'
-            : 'Add working-day entries below — nothing is saved until you click Capture Trip.'}
+            : 'Add working-day entries below - nothing is saved until you click Capture Trip.'}
         </p>
       </div>
 
@@ -489,7 +551,7 @@ export default function GstBillingEntry({ invoiceId, onDone }: { invoiceId?: str
             <div className="flex items-center justify-between mb-2">
               <p className="text-xs font-bold uppercase tracking-wide text-slate-500">Customer Information</p>
               <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-bold bg-blue-50 text-blue-700 border border-blue-100">
-                Invoice No: {invoiceNoDisplay || '—'}
+                Invoice No: {invoiceNoDisplay || '-'}
               </span>
             </div>
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-sm">
@@ -516,12 +578,12 @@ export default function GstBillingEntry({ invoiceId, onDone }: { invoiceId?: str
                 <SearchableSelect
                   value={entVehicleId}
                   onChange={v => { setEntVehicleId(v); setBathaTouched(false); }}
-                  options={vehicles.map(v => ({ value: v.id, label: `${v.registration_number} — ${v.type}${v.tons ? ' ' + v.tons + ' Ton' : ''}` }))}
+                  options={vehicles.map(v => ({ value: v.id, label: `${v.registration_number} - ${v.type}${v.tons ? ' ' + v.tons + ' Ton' : ''}` }))}
                   placeholder="Select vehicle"
                 />
               </Field>
               <Field label="Ton / Type">
-                <div className={classNames(inputClass(), 'bg-slate-100 text-slate-500')}>{selectedEntVehicle ? (selectedEntVehicle.type === 'JCB' ? 'JCB' : `${selectedEntVehicle.tons ?? '—'} Ton · Crane`) : '—'}</div>
+                <div className={classNames(inputClass(), 'bg-slate-100 text-slate-500')}>{selectedEntVehicle ? (selectedEntVehicle.type === 'JCB' ? 'JCB' : `${selectedEntVehicle.tons ?? '-'} Ton · Crane`) : '-'}</div>
               </Field>
               <Field label="Rate Type" required>
                 <select className={inputClass()} value={entRateType} onChange={e => setEntRateType(e.target.value as PoRateType)}>
@@ -535,7 +597,9 @@ export default function GstBillingEntry({ invoiceId, onDone }: { invoiceId?: str
                   <Field label="Minutes"><input type="number" min="0" max="59" className={inputClass()} value={entMinutes} onChange={e => setEntMinutes(e.target.value)} placeholder="20" /></Field>
                 </div>
               ) : (
-                <div className="flex items-center text-sm text-slate-400 italic">Full day rate from Rate Master.</div>
+                <Field label="No. of Days" required>
+                  <input type="number" min="1" step="1" className={inputClass()} value={entDays} onChange={e => setEntDays(e.target.value)} placeholder="1" />
+                </Field>
               )}
               <Field label="Batha">
                 <input type="number" min="0" className={inputClass()} value={entBatha} onChange={e => { setEntBatha(e.target.value); setBathaTouched(true); }} placeholder="0" />
@@ -547,8 +611,11 @@ export default function GstBillingEntry({ invoiceId, onDone }: { invoiceId?: str
                 {entCalc?.rateFound ? (
                   entRateType === 'Daily' ? (
                     <>
-                      <span className="text-slate-500">Full Day Rate: <b className="text-slate-800">{formatCurrency(entCalc.rentalAmount)}</b></span>
-                      <span className="text-slate-500">Batha: <b className="text-slate-800">{formatCurrency(entBathaNum)}</b></span>
+                      <span className="text-slate-500">No. of Days: <b className="text-slate-800">{entDaysNum}</b></span>
+                      <span className="text-slate-500">Full Day Rate: <b className="text-slate-800">{formatCurrency(entCalc.firstRate)} / day</b></span>
+                      <span className="text-slate-500">Rental Amount: <b className="text-slate-800">{formatCurrency(entCalc.rentalAmount)}</b></span>
+                      <span className="text-slate-500">Batha: <b className="text-slate-800">{formatCurrency(entBathaNum)} / day</b></span>
+                      <span className="text-slate-500">Batha Amount: <b className="text-slate-800">{formatCurrency(entBathaAmount)}</b></span>
                       <span className="text-emerald-700 font-semibold">Total: {formatCurrency(entTotalWithBatha)}</span>
                     </>
                   ) : (
@@ -592,19 +659,21 @@ export default function GstBillingEntry({ invoiceId, onDone }: { invoiceId?: str
                     ) : lines.map((l, idx) => {
                       const isFullDay = l.rate_type === 'Daily';
                       const isJcb = l.vehicle_type === 'JCB';
+                      const lineDays = Math.max(1, Number(l.days) || 1);
                       const particulars = isFullDay
-                        ? `${formatDate(l.working_date)} — Full Day`
-                        : `${formatDate(l.working_date)} — ${l.hours} Hr ${l.minutes} Min`;
+                        ? `${formatDate(l.working_date)} - Full Day${lineDays > 1 ? ` × ${lineDays}` : ''}`
+                        : `${formatDate(l.working_date)} - ${l.hours} Hr ${l.minutes} Min`;
                       const rateDisplay = isFullDay
-                        ? formatCurrency(l.first_hour_rate)
+                        ? `${formatCurrency(l.first_hour_rate)}${lineDays > 1 ? ` × ${lineDays}` : ''}`
                         : `${formatCurrency(l.first_hour_rate)} / ${formatCurrency(l.second_hour_rate)}`;
+                      const lineBathaTotal = isFullDay ? round2((Number(l.batha) || 0) * lineDays) : (Number(l.batha) || 0);
                       return (
                         <tr key={l.id} className={classNames(idx % 2 ? 'bg-slate-50' : 'bg-white', editingLineId === l.id && 'ring-2 ring-inset ring-blue-300')}>
                           <td className="border border-slate-100 px-2 py-1.5 text-center tabular-nums">{idx + 1}</td>
                           <td className="border border-slate-100 px-2 py-1.5 whitespace-nowrap">{particulars}</td>
                           <td className="border border-slate-100 px-2 py-1.5 text-center whitespace-nowrap">{l.vehicle_number}</td>
-                          <td className="border border-slate-100 px-2 py-1.5 text-center tabular-nums">{isJcb ? 'JCB' : (l.ton ?? '—')}</td>
-                          <td className="border border-slate-100 px-2 py-1.5 text-right tabular-nums whitespace-nowrap">{rateDisplay}{l.batha > 0 && <span className="block text-[11px] text-slate-400">+ Batha {formatCurrency(l.batha)}</span>}</td>
+                          <td className="border border-slate-100 px-2 py-1.5 text-center tabular-nums">{isJcb ? 'JCB' : (l.ton ?? '-')}</td>
+                          <td className="border border-slate-100 px-2 py-1.5 text-right tabular-nums whitespace-nowrap">{rateDisplay}{lineBathaTotal > 0 && <span className="block text-[11px] text-slate-400">+ Batha {formatCurrency(lineBathaTotal)}{isFullDay && lineDays > 1 ? ` (${formatCurrency(l.batha)} × ${lineDays})` : ''}</span>}</td>
                           <td className="border border-slate-100 px-2 py-1.5 text-right tabular-nums font-bold">{formatCurrency(l.total_amount)}</td>
                           <td className="border border-slate-100 px-2 py-1.5 text-center whitespace-nowrap">
                             <button onClick={() => startEditLine(l)} className="p-1 text-slate-400 hover:text-blue-600 rounded" title="Edit"><Pencil className="w-3.5 h-3.5" /></button>
@@ -685,7 +754,7 @@ export default function GstBillingEntry({ invoiceId, onDone }: { invoiceId?: str
                       <span className="font-bold text-blue-700 tabular-nums">{formatCurrency(totals.grandTotal)}</span>
                     </div>
                   </div>
-                  {/* Print/Excel intentionally not offered here — this is the
+                  {/* Print/Excel intentionally not offered here - this is the
                       pre-generation entry screen. Both remain available on the
                       generated invoice via Customer Invoices' own Print/Excel
                       actions once Save Invoice has created it. */}

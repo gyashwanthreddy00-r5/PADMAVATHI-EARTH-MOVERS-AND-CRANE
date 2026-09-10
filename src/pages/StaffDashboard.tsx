@@ -183,7 +183,7 @@ export default function StaffDashboard({ onNavigate }: { onNavigate: (path: stri
   const rangeLabel = useMemo(() => {
     const { start, end } = getRangeDates(dateRange, customStart, customEnd);
     if (start === end) return formatDate(start);
-    return `${formatDate(start)} — ${formatDate(end)}`;
+    return `${formatDate(start)} - ${formatDate(end)}`;
   }, [dateRange, customStart, customEnd]);
 
   const computed = useMemo(() => {
@@ -248,16 +248,16 @@ export default function StaffDashboard({ onNavigate }: { onNavigate: (path: stri
 
     const upcomingEvents: { label: string; date: string; type: string; navigateTo: string }[] = [];
     data.contracts.forEach(c => {
-      if (c.end_date) { const d = daysUntil(c.end_date); if (d >= 0 && d <= 7) upcomingEvents.push({ label: `Rental ending — ${c.company_name}`, date: c.end_date, type: 'rental', navigateTo: '/contracts' }); }
+      if (c.end_date) { const d = daysUntil(c.end_date); if (d >= 0 && d <= 7) upcomingEvents.push({ label: `Rental ending - ${c.company_name}`, date: c.end_date, type: 'rental', navigateTo: '/contracts' }); }
     });
     data.emiRecords.forEach(e => {
-      if (e.status !== 'Paid') { const d = daysUntil(e.due_date); if (d >= 0 && d <= 7) upcomingEvents.push({ label: `EMI due — ${e.vehicle?.registration_number ?? 'N/A'}`, date: e.due_date, type: 'emi', navigateTo: '/emi' }); }
+      if (e.status !== 'Paid') { const d = daysUntil(e.due_date); if (d >= 0 && d <= 7) upcomingEvents.push({ label: `EMI due - ${e.vehicle?.registration_number ?? 'N/A'}`, date: e.due_date, type: 'emi', navigateTo: '/emi' }); }
     });
     data.vehicles.forEach(v => {
-      if (v.fitness_expiry_date) { const d = daysUntil(v.fitness_expiry_date); if (d >= 0 && d <= 7) upcomingEvents.push({ label: `Fitness expiry — ${v.registration_number}`, date: v.fitness_expiry_date, type: 'doc', navigateTo: '/vehicles' }); }
+      if (v.fitness_expiry_date) { const d = daysUntil(v.fitness_expiry_date); if (d >= 0 && d <= 7) upcomingEvents.push({ label: `Fitness expiry - ${v.registration_number}`, date: v.fitness_expiry_date, type: 'doc', navigateTo: '/vehicles' }); }
     });
     data.quotations.forEach(q => {
-      if (q.valid_until && q.status === 'Sent') { const d = daysUntil(q.valid_until); if (d >= 0 && d <= 7) upcomingEvents.push({ label: `Quotation expiry — ${q.quotation_number}`, date: q.valid_until, type: 'quotation', navigateTo: '/quotations' }); }
+      if (q.valid_until && q.status === 'Sent') { const d = daysUntil(q.valid_until); if (d >= 0 && d <= 7) upcomingEvents.push({ label: `Quotation expiry - ${q.quotation_number}`, date: q.valid_until, type: 'quotation', navigateTo: '/quotations' }); }
     });
     upcomingEvents.sort((a, b) => a.date.localeCompare(b.date));
 
@@ -296,7 +296,7 @@ export default function StaffDashboard({ onNavigate }: { onNavigate: (path: stri
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div className="min-w-0">
           <h1 className="text-2xl font-bold text-slate-800 tracking-tight">{t('staffDashboardTitle')}</h1>
-          <p className="text-sm text-slate-500 mt-0.5">{t('staffDashboardSubtitle')} — {rangeLabel}</p>
+          <p className="text-sm text-slate-500 mt-0.5">{t('staffDashboardSubtitle')} - {rangeLabel}</p>
         </div>
         <div className="flex items-center gap-2 flex-wrap">
           <div className="flex items-center rounded-xl border border-slate-200 bg-white overflow-hidden shadow-sm">
@@ -316,7 +316,7 @@ export default function StaffDashboard({ onNavigate }: { onNavigate: (path: stri
           {showCustom && (
             <div className="flex items-center gap-1">
               <DatePicker value={customStart} onChange={v => setCustomStart(v)} className="px-2 py-1.5 text-xs border border-slate-200 rounded-lg" />
-              <span className="text-slate-400 text-xs">—</span>
+              <span className="text-slate-400 text-xs">-</span>
               <DatePicker value={customEnd} onChange={v => setCustomEnd(v)} className="px-2 py-1.5 text-xs border border-slate-200 rounded-lg" />
             </div>
           )}
@@ -411,7 +411,7 @@ export default function StaffDashboard({ onNavigate }: { onNavigate: (path: stri
                 {computed.todayTrips.slice(0, 8).map(tr => (
                   <tr key={tr.id} onClick={() => onNavigate('/trips')} className="hover:bg-slate-50 cursor-pointer transition-colors">
                     <td className="px-3 py-2.5 text-sm font-medium text-slate-800 whitespace-nowrap max-w-[120px] truncate">{tr.customer?.name ?? tr.place_of_work}</td>
-                    <td className="px-3 py-2.5 text-sm text-slate-600 whitespace-nowrap">{tr.vehicle ? `${tr.vehicle.registration_number} — ${vehicleTypeLabel(tr.vehicle.type, tr.vehicle.tons ?? tr.vehicle.capacity)}` : '-'}</td>
+                    <td className="px-3 py-2.5 text-sm text-slate-600 whitespace-nowrap">{tr.vehicle ? `${tr.vehicle.registration_number} - ${vehicleTypeLabel(tr.vehicle.type, tr.vehicle.tons ?? tr.vehicle.capacity)}` : '-'}</td>
                     <td className="px-3 py-2.5 text-sm text-slate-600 whitespace-nowrap max-w-[120px] truncate">{tr.place_of_work}</td>
                     <td className="px-3 py-2.5 text-sm text-slate-600 whitespace-nowrap">{tr.driver?.name ?? '-'}</td>
                     <td className="px-3 py-2.5 text-center whitespace-nowrap">
@@ -543,7 +543,7 @@ export default function StaffDashboard({ onNavigate }: { onNavigate: (path: stri
                   <div className="w-7 h-7 rounded-lg bg-amber-50 flex items-center justify-center flex-shrink-0">
                     <Wrench className="w-3.5 h-3.5 text-amber-600" />
                   </div>
-                  <span className="text-sm font-medium text-slate-700 truncate flex-1 min-w-0">{m.vehicle?.registration_number ?? '-'} — {m.maintenance_type}</span>
+                  <span className="text-sm font-medium text-slate-700 truncate flex-1 min-w-0">{m.vehicle?.registration_number ?? '-'} - {m.maintenance_type}</span>
                   <span className="text-xs text-slate-500 whitespace-nowrap flex-shrink-0">{formatDate(m.maintenance_date)}</span>
                 </div>
               ))}

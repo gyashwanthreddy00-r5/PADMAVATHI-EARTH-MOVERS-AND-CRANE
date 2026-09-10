@@ -140,7 +140,7 @@ export function DataTable<T extends { id?: string }>({
     key: '__serial',
     header: 'Sl. No.',
     align: 'center',
-    render: (_row: T) => null, // placeholder — actual value rendered inline below
+    render: (_row: T) => null, // placeholder - actual value rendered inline below
   };
 
   const baseColumns = showSerialNumber ? [serialColumn, ...columns] : columns;

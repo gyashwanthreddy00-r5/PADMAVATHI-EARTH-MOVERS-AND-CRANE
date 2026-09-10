@@ -38,7 +38,7 @@ export default function PoOrders() {
 
   const [records, setRecords] = useState<PoWorkingRecord[]>([]);
 
-  // PO-level Invoice Number / Bill Date — applied to every working record. The invoice
+  // PO-level Invoice Number / Bill Date - applied to every working record. The invoice
   // number is never typed by hand: it's issued once, atomically, from the SAME global
   // PCS sequence (next_pcs_invoice_number) that GST Billing, Cash/UPI, and Monthly
   // Contracts all draw from, so a PO's bill number can never collide with theirs.
@@ -247,7 +247,7 @@ export default function PoOrders() {
   }
 
   // ---------------- PO-level Invoice Number / Bill Date ----------------
-  // Entered once at the end and applied to every working record under this PO —
+  // Entered once at the end and applied to every working record under this PO -
   // not stored per row, so editing it here updates it everywhere at once
   // (in the table, Print, and Excel export) without touching individual records.
 
@@ -268,7 +268,7 @@ export default function PoOrders() {
   }
 
   // Issues the next global PCS number atomically (same RPC as GST Billing/Cash-UPI/
-  // Monthly Contracts) and saves it immediately — never typed by hand, so it can
+  // Monthly Contracts) and saves it immediately - never typed by hand, so it can
   // never collide with a number already used anywhere else in the ERP.
   async function generateInvoiceNumber() {
     if (!activePoOrder || invoiceNumberDraft.trim()) return;
@@ -311,7 +311,7 @@ export default function PoOrders() {
         <div>
           <h1 className="text-lg font-bold text-slate-800 flex items-center gap-2"><FileSpreadsheet className="w-5 h-5 text-blue-600" /> PO Orders</h1>
           <p className="text-sm text-slate-500 mt-0.5">
-            {view === 'select' ? 'Select a customer to see their PO Orders, or start a new one.' : 'Maintain working-day billing data, then print or export it — this does not create a Customer Invoice.'}
+            {view === 'select' ? 'Select a customer to see their PO Orders, or start a new one.' : 'Maintain working-day billing data, then print or export it - this does not create a Customer Invoice.'}
           </p>
         </div>
       </div>
@@ -327,7 +327,7 @@ export default function PoOrders() {
 
           <div className="bg-white border border-slate-200 rounded-xl overflow-hidden">
             <div className="px-4 py-3 border-b border-slate-100 flex items-center justify-between">
-              <p className="text-sm font-bold text-slate-700">Recent PO Orders {customerName && `— ${customerName}`}</p>
+              <p className="text-sm font-bold text-slate-700">Recent PO Orders {customerName && `- ${customerName}`}</p>
               <Button onClick={startNewPO} disabled={!customerId}><Plus className="w-4 h-4" />New PO Order</Button>
             </div>
             {poOrders.length === 0 ? (
@@ -386,7 +386,7 @@ export default function PoOrders() {
               </div>
             ) : (
               <>
-                <p className="text-xs font-bold uppercase tracking-wide text-slate-500 mb-3">New PO Order — {customerName}</p>
+                <p className="text-xs font-bold uppercase tracking-wide text-slate-500 mb-3">New PO Order - {customerName}</p>
                 <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 items-end">
                   <Field label="PO / Order No." required>
                     <input type="text" className={inputClass()} value={draftPoNumber} onChange={e => setDraftPoNumber(e.target.value)} placeholder="e.g. PO-003" />
@@ -411,10 +411,10 @@ export default function PoOrders() {
                     <DatePicker value={entDate} onChange={setEntDate} />
                   </Field>
                   <Field label="Vehicle" required>
-                    <SearchableSelect value={entVehicleId} onChange={setEntVehicleId} options={vehicles.map(v => ({ value: v.id, label: `${v.registration_number} — ${v.tons} Ton` }))} placeholder="Select vehicle" emptyText="No vehicles with a Ton set" />
+                    <SearchableSelect value={entVehicleId} onChange={setEntVehicleId} options={vehicles.map(v => ({ value: v.id, label: `${v.registration_number} - ${v.tons} Ton` }))} placeholder="Select vehicle" emptyText="No vehicles with a Ton set" />
                   </Field>
                   <Field label="Ton">
-                    <div className={classNames(inputClass(), 'bg-slate-100 text-slate-500 tabular-nums')}>{selectedEntVehicle ? `${selectedEntVehicle.tons} Ton` : '—'}</div>
+                    <div className={classNames(inputClass(), 'bg-slate-100 text-slate-500 tabular-nums')}>{selectedEntVehicle ? `${selectedEntVehicle.tons} Ton` : '-'}</div>
                   </Field>
                   <Field label="VL No" required>
                     <input type="text" className={inputClass()} value={entVlNo} onChange={e => setEntVlNo(e.target.value)} placeholder="Type VL No" />
@@ -431,7 +431,7 @@ export default function PoOrders() {
                       <Field label="Minutes"><input type="number" min="0" max="59" className={inputClass()} value={entMinutes} onChange={e => setEntMinutes(e.target.value)} placeholder="20" /></Field>
                     </div>
                   ) : (
-                    <div className="flex items-center text-sm text-slate-400 italic">Full day — billed at the Rate Master's Daily Rate.</div>
+                    <div className="flex items-center text-sm text-slate-400 italic">Full day - billed at the Rate Master's Daily Rate.</div>
                   )}
                 </div>
 
@@ -448,7 +448,7 @@ export default function PoOrders() {
                         </>
                       )
                     ) : (
-                      <span className="text-red-600 font-semibold flex items-center gap-1.5"><AlertTriangle className="w-4 h-4" />RATE NOT FOUND — no Rate Master entry for this vehicle's type/ton{entRateType === 'Daily' ? ' (Daily Rate)' : ''}. Add it to Rate Master before adding this working day.</span>
+                      <span className="text-red-600 font-semibold flex items-center gap-1.5"><AlertTriangle className="w-4 h-4" />RATE NOT FOUND - no Rate Master entry for this vehicle's type/ton{entRateType === 'Daily' ? ' (Daily Rate)' : ''}. Add it to Rate Master before adding this working day.</span>
                     )}
                   </div>
                 )}
@@ -479,7 +479,7 @@ export default function PoOrders() {
                       <tr><td colSpan={18} className="py-10 text-center text-slate-400">No working days added to this PO yet.</td></tr>
                     ) : records.map((r, idx) => {
                       const isFullDay = r.rate_type === 'Daily';
-                      const na = <span className="text-slate-300">—</span>;
+                      const na = <span className="text-slate-300">-</span>;
                       return (
                         <tr key={r.id} className={idx % 2 ? 'bg-slate-50' : 'bg-white'}>
                           <td className="border border-slate-100 px-2 py-1.5 text-center tabular-nums">{idx + 1}</td>
@@ -495,8 +495,8 @@ export default function PoOrders() {
                           <td className="border border-slate-100 px-2 py-1.5 text-right tabular-nums">{isFullDay ? na : (r.first_hour_amount != null ? formatCurrency(r.first_hour_amount) : na)}</td>
                           <td className="border border-slate-100 px-2 py-1.5 text-right tabular-nums">{isFullDay ? na : (r.second_hour_amount != null ? formatCurrency(r.second_hour_amount) : na)}</td>
                           <td className="border border-slate-100 px-2 py-1.5 text-right tabular-nums font-semibold">{r.subtotal != null ? formatCurrency(r.subtotal) : na}</td>
-                          <td className="border border-slate-100 px-2 py-1.5 text-center whitespace-nowrap text-slate-600">{activePoOrder?.invoice_number || <span className="text-slate-300">—</span>}</td>
-                          <td className="border border-slate-100 px-2 py-1.5 text-center whitespace-nowrap text-slate-600">{activePoOrder?.bill_date ? formatDate(activePoOrder.bill_date) : <span className="text-slate-300">—</span>}</td>
+                          <td className="border border-slate-100 px-2 py-1.5 text-center whitespace-nowrap text-slate-600">{activePoOrder?.invoice_number || <span className="text-slate-300">-</span>}</td>
+                          <td className="border border-slate-100 px-2 py-1.5 text-center whitespace-nowrap text-slate-600">{activePoOrder?.bill_date ? formatDate(activePoOrder.bill_date) : <span className="text-slate-300">-</span>}</td>
                           <td className="border border-slate-100 px-2 py-1.5 text-right tabular-nums">{r.gst_amount != null ? formatCurrency(r.gst_amount) : na}</td>
                           <td className="border border-slate-100 px-2 py-1.5 text-right tabular-nums font-bold">{r.total_amount != null ? formatCurrency(r.total_amount) : na}</td>
                           <td className="border border-slate-100 px-2 py-1.5 text-center">

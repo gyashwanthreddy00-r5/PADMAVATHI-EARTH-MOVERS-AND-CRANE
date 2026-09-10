@@ -9,7 +9,7 @@ import { DatePicker } from '@/components/ui/DatePicker';
 import { Plus, Pencil, Trash2, FileText } from 'lucide-react';
 import { formatCurrency, formatDate, todayISO, amountInWords, vehicleTypeLabel } from '@/lib/utils';
 import { calculateDiscount, validateDiscountPercentage } from '@/lib/discountCalc';
-import type { MonthlyContract, ContractStatus, Vehicle, InvoiceSettings, InvoiceStatus } from '@/types';
+import type { MonthlyContract, ContractStatus, Vehicle, InvoiceSettings, InvoiceStatus, Customer } from '@/types';
 
 function isContractActive(c: MonthlyContract, asOf?: string): boolean {
   if (c.status !== 'Active') return false;
@@ -17,6 +17,28 @@ function isContractActive(c: MonthlyContract, asOf?: string): boolean {
   if (c.start_date > ref) return false;
   if (c.end_date && c.end_date < ref) return false;
   return true;
+}
+
+/** First day of the month containing dateISO, e.g. '2026-09-15' -> '2026-09-01'. Used as
+ * the billing-period key that ties one generated invoice to one (contract, month). */
+function monthStartISO(dateISO: string): string {
+  const d = new Date(dateISO + 'T00:00:00');
+  return new Date(d.getFullYear(), d.getMonth(), 1).toISOString().split('T')[0];
+}
+
+function monthYearLabel(monthStart: string): string {
+  const d = new Date(monthStart + 'T00:00:00');
+  return d.toLocaleDateString('en-IN', { month: 'long', year: 'numeric' });
+}
+
+/** Lightweight shape of an existing Monthly Contract invoice — just enough to detect
+ * "this contract already has a non-cancelled invoice for this billing month." */
+interface ContractInvoiceLite {
+  id: string;
+  contract_id: string | null;
+  billing_period_month: string | null;
+  invoice_number: string | null;
+  is_cancelled: boolean;
 }
 
 function dateRangesOverlap(aStart: string, aEnd: string | null, bStart: string, bEnd: string | null): boolean {
@@ -34,6 +56,10 @@ export default function Contracts() {
   const [contracts, setContracts] = useState<MonthlyContract[]>([]);
   const [vehicles, setVehicles] = useState<Vehicle[]>([]);
   const [invoiceSettings, setInvoiceSettings] = useState<InvoiceSettings | null>(null);
+  // Every existing Monthly Contract invoice (any contract, any period) — used to detect
+  // "already invoiced for this billing period" both for the list's info badge and to
+  // block Generate Invoice before it's even attempted.
+  const [contractInvoices, setContractInvoices] = useState<ContractInvoiceLite[]>([]);
   const [loading, setLoading] = useState(true);
   const [modalOpen, setModalOpen] = useState(false);
   const [editing, setEditing] = useState<MonthlyContract | null>(null);
@@ -59,14 +85,16 @@ export default function Contracts() {
 
   const fetchAll = async () => {
     setLoading(true);
-    const [cRes, vRes, isRes] = await Promise.all([
+    const [cRes, vRes, isRes, ciRes] = await Promise.all([
       supabase.from('monthly_contracts').select('*').order('created_at', { ascending: false }),
       supabase.from('vehicles').select('id, registration_number, model, type, capacity, tons, active, status').order('registration_number'),
       supabase.from('invoice_settings').select('*').limit(1).maybeSingle(),
+      supabase.from('invoices').select('id, contract_id, billing_period_month, invoice_number, is_cancelled').eq('invoice_type', 'MONTHLY_CONTRACT'),
     ]);
     setContracts((cRes.data ?? []) as MonthlyContract[]);
     setVehicles((vRes.data ?? []) as Vehicle[]);
     setInvoiceSettings(isRes.data as InvoiceSettings | null);
+    setContractInvoices((ciRes.data ?? []) as ContractInvoiceLite[]);
     setLoading(false);
   };
 
@@ -81,6 +109,10 @@ export default function Contracts() {
     });
     return ids;
   }, [contracts]);
+
+  /** The existing non-cancelled invoice for (contractId, monthStart), if any. */
+  const existingInvoiceFor = (contractId: string, monthStart: string): ContractInvoiceLite | null =>
+    contractInvoices.find(inv => inv.contract_id === contractId && inv.billing_period_month === monthStart && !inv.is_cancelled) ?? null;
 
   const vehicleLabel = (id: string | null) => vehicles.find(v => v.id === id)?.registration_number ?? '-';
   const vehicleById = (id: string | null) => vehicles.find(v => v.id === id) ?? null;
@@ -166,12 +198,31 @@ export default function Contracts() {
         show('Discount is ON but percentage is empty. Please enter a discount percentage or turn discount OFF.', 'error'); return;
       }
     }
+    const billingPeriodMonth = monthStartISO(invoiceForm.invoice_date);
+    // Client-side guard, re-checked right before insert (not just when the modal opened)
+    // — the real, unbypassable guarantee is the database's partial unique index on
+    // (contract_id, billing_period_month), whose violation is handled below.
+    const already = existingInvoiceFor(invoiceModal.id, billingPeriodMonth);
+    if (already) {
+      show(`An invoice (${already.invoice_number ?? already.id}) has already been generated for ${monthYearLabel(billingPeriodMonth)}.`, 'error');
+      return;
+    }
     setGenerating(true);
     try {
       const { data: invNum, error: numErr } = await supabase.rpc('next_pcs_invoice_number', {
         p_invoice_date: invoiceForm.invoice_date,
       });
       if (numErr || !invNum) throw new Error('Failed to generate invoice number');
+
+      // Best-effort link to an existing Customer of the same name, so this invoice
+      // participates in that customer's Customer Statement exactly like any other
+      // invoice — reusing the existing customers table rather than adding a new
+      // customer-selection field to the contract itself. If no matching customer
+      // exists, customer_id stays null, same as it always has (e.g. Cash/UPI bills
+      // already behave this way and are simply not attributable to a statement).
+      const { data: matchedCustomers } = await supabase
+        .from('customers').select('*').ilike('name', invoiceModal.company_name.trim()).limit(1);
+      const matchedCustomer = ((matchedCustomers ?? [])[0] as Customer | undefined) ?? null;
 
       const now = new Date();
       const fy = now.getMonth() >= 3
@@ -196,10 +247,14 @@ export default function Contracts() {
         invoice_number: invNum,
         invoice_date: invoiceForm.invoice_date,
         invoice_type: 'MONTHLY_CONTRACT' as const,
-        customer_id: null,
+        contract_id: invoiceModal.id,
+        billing_period_month: billingPeriodMonth,
+        customer_id: matchedCustomer?.id ?? null,
         customer_name: invoiceModal.company_name,
-        customer_address: invoiceModal.address ?? null,
-        customer_gstin: null,
+        customer_address: matchedCustomer?.address ?? invoiceModal.address ?? null,
+        customer_gstin: matchedCustomer?.gstin ?? null,
+        customer_email: matchedCustomer?.email ?? null,
+        customer_phone: matchedCustomer?.phone ?? null,
         trip_id: null,
         trip_date: null,
         vehicle_id: invoiceModal.vehicle_id ?? null,
@@ -210,7 +265,7 @@ export default function Contracts() {
         closing_hour_meter: null,
         total_hours: null,
         rate_type: 'Monthly',
-        description: `Monthly Full-Time Contract — ${invoiceModal.company_name} (${formatDate(invoiceModal.start_date)} to ${invoiceModal.end_date ? formatDate(invoiceModal.end_date) : 'Ongoing'})`,
+        description: `Monthly Full-Time Contract - ${invoiceModal.company_name} (${formatDate(invoiceModal.start_date)} to ${invoiceModal.end_date ? formatDate(invoiceModal.end_date) : 'Ongoing'})`,
         hours: null,
         rate: monthlyAmount,
         taxable_amount: monthlyAmount,
@@ -231,10 +286,10 @@ export default function Contracts() {
         payment_mode: null,
         financial_year: fy,
         consignee_name: invoiceModal.company_name,
-        consignee_address: invoiceModal.address ?? null,
-        consignee_gstin: null,
-        consignee_state: null,
-        consignee_state_code: null,
+        consignee_address: matchedCustomer?.address ?? invoiceModal.address ?? null,
+        consignee_gstin: matchedCustomer?.gstin ?? null,
+        consignee_state: matchedCustomer?.state ?? null,
+        consignee_state_code: matchedCustomer?.state_code ?? null,
         destination: null,
         motor_vehicle_numbers: veh?.registration_number ?? null,
         terms_of_payment: invoiceSettings?.default_payment_terms ?? '30 days',
@@ -253,7 +308,15 @@ export default function Contracts() {
 
       const { data: invData, error: invErr } = await supabase
         .from('invoices').insert(invoicePayload).select('id').single();
-      if (invErr) throw new Error(invErr.message);
+      if (invErr) {
+        // 23505 = unique_violation — the database-level guarantee (the partial unique
+        // index on contract_id + billing_period_month) catching a duplicate that slipped
+        // past the client-side check above, e.g. a second tab/request for the same period.
+        if (invErr.code === '23505') {
+          throw new Error(`An invoice for this contract and billing period (${monthYearLabel(billingPeriodMonth)}) has already been generated.`);
+        }
+        throw new Error(invErr.message);
+      }
       const invoiceId = invData.id;
 
       const typeLabel = veh ? vehicleTypeLabel(veh.type, veh.tons ?? veh.capacity) : 'Vehicle';
@@ -261,7 +324,7 @@ export default function Contracts() {
         invoice_id: invoiceId,
         trip_entry_id: null,
         sl_no: 1,
-        description: `${typeLabel} Monthly Rental — ${invoiceModal.company_name} (${formatDate(invoiceModal.start_date)} to ${invoiceModal.end_date ? formatDate(invoiceModal.end_date) : 'Ongoing'})`,
+        description: `${typeLabel} Monthly Rental - ${invoiceModal.company_name} (${formatDate(invoiceModal.start_date)} to ${invoiceModal.end_date ? formatDate(invoiceModal.end_date) : 'Ongoing'})`,
         hsn_sac: invoiceSettings?.hsn_sac || '997319',
         quantity: 1,
         rate: monthlyAmount,
@@ -301,19 +364,34 @@ export default function Contracts() {
     { key: 'status', header: t('status'), render: c => <StatusBadge status={c.status} /> },
     {
       key: 'actions', header: t('actions'), align: 'center',
-      render: c => (
-        <div className="flex justify-center gap-1">
-          {isContractActive(c) && (
-            <button onClick={() => setInvoiceModal(c)} className="p-1.5 text-slate-500 hover:text-blue-600 hover:bg-blue-50 rounded-md" title="Create Invoice">
-              <FileText className="w-4 h-4" />
-            </button>
-          )}
-          <button onClick={() => openEdit(c)} className="p-1.5 text-slate-500 hover:text-blue-600 hover:bg-blue-50 rounded-md"><Pencil className="w-4 h-4" /></button>
-          <button onClick={() => setDeleteId(c.id)} className="p-1.5 text-slate-500 hover:text-red-600 hover:bg-red-50 rounded-md"><Trash2 className="w-4 h-4" /></button>
-        </div>
-      ),
+      render: c => {
+        // Informational only — shows whether THIS month has already been billed, but
+        // never blocks the button: a future billing period must still be able to
+        // generate its own invoice (Create Invoice lets the user pick any Invoice Date,
+        // and generateContractInvoice/the DB guard against re-billing whichever period
+        // is actually selected).
+        const currentMonthInvoice = existingInvoiceFor(c.id, monthStartISO(today));
+        return (
+          <div className="flex items-center justify-center gap-1">
+            {currentMonthInvoice && <StatusBadge status="Invoiced" />}
+            {isContractActive(c) && (
+              <button onClick={() => setInvoiceModal(c)} className="p-1.5 text-slate-500 hover:text-blue-600 hover:bg-blue-50 rounded-md" title="Create Invoice">
+                <FileText className="w-4 h-4" />
+              </button>
+            )}
+            <button onClick={() => openEdit(c)} className="p-1.5 text-slate-500 hover:text-blue-600 hover:bg-blue-50 rounded-md"><Pencil className="w-4 h-4" /></button>
+            <button onClick={() => setDeleteId(c.id)} className="p-1.5 text-slate-500 hover:text-red-600 hover:bg-red-50 rounded-md"><Trash2 className="w-4 h-4" /></button>
+          </div>
+        );
+      },
     },
   ];
+
+  // Derived from the invoice modal's own Invoice Date field — the same value
+  // generateContractInvoice will use, so what's shown here always matches what Generate
+  // Invoice is about to do.
+  const modalBillingPeriod = invoiceModal ? monthStartISO(invoiceForm.invoice_date) : null;
+  const modalPeriodAlreadyInvoiced = invoiceModal && modalBillingPeriod ? existingInvoiceFor(invoiceModal.id, modalBillingPeriod) : null;
 
   if (loading) return <LoadingSpinner />;
 
@@ -343,7 +421,7 @@ export default function Contracts() {
                 const isBooked = bookedVehicleIds.has(v.id) && (!editing || v.id !== editing.vehicle_id);
                 return (
                   <option key={v.id} value={v.id} disabled={isBooked}>
-                    {v.registration_number} ({v.type}){isBooked ? ' — Booked (Under Monthly Contract)' : ''}
+                    {v.registration_number} ({v.type}){isBooked ? ' - Booked (Under Monthly Contract)' : ''}
                   </option>
                 );
               })}
@@ -386,7 +464,7 @@ export default function Contracts() {
         footer={
           <>
             <Button variant="secondary" onClick={() => setInvoiceModal(null)}>{t('cancel')}</Button>
-            <Button onClick={generateContractInvoice} disabled={generating}>
+            <Button onClick={generateContractInvoice} disabled={generating || !!modalPeriodAlreadyInvoiced}>
               {generating ? 'Generating...' : <><FileText className="w-4 h-4" />{t('generateInvoice')}</>}
             </Button>
           </>
@@ -397,9 +475,17 @@ export default function Contracts() {
             <div className="p-4 bg-slate-50 rounded-lg border border-slate-200 text-sm space-y-1">
               <div className="flex justify-between"><span className="text-slate-500">Company:</span><span className="font-medium">{invoiceModal.company_name}</span></div>
               <div className="flex justify-between"><span className="text-slate-500">Vehicle:</span><span className="font-medium">{vehicleLabel(invoiceModal.vehicle_id)}</span></div>
-              <div className="flex justify-between"><span className="text-slate-500">Period:</span><span className="font-medium">{formatDate(invoiceModal.start_date)} — {invoiceModal.end_date ? formatDate(invoiceModal.end_date) : 'Ongoing'}</span></div>
+              <div className="flex justify-between"><span className="text-slate-500">Period:</span><span className="font-medium">{formatDate(invoiceModal.start_date)} - {invoiceModal.end_date ? formatDate(invoiceModal.end_date) : 'Ongoing'}</span></div>
               <div className="flex justify-between"><span className="text-slate-500">Monthly Amount:</span><span className="font-bold text-slate-900">{formatCurrency(invoiceModal.total_monthly_amount)}</span></div>
+              {modalBillingPeriod && (
+                <div className="flex justify-between"><span className="text-slate-500">Billing Period:</span><span className="font-bold text-slate-900">{monthYearLabel(modalBillingPeriod)}</span></div>
+              )}
             </div>
+            {modalPeriodAlreadyInvoiced && (
+              <div className="p-3 bg-amber-50 border border-amber-200 rounded-lg text-sm text-amber-800">
+                An invoice ({modalPeriodAlreadyInvoiced.invoice_number ?? modalPeriodAlreadyInvoiced.id}) has already been generated for {modalBillingPeriod ? monthYearLabel(modalBillingPeriod) : 'this period'}. Pick a different Invoice Date (a different billing month) to generate another invoice.
+              </div>
+            )}
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <Field label={t('invoiceDate')} required>
                 <DatePicker value={invoiceForm.invoice_date} onChange={v => setInvoiceForm(f => ({ ...f, invoice_date: v }))} />

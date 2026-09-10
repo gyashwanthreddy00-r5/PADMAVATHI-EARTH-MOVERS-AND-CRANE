@@ -222,7 +222,7 @@ export function calcLineAmount(line: LineCalcInput): number {
     return round2(Number(line.rate) * qty + batha);
   }
 
-  // Hourly — same engine as Trip Entry
+  // Hourly - same engine as Trip Entry
   const totalMinutes = qty * 60;
   let calcAmount = calcSessionAmount(totalMinutes, r1, r2, dailyRate);
 
@@ -397,7 +397,7 @@ function buildCalculationBreakdown(
   // Hourly: show per-session breakdown
   sessions.forEach(s => {
     if (s.duration_minutes > 0) {
-      parts.push(`Session ${s.session_number}: ${formatDuration(s.duration_hours)} — ${s.session_breakdown}`);
+      parts.push(`Session ${s.session_number}: ${formatDuration(s.duration_hours)} - ${s.session_breakdown}`);
     }
   });
   parts.push(`Total Rental Amount = ${formatCurrency(rentalAmount)}`);

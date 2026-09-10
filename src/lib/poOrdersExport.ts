@@ -9,9 +9,9 @@ export interface PoExportContext {
   companyGstin?: string | null;
   customerName: string;
   poNumber: string;
-  /** PO-level — applied to every row in the export, not stored per working record. */
+  /** PO-level - applied to every row in the export, not stored per working record. */
   invoiceNumber?: string | null;
-  /** PO-level — applied to every row in the export, not stored per working record. */
+  /** PO-level - applied to every row in the export, not stored per working record. */
   billDate?: string | null;
 }
 
@@ -64,7 +64,7 @@ export function printPoWorkingData(ctx: PoExportContext, records: PoWorkingRecor
   const rowsHtml = records.map((r, idx) => `<tr>${rowCells(r, idx, ctx).map(c => `<td>${c}</td>`).join('')}</tr>`).join('');
 
   win.document.write(`<!doctype html>
-<html><head><title>${ctx.poNumber} — Working Day Billing</title>
+<html><head><title>${ctx.poNumber} - Working Day Billing</title>
 <style>
   * { box-sizing: border-box; }
   body { font-family: Arial, Helvetica, sans-serif; padding: 24px; color: #111; }

@@ -180,7 +180,7 @@ function computeVehicle(iv: InvoiceVehicle & { sessions?: InvoiceVehicleSession[
   const hoursStr = Number(iv.total_hours) > 0 ? formatDuration(Number(iv.total_hours)) : '';
   const sessionCount = sessions.length > 1 ? `${sessions.length} Sessions` : '';
   const metaStr = [dateStr, vehicleStr, hoursStr, sessionCount].filter(Boolean).join(' | ');
-  const description = `${typeLabel}${metaStr ? ' — ' + metaStr : ''}`;
+  const description = `${typeLabel}${metaStr ? ' - ' + metaStr : ''}`;
 
   // Build calculation details
   const calcParts: string[] = [];
@@ -191,7 +191,7 @@ function computeVehicle(iv: InvoiceVehicle & { sessions?: InvoiceVehicleSession[
       }
     });
   } else {
-    // No sessions stored — compute from total_hours
+    // No sessions stored - compute from total_hours
     if (rateType === 'Daily') {
       calcParts.push(`Full Day Amt = ${formatCurrency(dRate || baseRental)}`);
     } else if (rateType === 'Monthly') {

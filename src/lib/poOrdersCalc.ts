@@ -24,13 +24,13 @@ const GST_RATE = 0.18;
 /**
  * Compute one working-day row's full billing breakdown, using a Rate Master
  * record already resolved via `findRateMasterForVehicle`
- * (src/lib/rateLookup.ts) — PO Orders has no rate table of its own, it reuses
+ * (src/lib/rateLookup.ts) - PO Orders has no rate table of its own, it reuses
  * the same Rate Master as Trips/Invoices.
  *
  * - `Daily` ("Full Day" in the UI): bills at the Rate Master's flat
  *   daily_rate. First/Second Hour Rate and Amt are not applicable (null).
  * - `Hourly`: first hour at first_hour_rate; every whole hour after that at
- *   second_hour_rate; remaining minutes at second_hour_rate/60 — the same
+ *   second_hour_rate; remaining minutes at second_hour_rate/60 - the same
  *   engine Trips/Invoices already use (calcSessionAmount).
  *
  * GST 18% is computed per row (on that row's own subtotal) and also sums

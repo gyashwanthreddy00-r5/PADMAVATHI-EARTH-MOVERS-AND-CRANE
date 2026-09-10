@@ -15,8 +15,8 @@ function round2(n: number): number {
   return Math.round(n * 100) / 100;
 }
 
-// Vehicle.capacity is stored inconsistently across records — some already include a
-// "Ton" suffix, some don't — so strip it first and re-append once, rather than assuming
+// Vehicle.capacity is stored inconsistently across records - some already include a
+// "Ton" suffix, some don't - so strip it first and re-append once, rather than assuming
 // either way and risking "11 Ton Ton".
 function formatTons(capacity: string | null | undefined): string {
   if (!capacity) return '';
@@ -26,7 +26,7 @@ function formatTons(capacity: string | null | undefined): string {
 
 interface Props {
   /** Fires on every change with the current bill data, or null while the entry isn't
-   * complete/valid yet (no vehicle picked, no rate found, zero duration, etc.) — the
+   * complete/valid yet (no vehicle picked, no rate found, zero duration, etc.) - the
    * parent (CashBills.tsx) uses this to enable/disable its own Save Bill button and,
    * on click, passes the last non-null value straight into the existing save() pipeline. */
   onChange: (data: MultiVehicleTripFormData | null) => void;
@@ -34,10 +34,10 @@ interface Props {
 
 /**
  * Fast, single-vehicle Cash/UPI billing entry: pick a vehicle (Ton/Type auto-fill from
- * Vehicle Master), pick Full Day or Hourly, and — for Hourly — type Hours/Minutes
+ * Vehicle Master), pick Full Day or Hourly, and - for Hourly - type Hours/Minutes
  * directly instead of in/out times. Rate Master lookup, the hourly first/second-hour
  * calculation, and Batha auto-fill all reuse the same engine as the rest of the app
- * (rateLookup.ts + rentalCalc.calcSessionAmount) — nothing here re-derives billing math.
+ * (rateLookup.ts + rentalCalc.calcSessionAmount) - nothing here re-derives billing math.
  */
 export function SimpleCashBillForm({ onChange }: Props) {
   const [loading, setLoading] = useState(true);
@@ -49,6 +49,9 @@ export function SimpleCashBillForm({ onChange }: Props) {
   const [rateType, setRateType] = useState<SimpleRateType>('Hourly');
   const [hours, setHours] = useState('');
   const [minutes, setMinutes] = useState('');
+  // Full Day only — number of full days billed. Whole numbers only (no existing Cash/UPI
+  // calculation supports fractional days), minimum 1, default 1. Not used for Hourly.
+  const [days, setDays] = useState('1');
   const [batha, setBatha] = useState(0);
   const [bathaTouched, setBathaTouched] = useState(false);
 
@@ -71,7 +74,7 @@ export function SimpleCashBillForm({ onChange }: Props) {
   );
 
   // Batha auto-fills from the applicable Rate Master record whenever the vehicle/date
-  // context changes — but only while the user hasn't edited it themselves. Once edited,
+  // context changes - but only while the user hasn't edited it themselves. Once edited,
   // it's "pinned" (bathaTouched) so it's never silently overwritten by a re-render.
   useEffect(() => {
     if (!bathaTouched) setBatha(Number(rateMaster?.batha) || 0);
@@ -87,12 +90,17 @@ export function SimpleCashBillForm({ onChange }: Props) {
   const r1 = Number(rateMaster?.first_hour_rate) || 0;
   const r2 = Number(rateMaster?.second_hour_rate) || 0;
   const dailyRate = Number(rateMaster?.daily_rate) || 0;
+  // Full Day only — Hourly's own duration/rate math (calcSessionAmount below) is
+  // completely unaffected by Number of Days.
+  const daysNum = rateType === 'Daily' ? Math.max(1, Math.floor(Number(days) || 1)) : 1;
 
-  // Same low-level engine used everywhere else in the app: 1st hour at r1, every
-  // subsequent full hour at r2, remaining minutes prorated at r2/60. Never re-derived
   // here — this is the one calculation source, reused as-is.
-  const rentalAmount = !rateMaster ? 0 : rateType === 'Daily' ? dailyRate : calcSessionAmount(totalMinutes, r1, r2, 0);
-  const totalAmount = round2(rentalAmount + (Number(batha) || 0));
+  // Full Day: Rental = Full Day Rate x Number of Days (at Days = 1 this is identical to
+  // the previous flat-rate behavior). Batha scales the same way for Full Day; Hourly's
+  // Batha stays the single flat amount it always was.
+  const rentalAmount = !rateMaster ? 0 : rateType === 'Daily' ? round2(dailyRate * daysNum) : calcSessionAmount(totalMinutes, r1, r2, 0);
+  const bathaAmount = rateType === 'Daily' ? round2((Number(batha) || 0) * daysNum) : (Number(batha) || 0);
+  const totalAmount = round2(rentalAmount + bathaAmount);
 
   const isReady = !!selectedVehicle && !!rateMaster && (rateType === 'Daily' || totalMinutes > 0);
 
@@ -110,7 +118,7 @@ export function SimpleCashBillForm({ onChange }: Props) {
       rate_type: rateType,
       tons: selectedVehicle.capacity ?? '',
       sessions: [],
-      batha: Number(batha) || 0,
+      batha: bathaAmount,
       total_hours: rateType === 'Hourly' ? round2(totalMinutes / 60) : 0,
       rental_amount: rentalAmount,
       total_amount: totalAmount,
@@ -139,12 +147,12 @@ export function SimpleCashBillForm({ onChange }: Props) {
       remarks: null,
       total_hours: vehicleEntry.total_hours,
       total_amount: totalAmount,
-      total_batha: Number(batha) || 0,
+      total_batha: bathaAmount,
       total_rental: rentalAmount,
     };
     onChange(data);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isReady, selectedVehicle, rateMaster, rateType, totalMinutes, batha, workingDate, rentalAmount, totalAmount]);
+  }, [isReady, selectedVehicle, rateMaster, rateType, totalMinutes, daysNum, batha, bathaAmount, workingDate, rentalAmount, totalAmount]);
 
   if (loading) return <LoadingSpinner />;
 
@@ -166,16 +174,16 @@ export function SimpleCashBillForm({ onChange }: Props) {
               searchPlaceholder="Search vehicle number..."
               options={vehicles.map(v => ({
                 value: v.id,
-                label: `${v.registration_number} — ${v.type}${v.capacity ? ' ' + formatTons(v.capacity) : ''}`,
+                label: `${v.registration_number} - ${v.type}${v.capacity ? ' ' + formatTons(v.capacity) : ''}`,
                 searchText: v.registration_number,
               }))}
             />
           </Field>
           <Field label="Ton">
-            <div className={autoFieldClass}>{formatTons(selectedVehicle?.capacity) || '—'}</div>
+            <div className={autoFieldClass}>{formatTons(selectedVehicle?.capacity) || '-'}</div>
           </Field>
           <Field label="Type">
-            <div className={autoFieldClass}>{selectedVehicle?.type ?? '—'}</div>
+            <div className={autoFieldClass}>{selectedVehicle?.type ?? '-'}</div>
           </Field>
         </div>
       </div>
@@ -211,7 +219,7 @@ export function SimpleCashBillForm({ onChange }: Props) {
               <input type="number" min="0" max="59" className={inputClass()} value={minutes} onChange={e => setMinutes(Math.min(59, Math.max(0, Number(e.target.value) || 0)).toString())} placeholder="0" />
             </Field>
             <Field label="Rate (1st Hr / 2nd Hr)">
-              <div className={autoFieldClass}>{rateMaster ? `${formatNumber(r1)} / ${formatNumber(r2)}` : '—'}</div>
+              <div className={autoFieldClass}>{rateMaster ? `${formatNumber(r1)} / ${formatNumber(r2)}` : '-'}</div>
             </Field>
             <Field label="Batha">
               <input type="number" min="0" step="0.01" className={inputClass()} value={batha} onChange={e => { setBatha(e.target.value === '' ? 0 : Number(e.target.value)); setBathaTouched(true); }} />
@@ -219,8 +227,11 @@ export function SimpleCashBillForm({ onChange }: Props) {
           </div>
         ) : (
           <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+            <Field label="Number of Days" required>
+              <input type="number" min="1" step="1" className={inputClass()} value={days} onChange={e => setDays(Math.max(1, Math.floor(Number(e.target.value) || 1)).toString())} placeholder="1" />
+            </Field>
             <Field label="Full Day Rate">
-              <div className={autoFieldClass}>{rateMaster ? formatCurrency(dailyRate) : '—'}</div>
+              <div className={autoFieldClass}>{rateMaster ? formatCurrency(dailyRate) : '-'}</div>
             </Field>
             <Field label="Batha">
               <input type="number" min="0" step="0.01" className={inputClass()} value={batha} onChange={e => { setBatha(e.target.value === '' ? 0 : Number(e.target.value)); setBathaTouched(true); }} />
@@ -231,8 +242,9 @@ export function SimpleCashBillForm({ onChange }: Props) {
         {isReady && (
           <div className="mt-3 flex flex-wrap items-center gap-4 p-3 bg-blue-50 rounded-lg text-sm">
             {rateType === 'Hourly' && <span className="text-slate-500">Duration: <b className="text-slate-800">{formatDuration(totalMinutes / 60)}</b></span>}
+            {rateType === 'Daily' && <span className="text-slate-500">Days: <b className="text-slate-800">{daysNum}</b></span>}
             <span className="text-slate-500">Rental: <b className="text-slate-800">{formatCurrency(rentalAmount)}</b></span>
-            <span className="text-slate-500">Batha: <b className="text-slate-800">{formatCurrency(Number(batha) || 0)}</b></span>
+            <span className="text-slate-500">Batha: <b className="text-slate-800">{formatCurrency(bathaAmount)}</b></span>
             <span className="ml-auto font-bold text-blue-700 text-base">{formatCurrency(totalAmount)}</span>
           </div>
         )}

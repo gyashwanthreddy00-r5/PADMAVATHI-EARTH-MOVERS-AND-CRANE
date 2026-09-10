@@ -444,7 +444,7 @@ export default function Trips() {
                 <option value="">Select Vehicle</option>
                 {filteredVehicles.map(v => {
                   const isBooked = bookedVehicleIds.has(v.id) && (!editing || editing.vehicle_id !== v.id);
-                  return <option key={v.id} value={v.id} disabled={isBooked}>{v.registration_number}{isBooked ? ' — Booked (Monthly Contract)' : ''}</option>;
+                  return <option key={v.id} value={v.id} disabled={isBooked}>{v.registration_number}{isBooked ? ' - Booked (Monthly Contract)' : ''}</option>;
                 })}
               </select>
             )}
