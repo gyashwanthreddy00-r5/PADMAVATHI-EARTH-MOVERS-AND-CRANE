@@ -35,7 +35,6 @@ import RolePagesManagement from '@/pages/RolePagesManagement';
 import Quotations from '@/pages/Quotations';
 import PoOrders from '@/pages/PoOrders';
 import Purchase from '@/pages/Purchase';
-import BalanceReminders from '@/pages/BalanceReminders';
 
 function AppContent() {
   const { session, profile, loading, allowedPages, isAdmin, isOwner } = useAuth();
@@ -111,7 +110,6 @@ function AppContent() {
       case '/quotations': return <Quotations />;
       case '/po-orders': return <PoOrders />;
       case '/settlement-report': return <SettlementReport />;
-      case '/balance-reminders': return <BalanceReminders />;
       case '/reports/cash-payment': return <CashPaymentReport />;
       case '/settings': return <SettingsPage />;
       case '/settings/maintenance-types': return <MaintenanceTypes />;

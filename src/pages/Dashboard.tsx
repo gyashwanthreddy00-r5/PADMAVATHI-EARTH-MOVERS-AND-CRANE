@@ -10,13 +10,15 @@ import {
   Truck, Wrench, Fuel, IndianRupee,
   CreditCard, AlertCircle, Calendar, FileText, AlertTriangle, Eye,
   RefreshCw, Download, X, ArrowRight, CalendarClock,
-  ShieldCheck, ClipboardCheck, TrendingUp, Activity,
+  ShieldCheck, ClipboardCheck, TrendingUp, Activity, ShoppingCart,
 } from 'lucide-react';
 import type {
   Vehicle, TripWithRelations, DieselWithRelations, MaintenanceWithRelations,
   EmiWithRelations, MonthlyContract, Customer, Employee, InvoiceWithRelations,
-  Quotation, InvoicePayment,
+  Quotation, InvoicePayment, Purchase, Vendor,
 } from '@/types';
+
+type PurchaseWithVendor = Purchase & { vendor?: Pick<Vendor, 'id' | 'name'> | null };
 
 type DateRangeKey = 'today' | 'week' | 'month' | 'year' | 'custom';
 
@@ -36,6 +38,7 @@ interface DashboardData {
   allTrips: TripWithRelations[];
   quotations: Quotation[];
   allPayments: (InvoicePayment & { invoice?: { invoice_number: string; customer_name: string | null; customer_id: string | null } })[];
+  recentPurchases: PurchaseWithVendor[];
 }
 
 function getRangeDates(range: DateRangeKey, customStart?: string, customEnd?: string): { start: string; end: string; prevStart: string; prevEnd: string } {
@@ -146,7 +149,7 @@ export default function Dashboard({ onNavigate }: { onNavigate: (path: string) =
   const fetchDashboard = useCallback(async () => {
     const { start, end, prevStart, prevEnd } = getRangeDates(dateRange, customStart, customEnd);
 
-    const [vRes, cRes, eRes, pRes, ppRes, pdRes, adRes, pmRes, amRes, invRes, custRes, empRes, atRes, qRes, payRes] = await Promise.all([
+    const [vRes, cRes, eRes, pRes, ppRes, pdRes, adRes, pmRes, amRes, invRes, custRes, empRes, atRes, qRes, payRes, purRes] = await Promise.all([
       supabase.from('vehicles').select('*'),
       supabase.from('monthly_contracts').select('*'),
       supabase.from('emi_records').select('*, vehicle:vehicles(id,registration_number,model)'),
@@ -162,6 +165,9 @@ export default function Dashboard({ onNavigate }: { onNavigate: (path: string) =
       supabase.from('trips').select('*, vehicle:vehicles(id,registration_number,model,type), driver:employees(id,name,role), customer:customers(id,name)').gte('trip_date', start).lte('trip_date', end).eq('is_cancelled', false),
       supabase.from('quotations').select('*').order('created_at', { ascending: false }),
       supabase.from('invoice_payments').select('*, invoice:invoices(id,invoice_number,customer_name,customer_id)').gte('payment_date', start).lte('payment_date', end).order('payment_date', { ascending: false }).limit(20),
+      // Recent Purchases — latest 5 overall (not limited to the dashboard's selected date
+      // range), same existing purchases/vendors data the Purchase page itself reads.
+      supabase.from('purchases').select('*, vendor:vendors(id,name)').order('purchase_date', { ascending: false }).order('created_at', { ascending: false }).limit(5),
     ]);
 
     setData({
@@ -180,6 +186,7 @@ export default function Dashboard({ onNavigate }: { onNavigate: (path: string) =
       allTrips: (atRes.data ?? []) as TripWithRelations[],
       quotations: (qRes.data ?? []) as Quotation[],
       allPayments: (payRes.data ?? []) as (InvoicePayment & { invoice?: { invoice_number: string; customer_name: string | null; customer_id: string | null } })[],
+      recentPurchases: (purRes.data ?? []) as PurchaseWithVendor[],
     });
     setLoading(false);
     setRefreshing(false);
@@ -199,6 +206,7 @@ export default function Dashboard({ onNavigate }: { onNavigate: (path: string) =
       .on('postgres_changes', { event: '*', schema: 'public', table: 'invoices' }, fetchDashboard)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'quotations' }, fetchDashboard)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'invoice_payments' }, fetchDashboard)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'purchases' }, fetchDashboard)
       .subscribe();
     return () => { supabase.removeChannel(channel); };
   }, [fetchDashboard]);
@@ -594,6 +602,58 @@ export default function Dashboard({ onNavigate }: { onNavigate: (path: string) =
             </div>
           )}
         </div>
+      </div>
+
+      {/* Recent Purchases — reuses the existing purchases/vendors data from the Purchase
+          module (src/pages/Purchase.tsx); no new data source or calculation. */}
+      <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
+        <div className="px-4 py-2.5 border-b border-slate-100 flex items-center justify-between bg-gradient-to-r from-purple-50/60 to-transparent">
+          <div className="flex items-center gap-2">
+            <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-purple-50 to-indigo-50 flex items-center justify-center flex-shrink-0">
+              <ShoppingCart className="w-4 h-4 text-purple-600" />
+            </div>
+            <h3 className="text-sm font-bold text-slate-800">Recent Purchases</h3>
+          </div>
+          <button onClick={() => onNavigate('/purchase')} className="text-xs font-semibold text-blue-600 hover:text-blue-700 flex items-center gap-1 flex-shrink-0">
+            View All Purchases <ArrowRight className="w-3 h-3" />
+          </button>
+        </div>
+        {data.recentPurchases.length === 0 ? (
+          <p className="text-xs text-slate-400 italic px-4 py-4 text-center">No recent purchases found.</p>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="bg-slate-50 text-[11px] uppercase text-slate-500">
+                  <th className="text-left px-3 py-2 font-semibold whitespace-nowrap">Date</th>
+                  <th className="text-left px-3 py-2 font-semibold whitespace-nowrap">Vendor</th>
+                  <th className="text-left px-3 py-2 font-semibold whitespace-nowrap">Bill No</th>
+                  <th className="text-left px-3 py-2 font-semibold">Remark</th>
+                  <th className="text-right px-3 py-2 font-semibold whitespace-nowrap">Amount</th>
+                  <th className="text-right px-3 py-2 font-semibold whitespace-nowrap">GST</th>
+                  <th className="text-right px-3 py-2 font-semibold whitespace-nowrap">Total Bill</th>
+                  <th className="text-right px-3 py-2 font-semibold whitespace-nowrap">Paid</th>
+                  <th className="text-right px-3 py-2 font-semibold whitespace-nowrap">Balance</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100">
+                {data.recentPurchases.map(p => (
+                  <tr key={p.id} className="hover:bg-slate-50">
+                    <td className="px-3 py-2 whitespace-nowrap text-slate-600">{formatDate(p.purchase_date)}</td>
+                    <td className="px-3 py-2 whitespace-nowrap font-medium text-slate-700">{p.vendor?.name ?? '-'}</td>
+                    <td className="px-3 py-2 whitespace-nowrap text-slate-600">{p.bill_no ?? '-'}</td>
+                    <td className="px-3 py-2 text-slate-500 max-w-[180px] truncate">{p.remark ?? '-'}</td>
+                    <td className="px-3 py-2 text-right tabular-nums text-slate-700 whitespace-nowrap">{formatCurrency(p.amount)}</td>
+                    <td className="px-3 py-2 text-right tabular-nums text-slate-700 whitespace-nowrap">{formatCurrency(p.gst_amount)}</td>
+                    <td className="px-3 py-2 text-right tabular-nums font-semibold text-slate-800 whitespace-nowrap">{formatCurrency(p.total_amount)}</td>
+                    <td className="px-3 py-2 text-right tabular-nums text-emerald-600 whitespace-nowrap">{formatCurrency(p.paid_amount)}</td>
+                    <td className={classNames('px-3 py-2 text-right tabular-nums font-semibold whitespace-nowrap', Number(p.balance_amount) > 0 ? 'text-red-600' : 'text-slate-400')}>{formatCurrency(p.balance_amount)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
       </div>
 
       {/* SECTION 3: OPERATIONS */}

@@ -20,16 +20,20 @@ export interface BillingLineAmounts {
  * record already resolved via `findRateMasterForVehicle`
  * (src/lib/rateLookup.ts) — no separate rate table for this module.
  *
- * - `Daily` ("Full Day"): bills at the Rate Master's flat daily_rate.
+ * - `Daily` ("Full Day"): bills at the Rate Master's flat daily_rate times
+ *   `days` — the per-day Rate itself is never multiplied/changed, only the
+ *   resulting Rental Amount is.
  * - `Hourly`: first hour at first_hour_rate; every whole hour after that at
  *   second_hour_rate; remaining minutes at second_hour_rate/60 — the same
- *   engine Trips/Invoices already use (calcSessionAmount).
+ *   engine Trips/Invoices already use (calcSessionAmount). `days` is not
+ *   used here.
  */
 export function computeBillingLineAmounts(
   rateType: PoRateType,
   hours: number,
   minutes: number,
   rate: { daily_rate: number | null; first_hour_rate: number | null; second_hour_rate: number | null } | null,
+  days: number = 1,
 ): BillingLineAmounts {
   if (!rate) {
     return { rateFound: false, firstRate: null, secondRate: null, firstAmt: null, secondAmt: null, rentalAmount: null };
@@ -37,7 +41,9 @@ export function computeBillingLineAmounts(
 
   if (rateType === 'Daily') {
     const dayRate = Number(rate.daily_rate) || 0;
-    return { rateFound: true, firstRate: dayRate, secondRate: 0, firstAmt: dayRate, secondAmt: 0, rentalAmount: dayRate };
+    const numDays = days > 0 ? days : 1;
+    const rentalAmount = round2(dayRate * numDays);
+    return { rateFound: true, firstRate: dayRate, secondRate: 0, firstAmt: rentalAmount, secondAmt: 0, rentalAmount };
   }
 
   const r1 = Number(rate.first_hour_rate) || 0;

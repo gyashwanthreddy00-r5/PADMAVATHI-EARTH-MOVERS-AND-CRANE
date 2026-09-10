@@ -8,7 +8,7 @@ import {
   Fuel, CalendarCheck, Wrench, CreditCard, Receipt, ShoppingCart,
   BarChart3, TrendingUp, Settings as SettingsIcon, LogOut, Menu, Globe, ChevronDown,
   Shield, Users as UsersIcon, FileText as FileTextIcon, Link as LinkIcon, Wallet, IndianRupee,
-  FileSpreadsheet, Bell,
+  FileSpreadsheet,
 } from 'lucide-react';
 import { classNames } from '@/lib/utils';
 import type { TranslationKey } from '@/lib/i18n';
@@ -65,7 +65,6 @@ const nav: NavSection[] = [
       { key: 'invoices', label: 'customerInvoices', icon: FileText, path: '/invoices' },
       { key: 'po-orders', label: 'poOrders', icon: FileSpreadsheet, path: '/po-orders' },
       { key: 'settlement-report', label: 'settlementReport', icon: Wallet, path: '/settlement-report' },
-      { key: 'balance-reminders', label: 'balanceReminders', icon: Bell, path: '/balance-reminders' },
       { key: 'cash-payment-report', label: 'cashPaymentReport', icon: IndianRupee, path: '/reports/cash-payment' },
       { key: 'customer-billing', label: 'customerBillingReport', icon: BarChart3, path: '/reports/customer-billing' },
     ],

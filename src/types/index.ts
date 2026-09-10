@@ -248,6 +248,12 @@ export interface Invoice {
   invoice_number: string | null;
   invoice_date: string;
   invoice_type: InvoiceType;
+  /** Monthly Contract invoices only — which monthly_contracts row generated this
+   *  invoice. Null for every other invoice, and for historical Monthly Contract
+   *  invoices generated before this column existed. */
+  contract_id: string | null;
+  /** Monthly Contract invoices only — first day of the month this invoice bills for. */
+  billing_period_month: string | null;
   customer_id: string | null;
   customer_name: string | null;
   customer_address: string | null;
@@ -821,6 +827,9 @@ export interface InvoiceBillingLine {
   rate_type: PoRateType;
   hours: number;
   minutes: number;
+  /** No. of full days billed (Full Day / "Daily" rows only). Null on rows saved before
+   *  this column existed — treat as 1 for display, never backfill the stored value. */
+  days: number | null;
   first_hour_rate: number | null;
   second_hour_rate: number | null;
   first_hour_amount: number | null;

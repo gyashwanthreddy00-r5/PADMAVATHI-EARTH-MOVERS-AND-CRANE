@@ -56,13 +56,23 @@ Deno.serve(async (req: Request) => {
     }
 
     const body = await req.json();
-    const { customerId, invoiceIds } = body as { customerId: string; invoiceIds: string[] };
+    // `attachments` is new and OPTIONAL — existing callers (e.g. Settlement Report's own
+    // Email Statement action) that never send it keep getting the exact same inline-table
+    // email with no attachment as before. Only a caller that explicitly sends a non-empty
+    // attachments array (Customer Statements' Email Balance Statement) gets the new
+    // "statement is attached as a PDF" subject/body below.
+    const { customerId, invoiceIds, attachments } = body as {
+      customerId: string;
+      invoiceIds: string[];
+      attachments?: { filename: string; content: string }[];
+    };
     if (!customerId || !Array.isArray(invoiceIds) || invoiceIds.length === 0) {
       return new Response(
         JSON.stringify({ error: "customerId and a non-empty invoiceIds list are required." }),
         { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } },
       );
     }
+    const hasAttachments = Array.isArray(attachments) && attachments.length > 0;
 
     const { data: customer, error: custError } = await adminClient
       .from("customers")
@@ -132,7 +142,11 @@ Deno.serve(async (req: Request) => {
     const companyPhone = settings?.phone ?? "";
     const companyEmail = settings?.email ?? "";
 
-    const subject = `Account Statement – ${companyName} – Outstanding Balance`;
+    // Unchanged default (no attachments passed, e.g. Settlement Report's own Email
+    // Statement action) keeps its original subject/body exactly as before.
+    const subject = hasAttachments
+      ? `Balance Statement - ${customer.name}`
+      : `Account Statement – ${companyName} – Outstanding Balance`;
 
     const tableRowsHtml = rows.map((r, idx) => `<tr>
 <td style="padding:4px 8px;border:1px solid #ddd;text-align:center;">${idx + 1}</td>
@@ -191,6 +205,21 @@ ${companyEmail}`;
 <p style="margin-top: 24px;">Regards,<br/><strong>${companyName}</strong><br/>${companyPhone}<br/>${companyEmail}</p>
 </div>`;
 
+    // When a PDF/attachments are sent along (Customer Statements' Email Balance
+    // Statement), the email body is the short "please find attached" note from the
+    // spec — the statement itself is in the PDF, not retyped as an inline HTML table.
+    const attachedTextBody = `Dear ${customer.name},
+
+Please find attached your balance statement for the selected period.
+
+Regards,
+${companyName}`;
+    const attachedEmailWrapper = `<div style="font-family: Arial, Helvetica, sans-serif; font-size: 14px; color: #333; max-width: 700px; margin: 0 auto;">
+<p>Dear ${customer.name},</p>
+<p>Please find attached your balance statement for the selected period.</p>
+<p style="margin-top: 24px;">Regards,<br/><strong>${companyName}</strong></p>
+</div>`;
+
     const senderEmail = Deno.env.get("RESEND_FROM_EMAIL") ?? "invoices@coreone-demo.in";
     const senderName = "Core1ERP";
 
@@ -198,9 +227,12 @@ ${companyEmail}`;
       from: `${senderName} <${senderEmail}>`,
       to: customer.email,
       subject,
-      text: textBody,
-      html: emailWrapper,
+      text: hasAttachments ? attachedTextBody : textBody,
+      html: hasAttachments ? attachedEmailWrapper : emailWrapper,
     };
+    if (hasAttachments) {
+      resendBody.attachments = attachments!.map((a) => ({ filename: a.filename, content: a.content }));
+    }
 
     const resendResponse = await fetch("https://api.resend.com/emails", {
       method: "POST",

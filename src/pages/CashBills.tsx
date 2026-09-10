@@ -31,6 +31,60 @@ function deriveSessionMinutes(s: { duration_minutes: number; in_time: string | n
   });
 }
 
+// Full Day entries don't store a separate "days" count — it's derived the same way
+// elsewhere in the app (see invoiceDocData.ts): rental_amount was saved as
+// Full Day Rate x Number of Days (see SimpleCashBillForm.tsx), and daily_rate_snapshot
+// is the un-multiplied per-day rate, so dividing recovers the day count exactly. For a
+// bill saved before Number of Days existed, rental_amount === daily_rate_snapshot and
+// this correctly resolves to 1, so old receipts are unaffected.
+function deriveFullDayCount(dailyRateSnapshot: number | null, rentalAmount: number | null): number {
+  const dailyRate = Number(dailyRateSnapshot) || 0;
+  if (dailyRate <= 0) return 1;
+  return Math.max(1, Math.round((Number(rentalAmount) || 0) / dailyRate));
+}
+
+/**
+ * Clean, formula-free service/rate lines for the Cash/UPI receipt and view — shows the
+ * applicable rate (and, for Full Day, the day count/Batha-per-day) but never the
+ * underlying calculation formula. This replaces buildInvoiceLineDescription's verbose
+ * calculation text for Cash/UPI print/view only; GST invoices and Trips keep using
+ * buildInvoiceLineDescription unchanged.
+ */
+function buildCleanRateLines(v: {
+  rate_type: string | null;
+  first_hour_rate: number | null;
+  second_hour_rate: number | null;
+  daily_rate_snapshot: number | null;
+  rental_amount: number | null;
+  batha: number | null;
+}): string[] {
+  const rateType = v.rate_type ?? 'Hourly';
+  if (rateType === 'Daily') {
+    const dailyRate = Number(v.daily_rate_snapshot) || 0;
+    const days = deriveFullDayCount(v.daily_rate_snapshot, v.rental_amount);
+    const lines = ['Full Day'];
+    if (dailyRate > 0) lines.push(`Rate: ${formatCurrency(dailyRate)} / Day`);
+    lines.push(`Days: ${days}`);
+    const totalBatha = Number(v.batha) || 0;
+    if (totalBatha > 0) {
+      const bathaPerDay = Math.round((totalBatha / days) * 100) / 100;
+      lines.push(`Batha: ${formatCurrency(bathaPerDay)} / Day`);
+    }
+    return lines;
+  }
+  if (rateType === 'Hourly') {
+    const r1 = Number(v.first_hour_rate) || 0;
+    const r2 = Number(v.second_hour_rate) || 0;
+    const lines = ['Hourly'];
+    if (r1 > 0 || r2 > 0) {
+      lines.push(`Rate: ${formatCurrency(r1)} / First Hour`);
+      lines.push(`${formatCurrency(r2)} / Additional Hour`);
+    }
+    return lines;
+  }
+  return [rateType];
+}
+
 function calcBalance(total: number, paid: number): number {
   return Math.max(Math.round((total - paid) * 100) / 100, 0);
 }
@@ -498,13 +552,14 @@ export default function CashBills() {
       const hasUsableSessions = sessions.some(s => deriveSessionMinutes(s) > 0 || (!!s.rate_type && s.rate_type !== 'Hourly'));
 
       if (!hasUsableSessions) {
-        const hours = v.total_hours ? formatDuration(Number(v.total_hours)) : '-';
+        // Clean, formula-free rate/day lines (see buildCleanRateLines) — no calculation
+        // breakdown shown here, just the applicable rate and (for Full Day) day count.
+        const cleanLines = buildCleanRateLines(v).map(l => `<div style="font-size:9px;color:#555;margin-top:2px">${l}</div>`).join('');
         const rateType = (v.rate_type ?? 'Hourly') as string;
-        const isFlat = rateType === 'Daily' || rateType === 'Weekly' || rateType === 'Monthly';
-        const rateLabel = isFlat
-          ? formatCurrency(Number(v.rental_amount))
-          : `${formatCurrency(Number(v.first_hour_rate) || 0)}/Hr`;
-        return `<tr><td>${craneDesc}${vNum ? ' (' + vNum + ')' : ''}${rateDescLines}</td><td style="text-align:center">${hours}</td><td style="text-align:right">${formatCurrency(Number(v.rental_amount))}</td></tr>`;
+        const hours = rateType === 'Daily'
+          ? `${deriveFullDayCount(v.daily_rate_snapshot, v.rental_amount)} Day${deriveFullDayCount(v.daily_rate_snapshot, v.rental_amount) > 1 ? 's' : ''}`
+          : (v.total_hours ? formatDuration(Number(v.total_hours)) : '-');
+        return `<tr><td>${craneDesc}${vNum ? ' (' + vNum + ')' : ''}${cleanLines}</td><td style="text-align:center">${hours}</td><td style="text-align:right">${formatCurrency(Number(v.rental_amount))}</td></tr>`;
       }
 
       return sessions.map((s, sIdx) => {
@@ -1050,13 +1105,23 @@ export default function CashBills() {
                     const hasUsableSessions = sessions.some(s => deriveSessionMinutes(s) > 0 || (!!s.rate_type && s.rate_type !== 'Hourly'));
 
                     if (!hasUsableSessions) {
-                      const hours = v.total_hours ? formatDuration(Number(v.total_hours)) : '-';
+                      // Clean, formula-free rate/day lines (see buildCleanRateLines) — no
+                      // calculation breakdown, just the applicable rate and (for Full Day)
+                      // the day count.
+                      const cleanLines = buildCleanRateLines(v);
+                      const cleanDesc = cleanLines.length > 0 ? (
+                        <div className="mt-1 space-y-0.5">
+                          {cleanLines.map((l, li) => <div key={li} className="text-[10px] text-slate-500">{l}</div>)}
+                        </div>
+                      ) : null;
                       const rateType = (v.rate_type ?? 'Hourly') as string;
-                      const isFlat = rateType === 'Daily' || rateType === 'Weekly' || rateType === 'Monthly';
-                      const rateLabel = isFlat ? formatCurrency(Number(v.rental_amount)) : `${formatCurrency(Number(v.first_hour_rate) || 0)}/Hr`;
+                      const fullDayCount = deriveFullDayCount(v.daily_rate_snapshot, v.rental_amount);
+                      const hours = rateType === 'Daily'
+                        ? `${fullDayCount} Day${fullDayCount > 1 ? 's' : ''}`
+                        : (v.total_hours ? formatDuration(Number(v.total_hours)) : '-');
                       return [(
                         <tr key={v.id}>
-                          <td className="px-3 py-2 border-b border-slate-100">{label}{rateDesc}</td>
+                          <td className="px-3 py-2 border-b border-slate-100">{label}{cleanDesc}</td>
                           <td className="text-center px-3 py-2 border-b border-slate-100">{hours}</td>
                           <td className="text-right px-3 py-2 border-b border-slate-100">{formatCurrency(Number(v.rental_amount))}</td>
                         </tr>

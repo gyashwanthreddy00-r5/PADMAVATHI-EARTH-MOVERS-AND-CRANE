@@ -49,6 +49,9 @@ export function SimpleCashBillForm({ onChange }: Props) {
   const [rateType, setRateType] = useState<SimpleRateType>('Hourly');
   const [hours, setHours] = useState('');
   const [minutes, setMinutes] = useState('');
+  // Full Day only — number of full days billed. Whole numbers only (no existing Cash/UPI
+  // calculation supports fractional days), minimum 1, default 1. Not used for Hourly.
+  const [days, setDays] = useState('1');
   const [batha, setBatha] = useState(0);
   const [bathaTouched, setBathaTouched] = useState(false);
 
@@ -87,12 +90,19 @@ export function SimpleCashBillForm({ onChange }: Props) {
   const r1 = Number(rateMaster?.first_hour_rate) || 0;
   const r2 = Number(rateMaster?.second_hour_rate) || 0;
   const dailyRate = Number(rateMaster?.daily_rate) || 0;
+  // Full Day only — Hourly's own duration/rate math (calcSessionAmount below) is
+  // completely unaffected by Number of Days.
+  const daysNum = rateType === 'Daily' ? Math.max(1, Math.floor(Number(days) || 1)) : 1;
 
   // Same low-level engine used everywhere else in the app: 1st hour at r1, every
   // subsequent full hour at r2, remaining minutes prorated at r2/60. Never re-derived
   // here — this is the one calculation source, reused as-is.
-  const rentalAmount = !rateMaster ? 0 : rateType === 'Daily' ? dailyRate : calcSessionAmount(totalMinutes, r1, r2, 0);
-  const totalAmount = round2(rentalAmount + (Number(batha) || 0));
+  // Full Day: Rental = Full Day Rate x Number of Days (at Days = 1 this is identical to
+  // the previous flat-rate behavior). Batha scales the same way for Full Day; Hourly's
+  // Batha stays the single flat amount it always was.
+  const rentalAmount = !rateMaster ? 0 : rateType === 'Daily' ? round2(dailyRate * daysNum) : calcSessionAmount(totalMinutes, r1, r2, 0);
+  const bathaAmount = rateType === 'Daily' ? round2((Number(batha) || 0) * daysNum) : (Number(batha) || 0);
+  const totalAmount = round2(rentalAmount + bathaAmount);
 
   const isReady = !!selectedVehicle && !!rateMaster && (rateType === 'Daily' || totalMinutes > 0);
 
@@ -110,7 +120,7 @@ export function SimpleCashBillForm({ onChange }: Props) {
       rate_type: rateType,
       tons: selectedVehicle.capacity ?? '',
       sessions: [],
-      batha: Number(batha) || 0,
+      batha: bathaAmount,
       total_hours: rateType === 'Hourly' ? round2(totalMinutes / 60) : 0,
       rental_amount: rentalAmount,
       total_amount: totalAmount,
@@ -139,12 +149,12 @@ export function SimpleCashBillForm({ onChange }: Props) {
       remarks: null,
       total_hours: vehicleEntry.total_hours,
       total_amount: totalAmount,
-      total_batha: Number(batha) || 0,
+      total_batha: bathaAmount,
       total_rental: rentalAmount,
     };
     onChange(data);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isReady, selectedVehicle, rateMaster, rateType, totalMinutes, batha, workingDate, rentalAmount, totalAmount]);
+  }, [isReady, selectedVehicle, rateMaster, rateType, totalMinutes, daysNum, batha, bathaAmount, workingDate, rentalAmount, totalAmount]);
 
   if (loading) return <LoadingSpinner />;
 
@@ -219,6 +229,9 @@ export function SimpleCashBillForm({ onChange }: Props) {
           </div>
         ) : (
           <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+            <Field label="Number of Days" required>
+              <input type="number" min="1" step="1" className={inputClass()} value={days} onChange={e => setDays(Math.max(1, Math.floor(Number(e.target.value) || 1)).toString())} placeholder="1" />
+            </Field>
             <Field label="Full Day Rate">
               <div className={autoFieldClass}>{rateMaster ? formatCurrency(dailyRate) : '—'}</div>
             </Field>
@@ -231,8 +244,9 @@ export function SimpleCashBillForm({ onChange }: Props) {
         {isReady && (
           <div className="mt-3 flex flex-wrap items-center gap-4 p-3 bg-blue-50 rounded-lg text-sm">
             {rateType === 'Hourly' && <span className="text-slate-500">Duration: <b className="text-slate-800">{formatDuration(totalMinutes / 60)}</b></span>}
+            {rateType === 'Daily' && <span className="text-slate-500">Days: <b className="text-slate-800">{daysNum}</b></span>}
             <span className="text-slate-500">Rental: <b className="text-slate-800">{formatCurrency(rentalAmount)}</b></span>
-            <span className="text-slate-500">Batha: <b className="text-slate-800">{formatCurrency(Number(batha) || 0)}</b></span>
+            <span className="text-slate-500">Batha: <b className="text-slate-800">{formatCurrency(bathaAmount)}</b></span>
             <span className="ml-auto font-bold text-blue-700 text-base">{formatCurrency(totalAmount)}</span>
           </div>
         )}
