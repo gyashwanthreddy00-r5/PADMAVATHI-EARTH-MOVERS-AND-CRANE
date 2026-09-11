@@ -153,9 +153,9 @@ export function DataTable<T extends { id?: string }>({
     : 'bg-slate-100';
 
   return (
-    <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
+    <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden print:border-0 print:shadow-none print:rounded-none">
       {(searchKeys || toolbar) && (
-        <div className="flex flex-col sm:flex-row gap-3 p-4 border-b border-slate-100 bg-slate-50/50">
+        <div className="flex flex-col sm:flex-row gap-3 p-4 border-b border-slate-100 bg-slate-50/50 print:hidden">
           {searchKeys && (
             <div className="relative flex-1 max-w-sm">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
@@ -181,7 +181,7 @@ export function DataTable<T extends { id?: string }>({
       )}
 
       {selectable && selectedIds && selectedIds.size > 0 && (
-        <div className="flex items-center justify-between px-4 py-2 bg-blue-50 border-b border-blue-100">
+        <div className="flex items-center justify-between px-4 py-2 bg-blue-50 border-b border-blue-100 print:hidden">
           <span className="text-xs font-medium text-blue-700">
             {selectedIds.size} record{selectedIds.size !== 1 ? 's' : ''} selected
           </span>
@@ -197,14 +197,14 @@ export function DataTable<T extends { id?: string }>({
         </div>
       )}
 
-      <div className="overflow-x-auto" style={{ maxHeight: stickyHeader ? '70vh' : undefined }}>
+      <div className="overflow-x-auto print:overflow-visible print:!max-h-none" style={{ maxHeight: stickyHeader ? '70vh' : undefined }}>
         <table className="w-full">
-          <thead>
+          <thead className="print:table-header-group">
             <tr className={classNames2(headerClass, 'border-b border-slate-200')}>
               {displayColumns.map(col => {
                 if (col.key === '__select') {
                   return (
-                    <th key="__select" className="px-4 py-3 text-center w-10">
+                    <th key="__select" className="px-4 py-3 text-center w-10 print:hidden">
                       <input
                         type="checkbox"
                         checked={!!allOnPageSelected && paged.length > 0}
@@ -243,7 +243,7 @@ export function DataTable<T extends { id?: string }>({
                   </div>
                 </td>
               </tr>
-            ) : paged.length === 0 ? (
+            ) : filtered.length === 0 ? (
               <tr>
                 <td colSpan={displayColumns.length} className="px-4 py-12 text-center text-slate-400">
                   <Inbox className="w-10 h-10 mx-auto mb-2 text-slate-300" />
@@ -251,17 +251,25 @@ export function DataTable<T extends { id?: string }>({
                 </td>
               </tr>
             ) : (
-              paged.map((row, i) => {
-                const id = rowId(row, (currentPage - 1) * currentPageLen + i);
+              // Render every filtered row (not just the current on-screen page) so print
+              // always contains the full filtered result set. Rows outside the current
+              // page are kept out of the screen layout (`hidden`) but forced back in for
+              // print (`print:table-row`), since a table cell's own pagination slice only
+              // exists in the DOM for rows that were actually rendered - CSS alone can't
+              // reveal rows that were never mounted.
+              filtered.map((row, fullIndex) => {
+                const inPage = fullIndex >= (currentPage - 1) * currentPageLen && fullIndex < currentPage * currentPageLen;
+                const localIndex = fullIndex - (currentPage - 1) * currentPageLen;
+                const id = rowId(row, fullIndex);
                 const isSelected = selectedIds?.has(id) ?? false;
                 return (
                   <tr
                     key={id}
                     onClick={() => onRowClick?.(row)}
-                    className={`hover:bg-blue-50/30 transition-colors ${onRowClick ? 'cursor-pointer' : ''} ${isSelected ? 'bg-blue-50/50' : ''} ${rowClassName?.(row) ?? ''}`}
+                    className={`hover:bg-blue-50/30 transition-colors ${onRowClick ? 'cursor-pointer' : ''} ${isSelected ? 'bg-blue-50/50' : ''} ${rowClassName?.(row) ?? ''} ${inPage ? '' : 'hidden print:table-row'}`}
                   >
                     {selectable && (
-                      <td className="px-4 py-3 text-center w-10" onClick={e => { e.stopPropagation(); toggleRow(row, (currentPage - 1) * currentPageLen + i); }}>
+                      <td className="px-4 py-3 text-center w-10 print:hidden" onClick={e => { e.stopPropagation(); toggleRow(row, fullIndex); }}>
                         <input
                           type="checkbox"
                           checked={isSelected}
@@ -274,7 +282,7 @@ export function DataTable<T extends { id?: string }>({
                       if (col.key === '__serial') {
                         return (
                           <td key="__serial" className="px-4 py-3 text-sm text-slate-500 text-center tabular-nums">
-                            {i + 1}
+                            {inPage ? localIndex + 1 : fullIndex + 1}
                           </td>
                         );
                       }
@@ -299,7 +307,7 @@ export function DataTable<T extends { id?: string }>({
       </div>
 
       {filtered.length > 0 && (
-        <div className="flex flex-col sm:flex-row items-center justify-between gap-2 px-4 py-3 border-t border-slate-100 bg-slate-50/50">
+        <div className="flex flex-col sm:flex-row items-center justify-between gap-2 px-4 py-3 border-t border-slate-100 bg-slate-50/50 print:hidden">
           <div className="flex items-center gap-3">
             <span className="text-xs font-medium text-slate-500 tabular-nums">
               Showing {(currentPage - 1) * currentPageLen + 1}–{Math.min(currentPage * currentPageLen, filtered.length)} of {filtered.length}

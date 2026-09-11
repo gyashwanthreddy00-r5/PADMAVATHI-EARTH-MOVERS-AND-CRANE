@@ -497,11 +497,36 @@ export default function Reports({ type }: ReportProps) {
     </div>
   );
 
+  // Screen-only filter controls are hidden in print (see print:hidden below), but the
+  // filters/date-range actually applied to the data on screen still need to be visible
+  // on the printed report - this mirrors the same summary already built for Excel export
+  // (see handleExport above) so print and export agree on what "the applied filters" are.
+  const printFilterSummary = (() => {
+    const parts: string[] = [];
+    if (showDateRange || showEmiDateRange) parts.push(`${t('from')}: ${formatDate(filters.from)} - ${t('to')}: ${formatDate(filters.to)}`);
+    if (showDailyDate) parts.push(`${t('date')}: ${formatDate(filters.from)}`);
+    if (showMonthYear) parts.push(`${monthName(filters.month - 1)} ${filters.year}`);
+    if (filters.vehicle_id) parts.push(`${t('vehicleNumber')}: ${vehicles.find(v => v.id === filters.vehicle_id)?.registration_number ?? ''}`);
+    if (filters.driver_id) parts.push(`${t('driver')}: ${employees.find(e => e.id === filters.driver_id)?.name ?? ''}`);
+    if (filters.place_of_work) parts.push(`${t('placeOfWork')}: ${filters.place_of_work}`);
+    if (filters.payment_status) parts.push(`${t('paymentStatus')}: ${filters.payment_status}`);
+    return parts.join('  |  ');
+  })();
+
   return (
     <div className="space-y-4">
-      <div className="print-logo hidden print:flex items-center gap-3 mb-4">
-        <img src={getReportLogoUrl()} alt="logo" className="w-12 h-9 object-contain" />
-        <h2 className="text-lg font-bold text-slate-800">{reportTitles[type]}</h2>
+      <div className="print-logo hidden print:block mb-4">
+        <div className="flex items-center gap-3">
+          <img src={getReportLogoUrl()} alt="logo" className="w-14 h-11 object-contain" />
+          <div>
+            <h1 className="text-base font-bold text-slate-900 uppercase">{settings?.company_name ?? 'PADMAVATHI EARTH MOVERS AND CRANE SERVICES'}</h1>
+            <p className="text-xs text-slate-600">
+              {[settings?.address, settings?.phone ? `Ph: ${settings.phone}` : null, settings?.gstin ? `GSTIN: ${settings.gstin}` : null].filter(Boolean).join(' | ')}
+            </p>
+          </div>
+        </div>
+        <h2 className="text-sm font-bold text-slate-800 mt-2 pt-2 border-t border-slate-300">{reportTitles[type]}</h2>
+        {printFilterSummary && <p className="text-xs text-slate-600 mt-0.5">{printFilterSummary}</p>}
       </div>
       {/* Filters */}
       <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-4 print:hidden">
