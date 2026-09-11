@@ -5,7 +5,7 @@ import { useSettings } from '@/context/SettingsContext';
 import { Modal, ConfirmDialog, Button, Field, inputClass, LoadingSpinner } from '@/components/ui/common';
 import { DataTable, type Column } from '@/components/ui/DataTable';
 import { DatePicker } from '@/components/ui/DatePicker';
-import { formatCurrency, formatDate, todayISO, exportToExcelWithCompany } from '@/lib/utils';
+import { formatCurrency, formatDate, todayISO, exportToExcelWithCompany, classNames } from '@/lib/utils';
 import { round2 } from '@/lib/gstBillingCalc';
 import { Plus, Pencil, Trash2, ArrowLeft, ShoppingCart, Search, Printer, FileSpreadsheet } from 'lucide-react';
 import type { Vendor, Purchase as PurchaseRow } from '@/types';
@@ -59,9 +59,11 @@ interface PurchaseForm {
   purchase_date: string;
   amount: string;
   paid_amount: string;
+  gst_enabled: boolean;
 }
 
-const emptyPurchaseForm: PurchaseForm = { bill_no: '', remark: '', purchase_date: todayISO(), amount: '', paid_amount: '' };
+// GST OFF by default — GST is optional per purchase, not assumed.
+const emptyPurchaseForm: PurchaseForm = { bill_no: '', remark: '', purchase_date: todayISO(), amount: '', paid_amount: '', gst_enabled: false };
 
 export default function Purchase() {
   const { show } = useToast();
@@ -77,6 +79,11 @@ export default function Purchase() {
   const [vendorErrors, setVendorErrors] = useState<{ name?: string; phone?: string; gst_number?: string }>({});
   const [savingVendor, setSavingVendor] = useState(false);
   const [deleteVendorId, setDeleteVendorId] = useState<string | null>(null);
+
+  // Every purchase across every vendor — used only for the first-page Purchase
+  // Summary dashboard (totals must reflect the complete dataset, not just the
+  // currently-selected vendor's filtered/paginated rows).
+  const [allPurchases, setAllPurchases] = useState<PurchaseRow[]>([]);
 
   const [selectedVendorId, setSelectedVendorId] = useState<string | null>(null);
   const [purchases, setPurchases] = useState<PurchaseRow[]>([]);
@@ -101,7 +108,16 @@ export default function Purchase() {
     setLoading(false);
   }, [show]);
 
-  useEffect(() => { fetchVendors(); }, [fetchVendors]);
+  // Shared data source (same `purchases` table/RLS every vendor's own entries use) —
+  // fetched unfiltered so the dashboard totals always reflect every purchase from every
+  // vendor, created by any authorized user, not just what's currently on screen.
+  const fetchAllPurchases = useCallback(async () => {
+    const { data, error } = await supabase.from('purchases').select('*');
+    if (error) { show('Unable to load purchase summary: ' + error.message, 'error'); return; }
+    setAllPurchases((data ?? []) as PurchaseRow[]);
+  }, [show]);
+
+  useEffect(() => { fetchVendors(); fetchAllPurchases(); }, [fetchVendors, fetchAllPurchases]);
 
   const fetchPurchases = useCallback(async (vendorId: string) => {
     setPurchasesLoading(true);
@@ -207,6 +223,7 @@ export default function Purchase() {
       purchase_date: p.purchase_date,
       amount: String(p.amount),
       paid_amount: String(p.paid_amount),
+      gst_enabled: p.gst_enabled,
     });
     setPurchaseErrors({});
     setPurchaseModalOpen(true);
@@ -214,14 +231,17 @@ export default function Purchase() {
 
   const purchaseFormCalc = useMemo(() => {
     const amount = Number(purchaseForm.amount) || 0;
-    const gstAmount = round2(amount * GST_RATE / 100);
+    const gstEnabled = purchaseForm.gst_enabled;
+    const gstRate = gstEnabled ? GST_RATE : 0;
+    const gstAmount = gstEnabled ? round2(amount * GST_RATE / 100) : 0;
     const totalAmount = round2(amount + gstAmount);
     const paidAmount = Number(purchaseForm.paid_amount) || 0;
     const balanceAmount = round2(totalAmount - paidAmount);
-    return { amount, gstAmount, totalAmount, paidAmount, balanceAmount };
-  }, [purchaseForm.amount, purchaseForm.paid_amount]);
+    return { amount, gstEnabled, gstRate, gstAmount, totalAmount, paidAmount, balanceAmount };
+  }, [purchaseForm.amount, purchaseForm.paid_amount, purchaseForm.gst_enabled]);
 
   function validatePurchaseForm(): boolean {
+    if (!purchaseForm.purchase_date) { show('Purchase Date is required.', 'error'); return false; }
     const errors: typeof purchaseErrors = {};
     if (!purchaseForm.amount.trim() || Number(purchaseForm.amount) <= 0) errors.amount = 'Enter a valid amount greater than 0.';
     if (purchaseForm.paid_amount.trim() && Number(purchaseForm.paid_amount) < 0) errors.paid_amount = 'Paid amount cannot be negative.';
@@ -241,7 +261,8 @@ export default function Purchase() {
       remark: purchaseForm.remark.trim() || null,
       purchase_date: purchaseForm.purchase_date || todayISO(),
       amount: purchaseFormCalc.amount,
-      gst_rate: GST_RATE,
+      gst_enabled: purchaseFormCalc.gstEnabled,
+      gst_rate: purchaseFormCalc.gstRate,
       gst_amount: purchaseFormCalc.gstAmount,
       total_amount: purchaseFormCalc.totalAmount,
       paid_amount: purchaseFormCalc.paidAmount,
@@ -257,6 +278,10 @@ export default function Purchase() {
       const next = exists ? prev.map(p => p.id === saved.id ? saved : p) : [saved, ...prev];
       return [...next].sort((a, b) => b.purchase_date.localeCompare(a.purchase_date) || b.created_at.localeCompare(a.created_at));
     });
+    setAllPurchases(prev => {
+      const exists = prev.some(p => p.id === saved.id);
+      return exists ? prev.map(p => p.id === saved.id ? saved : p) : [saved, ...prev];
+    });
     show(editingPurchase ? 'Purchase updated.' : 'Purchase added.', 'success');
     setPurchaseModalOpen(false);
     setSavingPurchase(false);
@@ -267,6 +292,7 @@ export default function Purchase() {
     const { error } = await supabase.from('purchases').delete().eq('id', deletePurchaseId);
     if (error) { show(error.message, 'error'); setDeletePurchaseId(null); return; }
     setPurchases(prev => prev.filter(p => p.id !== deletePurchaseId));
+    setAllPurchases(prev => prev.filter(p => p.id !== deletePurchaseId));
     show('Purchase entry removed.', 'success');
     setDeletePurchaseId(null);
   }
@@ -291,6 +317,18 @@ export default function Purchase() {
     totalBalance: round2(filteredPurchases.reduce((s, p) => s + Number(p.balance_amount), 0)),
   }), [filteredPurchases]);
 
+  // First-page Purchase Summary dashboard — the complete dataset (every vendor, every
+  // purchase, shared across all users via the same purchases/vendors tables), never just
+  // the rows currently visible/paginated on some other view.
+  const purchaseDashboard = useMemo(() => ({
+    totalVendors: vendors.length,
+    totalPurchaseAmount: round2(allPurchases.reduce((s, p) => s + Number(p.amount), 0)),
+    totalGst: round2(allPurchases.reduce((s, p) => s + Number(p.gst_amount), 0)),
+    totalBillAmount: round2(allPurchases.reduce((s, p) => s + Number(p.total_amount), 0)),
+    totalPaidAmount: round2(allPurchases.reduce((s, p) => s + Number(p.paid_amount), 0)),
+    totalBalanceAmount: round2(allPurchases.reduce((s, p) => s + Number(p.balance_amount), 0)),
+  }), [vendors, allPurchases]);
+
   const companyInfo = settings
     ? { company_name: settings.company_name, address: settings.address, phone: settings.phone, email: settings.email, gstin: settings.gstin }
     : { company_name: 'PADMAVATHI EARTH MOVERS AND CRANE SERVICES' };
@@ -302,7 +340,7 @@ export default function Purchase() {
 
   function exportPurchasesExcel() {
     if (!selectedVendor) return;
-    const headers = ['SL.NO', 'BILL NO', 'REMARK', 'DATE', 'PURCHASE AMOUNT', '18% GST', 'TOTAL BILL AMOUNT', 'PAID AMOUNT', 'BALANCE AMOUNT'];
+    const headers = ['SL.NO', 'BILL NO', 'REMARK', 'DATE', 'AMOUNT', 'GST', 'TOTAL BILL AMOUNT', 'PAID AMOUNT', 'BALANCE AMOUNT'];
     const rows: (string | number)[][] = filteredPurchases.map((p, idx) => [
       idx + 1, p.bill_no ?? '-', p.remark ?? '-', formatDate(p.purchase_date),
       Number(p.amount), Number(p.gst_amount), Number(p.total_amount), Number(p.paid_amount), Number(p.balance_amount),
@@ -362,7 +400,7 @@ export default function Purchase() {
     <div>Period: ${filterLabel()}</div>
   </div>
   <table>
-    <thead><tr><th>Sl.No</th><th>Bill No</th><th>Date</th><th>Remark</th><th>Amount</th><th>18% GST</th><th>Total</th><th>Paid</th><th>Balance</th></tr></thead>
+    <thead><tr><th>Sl.No</th><th>Bill No</th><th>Date</th><th>Remark</th><th>Amount</th><th>GST</th><th>Total</th><th>Paid</th><th>Balance</th></tr></thead>
     <tbody>${rows || '<tr><td colspan="9" style="text-align:center;padding:16px">No purchase entries found for this filter.</td></tr>'}</tbody>
     ${filteredPurchases.length > 0 ? `<tfoot><tr><td colspan="4">TOTAL PURCHASE AMOUNT / GST / BILL / PAID / BALANCE</td><td style="text-align:right">${formatCurrency(summary.totalAmount)}</td><td style="text-align:right">${formatCurrency(summary.totalGst)}</td><td style="text-align:right">${formatCurrency(summary.totalBill)}</td><td style="text-align:right">${formatCurrency(summary.totalPaid)}</td><td style="text-align:right">${formatCurrency(summary.totalBalance)}</td></tr></tfoot>` : ''}
   </table>
@@ -400,6 +438,38 @@ export default function Purchase() {
               <p className="text-sm text-slate-500">Manage vendors and their purchase bills.</p>
             </div>
             <Button onClick={openAddVendor}><Plus className="w-4 h-4" />Add Vendor</Button>
+          </div>
+
+          {/* Purchase Summary — the complete dataset across every vendor (allPurchases),
+              not just whatever vendor happens to be selected elsewhere on this page. */}
+          <div className="bg-white border border-slate-200 rounded-xl p-4">
+            <p className="text-xs font-bold uppercase tracking-wide text-slate-500 mb-3">Purchase Summary</p>
+            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
+              <div className="bg-slate-50 rounded-lg border border-slate-200 p-3">
+                <div className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-1">Total Vendors</div>
+                <div className="text-lg font-bold text-slate-800">{purchaseDashboard.totalVendors}</div>
+              </div>
+              <div className="bg-slate-50 rounded-lg border border-slate-200 p-3">
+                <div className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-1">Total Purchase Amount</div>
+                <div className="text-lg font-bold text-slate-800">{formatCurrency(purchaseDashboard.totalPurchaseAmount)}</div>
+              </div>
+              <div className="bg-slate-50 rounded-lg border border-slate-200 p-3">
+                <div className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-1">Total GST</div>
+                <div className="text-lg font-bold text-slate-800">{formatCurrency(purchaseDashboard.totalGst)}</div>
+              </div>
+              <div className="bg-slate-50 rounded-lg border border-slate-200 p-3">
+                <div className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-1">Total Bill Amount</div>
+                <div className="text-lg font-bold text-slate-800">{formatCurrency(purchaseDashboard.totalBillAmount)}</div>
+              </div>
+              <div className="bg-emerald-50 rounded-lg border border-emerald-200 p-3">
+                <div className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-1">Total Paid Amount</div>
+                <div className="text-lg font-bold text-emerald-600">{formatCurrency(purchaseDashboard.totalPaidAmount)}</div>
+              </div>
+              <div className="bg-red-50 rounded-lg border border-red-200 p-3">
+                <div className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-1">Total Balance Amount</div>
+                <div className="text-lg font-bold text-red-600">{formatCurrency(purchaseDashboard.totalBalanceAmount)}</div>
+              </div>
+            </div>
           </div>
 
           <DataTable
@@ -469,16 +539,17 @@ export default function Purchase() {
                       <th className="text-left px-3 py-2 border-b border-slate-200">Bill No</th>
                       <th className="text-left px-3 py-2 border-b border-slate-200">Remark</th>
                       <th className="text-left px-3 py-2 border-b border-slate-200">Date</th>
-                      <th className="text-right px-3 py-2 border-b border-slate-200">Amt</th>
-                      <th className="text-right px-3 py-2 border-b border-slate-200">18% GST</th>
-                      <th className="text-right px-3 py-2 border-b border-slate-200">Paid Amt</th>
-                      <th className="text-right px-3 py-2 border-b border-slate-200">Balance Amt</th>
+                      <th className="text-right px-3 py-2 border-b border-slate-200">Amount</th>
+                      <th className="text-right px-3 py-2 border-b border-slate-200">GST</th>
+                      <th className="text-right px-3 py-2 border-b border-slate-200">Total Bill Amount</th>
+                      <th className="text-right px-3 py-2 border-b border-slate-200">Paid Amount</th>
+                      <th className="text-right px-3 py-2 border-b border-slate-200">Balance Amount</th>
                       <th className="text-center px-3 py-2 border-b border-slate-200">Action</th>
                     </tr>
                   </thead>
                   <tbody>
                     {filteredPurchases.length === 0 ? (
-                      <tr><td colSpan={9} className="text-center py-8 text-slate-400">No purchase entries found for this filter.</td></tr>
+                      <tr><td colSpan={10} className="text-center py-8 text-slate-400">No purchase entries found for this filter.</td></tr>
                     ) : filteredPurchases.map((p, idx) => (
                       <tr key={p.id} className={idx % 2 ? 'bg-slate-50' : 'bg-white'}>
                         <td className="text-center px-3 py-1.5 border-b border-slate-100">{idx + 1}</td>
@@ -486,7 +557,12 @@ export default function Purchase() {
                         <td className="px-3 py-1.5 border-b border-slate-100">{p.remark ?? '-'}</td>
                         <td className="px-3 py-1.5 border-b border-slate-100 whitespace-nowrap">{formatDate(p.purchase_date)}</td>
                         <td className="text-right px-3 py-1.5 border-b border-slate-100">{formatCurrency(p.amount)}</td>
-                        <td className="text-right px-3 py-1.5 border-b border-slate-100">{formatCurrency(p.gst_amount)}</td>
+                        <td className="text-right px-3 py-1.5 border-b border-slate-100 whitespace-nowrap">
+                          {p.gst_enabled
+                            ? <>{formatCurrency(p.gst_amount)} <span className="text-slate-400 text-xs">({p.gst_rate}%)</span></>
+                            : <span className="text-slate-400 text-xs font-semibold">GST OFF</span>}
+                        </td>
+                        <td className="text-right px-3 py-1.5 border-b border-slate-100 font-medium">{formatCurrency(p.total_amount)}</td>
                         <td className="text-right px-3 py-1.5 border-b border-slate-100 text-emerald-600">{formatCurrency(p.paid_amount)}</td>
                         <td className={`text-right px-3 py-1.5 border-b border-slate-100 font-semibold ${p.balance_amount > 0 ? 'text-red-600' : 'text-slate-400'}`}>{formatCurrency(p.balance_amount)}</td>
                         <td className="text-center px-3 py-1.5 border-b border-slate-100">
@@ -601,8 +677,26 @@ export default function Purchase() {
               <input type="number" min="0" className={inputClass(purchaseErrors.paid_amount)} value={purchaseForm.paid_amount} onChange={e => setPurchaseForm(f => ({ ...f, paid_amount: e.target.value }))} placeholder="0" />
             </Field>
           </div>
+          <Field label="GST">
+            <div className="grid grid-cols-2 gap-2 max-w-xs">
+              {([false, true] as const).map(on => (
+                <button
+                  key={String(on)}
+                  type="button"
+                  onClick={() => setPurchaseForm(f => ({ ...f, gst_enabled: on }))}
+                  className={classNames(
+                    'p-2.5 border rounded-lg text-sm font-semibold transition-colors',
+                    purchaseForm.gst_enabled === on ? 'bg-blue-600 border-blue-600 text-white' : 'border-slate-200 text-slate-600 hover:bg-slate-50'
+                  )}
+                >
+                  {on ? 'ON' : 'OFF'}
+                </button>
+              ))}
+            </div>
+          </Field>
           <div className="p-3 bg-slate-50 rounded-lg border border-slate-200 text-sm space-y-1">
-            <div className="flex justify-between"><span className="text-slate-500">18% GST</span><b className="text-slate-800">{formatCurrency(purchaseFormCalc.gstAmount)}</b></div>
+            <div className="flex justify-between"><span className="text-slate-500">GST</span><b className="text-slate-800">{formatCurrency(purchaseFormCalc.gstAmount)}</b></div>
+            <div className="flex justify-between"><span className="text-slate-500">GST Rate</span><b className="text-slate-800">{purchaseFormCalc.gstEnabled ? `${purchaseFormCalc.gstRate}%` : '-'}</b></div>
             <div className="flex justify-between"><span className="text-slate-500">Total Bill Amount</span><b className="text-slate-800">{formatCurrency(purchaseFormCalc.totalAmount)}</b></div>
             <div className="flex justify-between pt-1 border-t border-dashed border-slate-200"><span className="font-semibold text-slate-700">Balance Amount</span><b className={purchaseFormCalc.balanceAmount > 0 ? 'text-red-600' : 'text-emerald-600'}>{formatCurrency(purchaseFormCalc.balanceAmount)}</b></div>
           </div>

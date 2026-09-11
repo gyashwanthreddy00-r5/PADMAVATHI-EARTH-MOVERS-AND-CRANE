@@ -859,6 +859,7 @@ export interface Purchase {
   remark: string | null;
   purchase_date: string;
   amount: number;
+  gst_enabled: boolean;
   gst_rate: number;
   gst_amount: number;
   total_amount: number;

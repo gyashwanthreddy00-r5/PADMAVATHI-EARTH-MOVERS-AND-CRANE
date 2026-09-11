@@ -15,6 +15,7 @@ import {
 import { DatePicker } from '@/components/ui/DatePicker';
 import { invoiceDocHTML } from '@/components/InvoiceDocument';
 import { generateInvoicePdfBase64 } from '@/lib/invoicePdf';
+import { htmlToPdfBase64 } from '@/lib/htmlToPdf';
 import type {
   InvoiceWithRelations, InvoiceItem, InvoicePayment,
   InvoiceSettings, PaymentMode, InvoiceStatus, Customer,
@@ -78,6 +79,10 @@ export default function SettlementReport() {
   const [paymentDateFrom, setPaymentDateFrom] = useState('');
   const [paymentDateTo, setPaymentDateTo] = useState('');
   const [sendingStatement, setSendingStatement] = useState(false);
+  const [sendingBalanceStatement, setSendingBalanceStatement] = useState(false);
+  // Send Balance Statement's "Also Send Invoices" toggle — OFF by default, so Send
+  // Balance Statement sends only the balance statement sheet unless explicitly opted in.
+  const [alsoSendInvoices, setAlsoSendInvoices] = useState(false);
 
   // Pagination
   const [page, setPage] = useState(1);
@@ -251,6 +256,23 @@ export default function SettlementReport() {
   }, [filteredRows]);
 
   const selectedCustomer = useMemo(() => customers.find(c => c.id === selectedCustomerId) ?? null, [customers, selectedCustomerId]);
+
+  // Balance Statement data — this customer's outstanding invoices across their FULL
+  // history (reuses the already-computed settlementRows/balance, nothing re-derived),
+  // deliberately independent of the date/search/status filters above: a balance
+  // statement means "what they owe right now", not "what's in the current filter".
+  // Paid invoices (balance <= 0) never appear here.
+  const balanceStatementRows = useMemo(() => {
+    if (!selectedCustomerId) return [];
+    return settlementRows.filter(r => r.customer_id === selectedCustomerId && r.balance > 0);
+  }, [settlementRows, selectedCustomerId]);
+
+  const balanceStatementTotals = useMemo(() => ({
+    count: balanceStatementRows.length,
+    totalAmount: Math.round(balanceStatementRows.reduce((s, r) => s + (r.discount_enabled ? Number(r.final_payable_amount ?? r.grand_total) : r.grand_total), 0) * 100) / 100,
+    totalReceived: Math.round(balanceStatementRows.reduce((s, r) => s + r.amount_received, 0) * 100) / 100,
+    totalBalance: Math.round(balanceStatementRows.reduce((s, r) => s + r.balance, 0) * 100) / 100,
+  }), [balanceStatementRows]);
 
   // Reset page when filters change
   useEffect(() => { setPage(1); }, [selectedCustomerId, searchInvoice, searchCustomer, statusFilter, dateFrom, dateTo, paymentDateFrom, paymentDateTo, pageSize]);
@@ -520,7 +542,111 @@ export default function SettlementReport() {
     win.document.close();
   };
 
-  // ONE email with the customer's full statement - never one email per invoice.
+  // Builds the Balance Statement PDF — a separate, standalone template (not a refactor
+  // of printCustomerStatement, which stays byte-for-byte unchanged) so the existing
+  // Print Statement output can never be affected by this new feature.
+  const buildBalanceStatementHtml = (): string | null => {
+    if (!selectedCustomer) return null;
+    const rows = balanceStatementRows.map((r, idx) => `<tr>
+      <td style="text-align:center">${idx + 1}</td>
+      <td>${formatDate(r.invoice_date)}</td>
+      <td>${r.invoice_number}</td>
+      <td style="text-align:right">${formatCurrency(r.discount_enabled ? Number(r.final_payable_amount ?? r.grand_total) : r.grand_total)}</td>
+      <td style="text-align:right">${formatCurrency(r.amount_received)}</td>
+      <td style="text-align:right">${formatCurrency(r.balance)}</td>
+      <td style="text-align:center">${r.status.toUpperCase()}</td>
+    </tr>`).join('');
+    return `<!doctype html><html><head><meta charset="utf-8"><title>Balance Statement - ${selectedCustomer.name}</title>
+<style>
+  * { box-sizing: border-box; }
+  body { font-family: Arial, Helvetica, sans-serif; padding: 20mm; color: #111; }
+  .co { text-align: center; font-weight: 800; font-size: 18px; text-transform: uppercase; }
+  .addr { text-align: center; font-size: 11px; color: #333; margin-top: 2px; }
+  h2 { text-align: center; font-size: 15px; letter-spacing: 1px; margin: 16px 0 4px; text-transform: uppercase; }
+  .cust { font-size: 12px; margin: 10px 0; padding: 8px 10px; background: #f8f8f8; border: 1px solid #ddd; }
+  table { width: 100%; border-collapse: collapse; font-size: 12px; margin-top: 10px; }
+  th, td { border: 1px solid #333; padding: 5px 8px; }
+  th { background: #f0f0f0; text-transform: uppercase; font-size: 10px; }
+  td:first-child, th:first-child { text-align: center; }
+  tfoot td { font-weight: 700; background: #fafafa; }
+  @media print { body { padding: 0; } @page { size: A4; margin: 12mm; } }
+</style></head><body>
+  ${settings?.logo_url ? `<div style="text-align:center"><img src="${settings.logo_url}" alt="Logo" style="max-height:50px"/></div>` : ''}
+  <div class="co">${settings?.company_name ?? ''}</div>
+  ${settings?.address ? `<div class="addr">${settings.address.replace(/\n/g, ', ')}</div>` : ''}
+  <div class="addr">${[settings?.phone ? 'Ph: ' + settings.phone : '', settings?.email ?? '', settings?.gstin ? 'GSTIN: ' + settings.gstin : ''].filter(Boolean).join(' &middot; ')}</div>
+  <h2>Balance Statement</h2>
+  <div class="cust">
+    <strong>${selectedCustomer.name}</strong><br/>
+    ${[selectedCustomer.phone, selectedCustomer.email, selectedCustomer.gstin ? 'GSTIN: ' + selectedCustomer.gstin : ''].filter(Boolean).join(' &middot; ')}<br/>
+    Outstanding invoices (all time) — paid invoices are not included.
+  </div>
+  <table>
+    <thead><tr><th>Sl.No</th><th>Date</th><th>Invoice Number</th><th>Total Amt</th><th>Received Amt</th><th>Balance Amt</th><th>Status</th></tr></thead>
+    <tbody>${rows || '<tr><td colspan="7" style="text-align:center;padding:16px">No outstanding invoices.</td></tr>'}</tbody>
+    <tfoot><tr><td colspan="3">TOTAL (${balanceStatementTotals.count} invoice${balanceStatementTotals.count === 1 ? '' : 's'})</td><td style="text-align:right">${formatCurrency(balanceStatementTotals.totalAmount)}</td><td style="text-align:right">${formatCurrency(balanceStatementTotals.totalReceived)}</td><td style="text-align:right">${formatCurrency(balanceStatementTotals.totalBalance)}</td><td></td></tr></tfoot>
+  </table>
+</body></html>`;
+  };
+
+  // Balance Statement — outstanding invoices only (balanceStatementRows already
+  // excludes every fully-paid invoice), optionally with each one's own invoice PDF
+  // attached too when "Also Send Invoices" is checked. Separate action/function from
+  // sendCustomerStatement (Full Statement) below — two distinct sends, per spec.
+  const sendBalanceStatement = async () => {
+    if (!selectedCustomer) return;
+    if (!selectedCustomer.email) {
+      show('This customer does not have an email address configured. Please add an email in Customer Master.', 'error');
+      return;
+    }
+    if (balanceStatementRows.length === 0) {
+      show('This customer has no outstanding (unpaid/partially paid) invoices to send.', 'error');
+      return;
+    }
+    setSendingBalanceStatement(true);
+    try {
+      const attachments: { filename: string; content: string }[] = [];
+      const html = buildBalanceStatementHtml();
+      if (html) {
+        const filename = `Balance_Statement_${selectedCustomer.name.replace(/[^a-zA-Z0-9]+/g, '_')}.pdf`;
+        const content = await htmlToPdfBase64(html, filename);
+        attachments.push({ filename, content });
+      }
+      if (alsoSendInvoices) {
+        for (const r of balanceStatementRows) {
+          const content = await generateInvoicePdfBase64(r.raw, r.items ?? [], settings, invoiceSettings, 'master');
+          attachments.push({ filename: `Invoice_${r.invoice_number}.pdf`, content });
+        }
+      }
+      const { data, error } = await supabase.functions.invoke('send-balance-statement', {
+        body: { customerId: selectedCustomer.id, invoiceIds: balanceStatementRows.map(r => r.id), attachments, statementLabel: 'Balance Statement' },
+      });
+      if (error) {
+        let msg = 'Unable to send balance statement. Please try again.';
+        if (error.context && typeof error.context.json === 'function') {
+          try {
+            const errBody = await error.context.json();
+            if (errBody?.error) msg = errBody.error;
+          } catch { /* fall through to default */ }
+        } else if (typeof error.message === 'string' && error.message.length > 0) {
+          msg = error.message;
+        }
+        show(getEmailErrorMessage(msg), 'error');
+      } else if (data?.sentTo) {
+        show(`Balance statement sent to ${data.sentTo}`, 'success');
+      } else {
+        show('Balance statement sent successfully', 'success');
+      }
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Unable to send balance statement. Please try again.';
+      show(getEmailErrorMessage(msg), 'error');
+    }
+    setSendingBalanceStatement(false);
+  };
+
+  // ONE email with the customer's full statement - never one email per invoice. This is
+  // "Send Full Statement" (paid + pending, respects the date/search/status filters above)
+  // — unchanged from before, only its button label changed.
   const sendCustomerStatement = async () => {
     if (!selectedCustomer) return;
     if (!selectedCustomer.email) {
@@ -695,8 +821,22 @@ export default function SettlementReport() {
             <div className="flex flex-wrap gap-2">
               <Button variant="outline" onClick={printCustomerStatement} disabled={filteredRows.length === 0}><Printer className="w-4 h-4" />Print Statement</Button>
               <Button variant="outline" onClick={exportSettlementExcel} disabled={filteredRows.length === 0}><FileSpreadsheet className="w-4 h-4" />Export Statement</Button>
-              <Button onClick={sendCustomerStatement} disabled={sendingStatement || filteredRows.length === 0}><Send className="w-4 h-4" />{sendingStatement ? 'Sending...' : 'Email Statement'}</Button>
+              <Button variant="outline" onClick={sendBalanceStatement} disabled={sendingBalanceStatement || balanceStatementRows.length === 0}><Send className="w-4 h-4" />{sendingBalanceStatement ? 'Sending...' : 'Send Balance Statement'}</Button>
+              <Button onClick={sendCustomerStatement} disabled={sendingStatement || filteredRows.length === 0}><Send className="w-4 h-4" />{sendingStatement ? 'Sending...' : 'Send Full Statement'}</Button>
             </div>
+          </div>
+
+          <div className="flex flex-wrap items-center justify-between gap-3 p-3 bg-slate-50 rounded-lg border border-slate-200">
+            <div className="text-sm text-slate-600">
+              <span className="font-semibold text-slate-700">Balance Statement</span> (outstanding only, all-time):{' '}
+              {balanceStatementRows.length === 0
+                ? <span className="text-slate-400">no outstanding invoices</span>
+                : <>{balanceStatementRows.length} invoice{balanceStatementRows.length === 1 ? '' : 's'}, <b className="text-red-600">{formatCurrency(balanceStatementTotals.totalBalance)}</b> due</>}
+            </div>
+            <label className="flex items-center gap-1.5 text-sm text-slate-600">
+              <input type="checkbox" checked={alsoSendInvoices} onChange={e => setAlsoSendInvoices(e.target.checked)} className="w-4 h-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500" />
+              Also Send Invoices
+            </label>
           </div>
 
           <div className="overflow-x-auto border border-slate-200 rounded-lg">

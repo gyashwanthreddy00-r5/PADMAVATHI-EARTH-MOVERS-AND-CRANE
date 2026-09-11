@@ -38,7 +38,7 @@ export default function Rates() {
   const [form, setForm] = useState<Partial<RateMaster>>({
     vehicle_type: 'Crane', capacity_tons: '', rate_type: 'Both',
     first_hour_rate: null, second_hour_rate: null,
-    weekly_rate: null, daily_rate: null as number | null, monthly_rate: null, batha: null as number | null,
+    weekly_rate: null, daily_rate: null as number | null, monthly_rate: null,
     effective_from: TODAY, effective_to: null, status: 'Active',
   });
 
@@ -64,7 +64,7 @@ export default function Rates() {
     setForm({
       vehicle_type: 'Crane', capacity_tons: '', rate_type: 'Both',
       first_hour_rate: null, second_hour_rate: null,
-      weekly_rate: null, daily_rate: null as number | null, monthly_rate: null, batha: null as number | null,
+      weekly_rate: null, daily_rate: null as number | null, monthly_rate: null,
       effective_from: TODAY, effective_to: null, status: 'Active',
     });
     setModalOpen(true);
@@ -81,7 +81,6 @@ export default function Rates() {
       weekly_rate: r.weekly_rate,
       daily_rate: r.daily_rate,
       monthly_rate: r.monthly_rate,
-      batha: r.batha,
       effective_from: TODAY,
       effective_to: null,
       status: 'Active',
@@ -124,7 +123,11 @@ export default function Rates() {
       weekly_rate: form.weekly_rate != null ? Number(form.weekly_rate) : null,
       daily_rate: form.daily_rate != null ? Number(form.daily_rate) : 0,
       monthly_rate: form.monthly_rate != null ? Number(form.monthly_rate) : null,
-      batha: form.batha != null ? Number(form.batha) : 0,
+      // Batha is no longer part of Rate Master — it's a manual, per-billing-entry
+      // "Operator Batha" charge now (see GstBillingEntry.tsx / SimpleCashBillForm.tsx).
+      // Kept at 0 here (column stays, for historical rows) rather than removed, since
+      // existing Rate Master records/history must be preserved, not deleted.
+      batha: 0,
       effective_from: form.effective_from ?? TODAY,
       effective_to: null,
       status: 'Active' as const,
@@ -215,14 +218,14 @@ export default function Rates() {
   };
 
   const handleExport = () => {
-    const headers = ['S.No', 'Vehicle Type', 'Capacity', '1 Hr', '2 Hr', 'Full Day', 'Monthly', 'Batha', 'Effective From', 'Effective To', 'Status', 'Version'];
+    const headers = ['S.No', 'Vehicle Type', 'Capacity', '1 Hr', '2 Hr', 'Full Day', 'Monthly', 'Effective From', 'Effective To', 'Status', 'Version'];
     const dataRows = filteredRates.map((r, i) => [
       i + 1, r.vehicle_type ?? '-',
       r.vehicle_type === 'JCB' ? '-' : (r.capacity_tons ?? '-'),
       r.first_hour_rate ? Number(r.first_hour_rate) : '-',
       r.second_hour_rate ? Number(r.second_hour_rate) : '-',
       Number(r.daily_rate), r.monthly_rate ? Number(r.monthly_rate) : '-',
-      Number(r.batha), formatDate(r.effective_from),
+      formatDate(r.effective_from),
       r.effective_to ? formatDate(r.effective_to) : '-', r.status, `V${r.version_number}`,
     ]);
     exportToExcelWithCompany('rate-master-export.csv', 'Rate Master Report', settings ? { company_name: settings.company_name, address: settings.address, phone: settings.phone, email: settings.email, gstin: settings.gstin } : { company_name: 'Crane ERP' },
@@ -238,7 +241,6 @@ export default function Rates() {
     { key: 'second_hour_rate', header: '2 Hr', align: 'right', render: r => r.second_hour_rate ? formatCurrency(r.second_hour_rate) : '-' },
     { key: 'daily_rate', header: t('dailyRate'), align: 'right', render: r => formatCurrency(r.daily_rate), sortable: true },
     { key: 'monthly_rate', header: 'Monthly', align: 'right', render: r => r.monthly_rate ? formatCurrency(r.monthly_rate) : '-' },
-    { key: 'batha', header: t('batha2'), align: 'right', render: r => formatCurrency(r.batha) },
     { key: 'effective_from', header: t('effectiveFrom'), sortable: true, render: r => formatDate(r.effective_from) },
     { key: 'status', header: t('status'), render: r => <StatusBadge status={r.status} variant={r.status === 'Active' ? 'green' : 'gray'} /> },
     { key: 'version_number', header: t('version'), align: 'center', render: r => `V${r.version_number}` },
@@ -360,9 +362,6 @@ export default function Rates() {
           </Field>
           <Field label="Monthly Rate">
             <input type="number" className={inputClass()} value={form.monthly_rate ?? ''} onChange={e => setForm(f => ({ ...f, monthly_rate: e.target.value ? Number(e.target.value) : null }))} placeholder="₹" />
-          </Field>
-          <Field label={t('batha2')}>
-            <input type="number" className={inputClass()} value={form.batha ?? ''} onChange={e => setForm(f => ({ ...f, batha: e.target.value === '' ? null : Number(e.target.value) }))} placeholder="₹" />
           </Field>
         </div>
       </Modal>

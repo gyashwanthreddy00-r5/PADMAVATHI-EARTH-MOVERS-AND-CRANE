@@ -61,10 +61,13 @@ Deno.serve(async (req: Request) => {
     // email with no attachment as before. Only a caller that explicitly sends a non-empty
     // attachments array (Customer Statements' Email Balance Statement) gets the new
     // "statement is attached as a PDF" subject/body below.
-    const { customerId, invoiceIds, attachments } = body as {
+    const { customerId, invoiceIds, attachments, statementLabel } = body as {
       customerId: string;
       invoiceIds: string[];
       attachments?: { filename: string; content: string }[];
+      // e.g. "Balance Statement" or "Full Statement" — only used for the subject/body
+      // text when attachments are present; defaults to "Balance Statement" if omitted.
+      statementLabel?: string;
     };
     if (!customerId || !Array.isArray(invoiceIds) || invoiceIds.length === 0) {
       return new Response(
@@ -144,8 +147,9 @@ Deno.serve(async (req: Request) => {
 
     // Unchanged default (no attachments passed, e.g. Settlement Report's own Email
     // Statement action) keeps its original subject/body exactly as before.
+    const label = statementLabel || "Balance Statement";
     const subject = hasAttachments
-      ? `Balance Statement - ${customer.name}`
+      ? `${label} - ${customer.name}`
       : `Account Statement – ${companyName} – Outstanding Balance`;
 
     const tableRowsHtml = rows.map((r, idx) => `<tr>
@@ -210,13 +214,13 @@ ${companyEmail}`;
     // spec — the statement itself is in the PDF, not retyped as an inline HTML table.
     const attachedTextBody = `Dear ${customer.name},
 
-Please find attached your balance statement for the selected period.
+Please find attached your ${label.toLowerCase()} for the selected period.
 
 Regards,
 ${companyName}`;
     const attachedEmailWrapper = `<div style="font-family: Arial, Helvetica, sans-serif; font-size: 14px; color: #333; max-width: 700px; margin: 0 auto;">
 <p>Dear ${customer.name},</p>
-<p>Please find attached your balance statement for the selected period.</p>
+<p>Please find attached your ${label.toLowerCase()} for the selected period.</p>
 <p style="margin-top: 24px;">Regards,<br/><strong>${companyName}</strong></p>
 </div>`;
 
