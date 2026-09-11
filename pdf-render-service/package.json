@@ -1,0 +1,10 @@
+{
+  "name": "pdf-render-service",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Tiny Vercel serverless function that turns invoice HTML into a real PDF via headless Chromium, so Print/View and the emailed PDF are byte-for-byte the same document.",
+  "dependencies": {
+    "puppeteer-core": "^23.11.1",
+    "@sparticuz/chromium": "^152.0.0"
+  }
+}
