@@ -1,8 +1,0 @@
-{
-  "functions": {
-    "api/render-pdf.js": {
-      "memory": 1024,
-      "maxDuration": 30
-    }
-  }
-}
