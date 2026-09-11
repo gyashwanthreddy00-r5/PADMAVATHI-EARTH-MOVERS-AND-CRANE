@@ -9,6 +9,7 @@ export function Modal({
   children,
   size = 'md',
   footer,
+  closeOnBackdropClick = true,
 }: {
   open: boolean;
   onClose: () => void;
@@ -16,6 +17,7 @@ export function Modal({
   children: ReactNode;
   size?: 'sm' | 'md' | 'lg' | 'xl' | '2xl';
   footer?: ReactNode;
+  closeOnBackdropClick?: boolean;
 }) {
   useEffect(() => {
     if (open) {
@@ -29,7 +31,7 @@ export function Modal({
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-      <div className="absolute inset-0 bg-slate-900/60 backdrop-blur-sm" onClick={onClose} />
+      <div className="absolute inset-0 bg-slate-900/60 backdrop-blur-sm" onClick={closeOnBackdropClick ? onClose : undefined} />
       <div className={`relative bg-white rounded-xl shadow-2xl w-full ${sizeClass} max-h-[90vh] flex flex-col`}>
         <div className="flex items-center justify-between px-6 py-4 border-b border-slate-100">
           <h3 className="text-lg font-bold text-slate-800">{title}</h3>

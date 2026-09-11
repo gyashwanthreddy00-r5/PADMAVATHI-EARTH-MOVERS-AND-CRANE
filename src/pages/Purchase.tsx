@@ -611,6 +611,7 @@ export default function Purchase() {
         onClose={() => setVendorModalOpen(false)}
         title={editingVendor ? 'Edit Vendor' : 'Add Vendor'}
         size="sm"
+        closeOnBackdropClick={false}
         footer={
           <>
             <Button variant="secondary" onClick={() => setVendorModalOpen(false)}>Cancel</Button>
@@ -650,6 +651,7 @@ export default function Purchase() {
         onClose={() => setPurchaseModalOpen(false)}
         title={editingPurchase ? 'Edit Purchase' : 'Add Purchase'}
         size="md"
+        closeOnBackdropClick={false}
         footer={
           <>
             <Button variant="secondary" onClick={() => setPurchaseModalOpen(false)}>Cancel</Button>

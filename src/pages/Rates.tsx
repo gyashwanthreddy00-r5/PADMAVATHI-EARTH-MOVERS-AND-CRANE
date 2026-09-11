@@ -301,6 +301,7 @@ export default function Rates() {
         open={modalOpen} onClose={() => setModalOpen(false)}
         title={editing ? t('newRateVersion') : `${t('addNew')} ${t('rateMaster')}`}
         size="lg"
+        closeOnBackdropClick={false}
         footer={<><Button variant="secondary" onClick={() => setModalOpen(false)}>{t('cancel')}</Button><Button onClick={save} disabled={saving}>{saving ? t('saving') : t('save')}</Button></>}
       >
         {editing && (
@@ -370,6 +371,7 @@ export default function Rates() {
         open={historyOpen} onClose={() => setHistoryOpen(false)}
         title={`${t('rateHistory')} - ${historyLabel}`}
         size="lg"
+        closeOnBackdropClick={false}
       >
         <div className="overflow-x-auto">
           <table className="w-full text-sm">

@@ -120,6 +120,7 @@ export default function RolesPermissions() {
       </div>
 
       <Modal open={modalOpen} onClose={() => setModalOpen(false)} title={editing ? `${t('edit')} ${t('roleName')}` : `${t('addNew')} ${t('roleName')}`}
+        closeOnBackdropClick={false}
         footer={<><Button variant="secondary" onClick={() => setModalOpen(false)}>{t('cancel')}</Button><Button onClick={save} disabled={saving}>{saving ? t('saving') : t('save')}</Button></>}>
         <div className="space-y-4">
           <Field label={t('roleName')} required><input className={inputClass()} value={formName} onChange={e => setFormName(e.target.value)} placeholder="e.g. Manager, Operator, Accountant" autoFocus /></Field>

@@ -614,6 +614,7 @@ export default function Quotations() {
         onClose={() => setModalOpen(false)}
         title={editing ? `${t('edit')} ${t('quotations')}` : `${t('addQuotation')}`}
         size="2xl"
+        closeOnBackdropClick={false}
         footer={<>
           <Button variant="secondary" onClick={() => setModalOpen(false)}>{t('cancel')}</Button>
           <Button onClick={save} disabled={saving}>{saving ? t('saving') : t('save')}</Button>
@@ -818,6 +819,7 @@ export default function Quotations() {
         onClose={() => { setViewQuotation(null); setViewError(null); setViewLoading(false); if (previewObjUrl) { URL.revokeObjectURL(previewObjUrl); setPreviewObjUrl(null); } }}
         title={viewQuotation ? `Quotation ${viewQuotation.quotation_number ?? ''} - ${viewQuotation.customer_name ?? ''}` : 'Quotation Preview'}
         size="2xl"
+        closeOnBackdropClick={false}
         footer={
           viewQuotation && !viewLoading && !viewError ? (
             <>
@@ -861,6 +863,7 @@ export default function Quotations() {
         onClose={() => setEmailModalOpen(false)}
         title="Send Quotation"
         size="lg"
+        closeOnBackdropClick={false}
         footer={<>
           <Button variant="secondary" onClick={() => setEmailModalOpen(false)}>Cancel</Button>
           <Button onClick={sendEmail} disabled={emailSending}>

@@ -117,6 +117,15 @@ export function invoiceDocHTML(
       <td style="border-top:1px solid #000"></td>
       <td style="text-align:right;font-weight:bold;border-top:1px solid #000">${formatNumber(finalPayable)}</td>
     </tr>` : `
+    <tr>
+      <td></td>
+      <td></td>
+      <td></td>
+      <td></td>
+      <td></td>
+      <td></td>
+      <td style="text-align:right;font-weight:bold">${formatNumber(taxable)}</td>
+    </tr>
     ${isIgst
       ? (igstAmt > 0 ? `<tr><td></td><td style="text-align:right;font-style:italic">IGST ${inv.igst_percent}%</td><td></td><td></td><td style="text-align:right">${inv.igst_percent}</td><td style="text-align:center">%</td><td style="text-align:right">${formatNumber(igstAmt)}</td></tr>` : '')
       : `${cgstAmt > 0 ? `<tr><td></td><td style="text-align:right;font-style:italic">CGST ${inv.cgst_percent}%</td><td></td><td></td><td style="text-align:right">${inv.cgst_percent}</td><td style="text-align:center">%</td><td style="text-align:right">${formatNumber(cgstAmt)}</td></tr>` : ''}

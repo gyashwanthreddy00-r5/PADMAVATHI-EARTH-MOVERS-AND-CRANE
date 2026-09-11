@@ -123,6 +123,7 @@ export default function PagesManagement() {
       </div>
 
       <Modal open={modalOpen} onClose={() => setModalOpen(false)} title={editing ? `${t('edit')} ${t('pagesManagement')}` : `${t('addNew')} ${t('pagesManagement')}`} size="lg"
+        closeOnBackdropClick={false}
         footer={<><Button variant="secondary" onClick={() => setModalOpen(false)}>{t('cancel')}</Button><Button onClick={save} disabled={saving}>{saving ? t('saving') : t('save')}</Button></>}>
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
           <Field label={t('pathUrl')} required><input className={inputClass()} value={formPath} onChange={e => setFormPath(e.target.value)} placeholder="/settings/users" /></Field>

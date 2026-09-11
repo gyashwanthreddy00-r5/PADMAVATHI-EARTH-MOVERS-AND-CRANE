@@ -321,6 +321,7 @@ export default function Vehicles() {
         open={modalOpen} onClose={() => setModalOpen(false)}
         title={editing ? `${t('edit')} ${t('craneMaster')}` : `${t('addNew')} ${t('craneMaster')}`}
         size="lg"
+        closeOnBackdropClick={false}
         footer={
           <>
             <Button variant="secondary" onClick={() => setModalOpen(false)}>{t('cancel')}</Button>
@@ -415,6 +416,7 @@ export default function Vehicles() {
       <Modal
         open={!!viewVehicle} onClose={() => setViewVehicle(null)}
         title="Vehicle Details" size="md"
+        closeOnBackdropClick={false}
       >
         {viewVehicle && (
           <div className="space-y-3 text-sm">

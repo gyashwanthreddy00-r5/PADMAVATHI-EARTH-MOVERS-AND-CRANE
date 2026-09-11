@@ -178,6 +178,7 @@ export default function Emi() {
       <Modal
         open={modalOpen} onClose={() => setModalOpen(false)}
         title={editing ? `${t('edit')} ${t('emiVehicles')}` : `${t('addNew')} ${t('emiVehicles')}`}
+        closeOnBackdropClick={false}
         footer={<><Button variant="secondary" onClick={() => setModalOpen(false)}>{t('cancel')}</Button><Button onClick={save} disabled={saving}>{saving ? t('saving') : t('save')}</Button></>}
       >
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
@@ -234,6 +235,7 @@ export default function Emi() {
           open={!!payTarget}
           onClose={() => setPayTarget(null)}
           title="Mark EMI as Paid"
+          closeOnBackdropClick={false}
           footer={
             <>
               <Button variant="secondary" onClick={() => setPayTarget(null)}>Cancel</Button>

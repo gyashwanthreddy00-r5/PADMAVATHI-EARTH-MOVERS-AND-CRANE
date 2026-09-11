@@ -1214,6 +1214,15 @@ export default function Invoices({ initialTab = 'list' }: InvoicesProps = {}) {
         const filename = `Full_Statement_${selectedStatementCustomer.name.replace(/[^a-zA-Z0-9]+/g, '_')}_${periodSlug}.pdf`;
         pdfHtmls.push({ filename, html });
       }
+      // "Also Send Invoices" applies to both statement actions - attach every invoice
+      // this Full Statement lists (paid + pending, current filters), not just the
+      // outstanding ones Send Balance Statement uses.
+      if (alsoSendInvoices) {
+        for (const r of statementRows) {
+          const invHtml = invoiceDocHTML(r.inv, r.inv.items ?? [], settings, invoiceSettings, 'master', 'tax', rateMasterRows, vehiclesList);
+          pdfHtmls.push({ filename: `Invoice_${r.inv.invoice_number}.pdf`, html: invHtml });
+        }
+      }
       const { data, error } = await supabase.functions.invoke('send-balance-statement', {
         body: { customerId: selectedStatementCustomer.id, invoiceIds: statementRows.map(r => r.inv.id), pdfHtmls, statementLabel: 'Full Statement' },
       });
@@ -1289,7 +1298,14 @@ export default function Invoices({ initialTab = 'list' }: InvoicesProps = {}) {
       key: 'actions', header: t('actions'), align: 'center',
       render: i => {
         const isDraft = i.invoice_status === 'Draft' || !i.invoice_number;
-        const isNewFlowDraft = isDraft && (i.billingLines?.length ?? 0) > 0;
+        // GST Billing Entry assigns a real invoice_number at the very first captured
+        // line (see GstBillingEntry.tsx saveLine) - well before the invoice is
+        // finalized - so a Draft that already has one can only have come from that
+        // flow, even if its billing lines are currently empty (e.g. all deleted).
+        // Route it back to Continue Billing rather than the old trip-based Generate
+        // Invoice flow, whose "already invoiced" guard rejects any Draft that already
+        // carries a number since its own drafts never get one this early.
+        const isNewFlowDraft = isDraft && (!!i.invoice_number || (i.billingLines?.length ?? 0) > 0);
         return (
           <div className="flex justify-center gap-1">
             <button onClick={() => { setViewInvoice(i); setViewItems(i.items ?? []); setViewPayments(i.payments ?? []); }} className="p-1.5 text-slate-500 hover:text-blue-600 hover:bg-blue-50 rounded-md" title="View"><Eye className="w-4 h-4" /></button>
@@ -1737,6 +1753,7 @@ export default function Invoices({ initialTab = 'list' }: InvoicesProps = {}) {
         onClose={() => setReminderPreviewRow(null)}
         title={`Day ${reminderPreviewRow?.stage ?? ''} Reminder Preview`}
         size="lg"
+        closeOnBackdropClick={false}
         footer={
           <>
             <Button variant="secondary" onClick={() => setReminderPreviewRow(null)}>Cancel</Button>
@@ -1809,16 +1826,36 @@ export default function Invoices({ initialTab = 'list' }: InvoicesProps = {}) {
         onClose={() => { setViewInvoice(null); setViewItems([]); setViewPayments([]); }}
         title={viewInvoiceData?.invoice.invoice_number ? `Invoice ${viewInvoiceData.invoice.invoice_number}` : 'Captured Trip'}
         size="xl"
+        closeOnBackdropClick={false}
         footer={
           <>
             <Button variant="secondary" onClick={() => { setViewInvoice(null); setViewItems([]); setViewPayments([]); }}>{t('close')}</Button>
             {viewInvoiceData && (
               <>
-                {(viewInvoiceData.invoice.invoice_status === 'Draft' || !viewInvoiceData.invoice.invoice_number) ? (
-                  <Button onClick={() => { setViewInvoice(null); setViewItems([]); openGenerateInvoice(viewInvoiceData.invoice); }}>
-                    <Zap className="w-4 h-4" />Generate Invoice
-                  </Button>
-                ) : (
+                {(() => {
+                  const modalIsDraft = viewInvoiceData.invoice.invoice_status === 'Draft' || !viewInvoiceData.invoice.invoice_number;
+                  // Same routing as the list's action column - a Draft that already has an
+                  // invoice_number can only be a GST Billing Entry draft (it assigns one at
+                  // the first captured line, before finalizing), so it goes to Continue
+                  // Billing even with 0 lines currently, never to the old trip-based flow.
+                  const modalIsNewFlowDraft = modalIsDraft && (!!viewInvoiceData.invoice.invoice_number || (viewInvoiceData.invoice.billingLines?.length ?? 0) > 0);
+                  if (modalIsNewFlowDraft) {
+                    return (
+                      <Button onClick={() => { setViewInvoice(null); setViewItems([]); setResumeGstInvoiceId(viewInvoiceData.invoice.id); setShowNewGstFlow(true); }}>
+                        <Zap className="w-4 h-4" />Continue Billing
+                      </Button>
+                    );
+                  }
+                  if (modalIsDraft) {
+                    return (
+                      <Button onClick={() => { setViewInvoice(null); setViewItems([]); openGenerateInvoice(viewInvoiceData.invoice); }}>
+                        <Zap className="w-4 h-4" />Generate Invoice
+                      </Button>
+                    );
+                  }
+                  return null;
+                })()}
+                {!(viewInvoiceData.invoice.invoice_status === 'Draft' || !viewInvoiceData.invoice.invoice_number) && (
                   <>
                     <Button variant="outline" onClick={() => openPrintCopyModal(viewInvoiceData.invoice, viewInvoiceData.items)}>
                       <Printer className="w-4 h-4" />{t('print')}
@@ -1940,6 +1977,7 @@ export default function Invoices({ initialTab = 'list' }: InvoicesProps = {}) {
         onClose={() => setGenerateInvoiceModal(null)}
         title="Generate Invoice"
         size="sm"
+        closeOnBackdropClick={false}
         footer={
           <>
             <Button variant="secondary" onClick={() => setGenerateInvoiceModal(null)}>{t('cancel')}</Button>
@@ -2035,6 +2073,7 @@ export default function Invoices({ initialTab = 'list' }: InvoicesProps = {}) {
         onClose={() => setPaymentModal(null)}
         title="Record Payment"
         size="sm"
+        closeOnBackdropClick={false}
         footer={
           <>
             <Button variant="secondary" onClick={() => setPaymentModal(null)}>{t('cancel')}</Button>
@@ -2114,6 +2153,7 @@ export default function Invoices({ initialTab = 'list' }: InvoicesProps = {}) {
         onClose={() => setPrintCopyModal(null)}
         title="Select Invoice Copy"
         size="sm"
+        closeOnBackdropClick={false}
         footer={
           <Button variant="secondary" onClick={() => setPrintCopyModal(null)}>{t('cancel')}</Button>
         }
@@ -2145,6 +2185,7 @@ export default function Invoices({ initialTab = 'list' }: InvoicesProps = {}) {
         onClose={() => !savingDetails && setEditDetailsModal(null)}
         title="Edit Invoice Details"
         size="lg"
+        closeOnBackdropClick={false}
         footer={
           <>
             <Button variant="secondary" onClick={() => setEditDetailsModal(null)} disabled={savingDetails}>{t('cancel')}</Button>

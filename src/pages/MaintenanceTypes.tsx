@@ -135,6 +135,7 @@ export default function MaintenanceTypes() {
       <Modal
         open={modalOpen} onClose={() => setModalOpen(false)}
         title={editing ? `${t('edit')} ${t('maintenanceType')}` : `${t('addNew')} ${t('maintenanceType')}`}
+        closeOnBackdropClick={false}
         footer={<><Button variant="secondary" onClick={() => setModalOpen(false)}>{t('cancel')}</Button><Button onClick={save} disabled={saving}>{saving ? t('saving') : t('save')}</Button></>}
       >
         <Field label={t('maintenanceType')} required>

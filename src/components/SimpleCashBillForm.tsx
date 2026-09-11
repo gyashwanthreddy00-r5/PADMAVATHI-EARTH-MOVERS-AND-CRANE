@@ -164,7 +164,6 @@ export function SimpleCashBillForm({ onChange }: Props) {
               options={vehicles.map(v => ({
                 value: v.id,
                 label: `${v.registration_number} - ${v.type}${v.capacity ? ' ' + formatTons(v.capacity) : ''}`,
-                searchText: v.registration_number,
               }))}
             />
           </Field>

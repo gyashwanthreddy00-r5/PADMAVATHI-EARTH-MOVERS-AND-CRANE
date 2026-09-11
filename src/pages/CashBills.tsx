@@ -807,6 +807,7 @@ export default function CashBills() {
         open={modalOpen} onClose={() => !saving && setModalOpen(false)}
         title="Add New Cash / UPI Bill"
         size="xl"
+        closeOnBackdropClick={false}
         footer={null}
       >
         <div className="space-y-4">
@@ -913,6 +914,7 @@ export default function CashBills() {
         onClose={() => setSavedInvoice(null)}
         title="Bill Saved - Print Receipt"
         size="sm"
+        closeOnBackdropClick={false}
         footer={
           <>
             <Button variant="secondary" onClick={() => setSavedInvoice(null)}>Close</Button>
@@ -929,6 +931,7 @@ export default function CashBills() {
         onClose={() => setPaymentModal(null)}
         title="Record Payment"
         size="sm"
+        closeOnBackdropClick={false}
         footer={
           <>
             <Button variant="secondary" onClick={() => setPaymentModal(null)}>Cancel</Button>
@@ -1019,7 +1022,7 @@ export default function CashBills() {
       </Modal>
 
       {/* View Modal */}
-      <Modal open={!!viewInvoice} onClose={() => setViewInvoice(null)} title="Cash / UPI Receipt" size="lg">
+      <Modal open={!!viewInvoice} onClose={() => setViewInvoice(null)} title="Cash / UPI Receipt" size="lg" closeOnBackdropClick={false}>
         {viewInvoice && (() => {
           const upTransport = viewInvoice.up_transportation_enabled ? Number(viewInvoice.up_transportation_amount) || 0 : 0;
           const downTransport = viewInvoice.down_transportation_enabled ? Number(viewInvoice.down_transportation_amount) || 0 : 0;

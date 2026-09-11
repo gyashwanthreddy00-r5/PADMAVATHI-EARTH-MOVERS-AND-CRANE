@@ -211,6 +211,7 @@ export default function Employees() {
       <Modal
         open={modalOpen} onClose={() => setModalOpen(false)}
         title={editing ? `${t('edit')} ${t('employeeMaster')}` : `${t('addNew')} ${t('employeeMaster')}`}
+        closeOnBackdropClick={false}
         footer={<><Button variant="secondary" onClick={() => setModalOpen(false)}>{t('cancel')}</Button><Button onClick={save} disabled={saving}>{saving ? t('saving') : t('save')}</Button></>}
       >
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
@@ -266,7 +267,7 @@ export default function Employees() {
         </div>
       </Modal>
 
-      <Modal open={!!viewEmp} onClose={() => setViewEmp(null)} title="Employee Details" size="md">
+      <Modal open={!!viewEmp} onClose={() => setViewEmp(null)} title="Employee Details" size="md" closeOnBackdropClick={false}>
         {viewEmp && (
           <div className="space-y-3 text-sm">
             <div className="grid grid-cols-2 gap-3">

@@ -51,9 +51,6 @@ export default function GstBillingEntry({ invoiceId, onDone }: { invoiceId?: str
   const [entHours, setEntHours] = useState('');
   const [entMinutes, setEntMinutes] = useState('');
   const [entDays, setEntDays] = useState('1');
-  // Operator Batha — manual, transaction-level entry only. Never auto-filled from Rate
-  // Master; defaults to '' (treated as 0) and stays exactly what the user types.
-  const [entBatha, setEntBatha] = useState('');
   const [editingLineId, setEditingLineId] = useState<string | null>(null);
   const [savingLine, setSavingLine] = useState(false);
   const [deleteLineId, setDeleteLineId] = useState<string | null>(null);
@@ -66,6 +63,11 @@ export default function GstBillingEntry({ invoiceId, onDone }: { invoiceId?: str
   const [upAmount, setUpAmount] = useState('');
   const [downEnabled, setDownEnabled] = useState(false);
   const [downAmount, setDownAmount] = useState('');
+  // Operator Batha — invoice-level charge (Rate x Quantity = Amount), not per billing
+  // entry. Positioned after Down Transportation on the generated invoice.
+  const [operatorBathaEnabled, setOperatorBathaEnabled] = useState(false);
+  const [operatorBathaRate, setOperatorBathaRate] = useState('');
+  const [operatorBathaQuantity, setOperatorBathaQuantity] = useState('');
   const [additionalEnabled, setAdditionalEnabled] = useState(false);
   const [additionalAmount, setAdditionalAmount] = useState('');
   const [additionalDescription, setAdditionalDescription] = useState('');
@@ -105,6 +107,9 @@ export default function GstBillingEntry({ invoiceId, onDone }: { invoiceId?: str
     setUpAmount(invoice.up_transportation_amount ? String(invoice.up_transportation_amount) : '');
     setDownEnabled(invoice.down_transportation_enabled);
     setDownAmount(invoice.down_transportation_amount ? String(invoice.down_transportation_amount) : '');
+    setOperatorBathaEnabled(invoice.operator_batha_enabled ?? false);
+    setOperatorBathaRate(invoice.operator_batha_rate ? String(invoice.operator_batha_rate) : '');
+    setOperatorBathaQuantity(invoice.operator_batha_quantity ? String(invoice.operator_batha_quantity) : '');
     setAdditionalEnabled(invoice.additional_charges_enabled ?? false);
     setAdditionalAmount(invoice.additional_charges_amount ? String(invoice.additional_charges_amount) : '');
     setAdditionalDescription(invoice.additional_charges_description ?? '');
@@ -156,7 +161,6 @@ export default function GstBillingEntry({ invoiceId, onDone }: { invoiceId?: str
   function resetEntryForm() {
     setEntDate(todayISO()); setEntVehicleId(''); setEntRateType('Hourly'); setEntHours(''); setEntMinutes('');
     setEntDays('1');
-    setEntBatha('');
     setEditingLineId(null);
   }
 
@@ -168,7 +172,6 @@ export default function GstBillingEntry({ invoiceId, onDone }: { invoiceId?: str
     setEntHours(l.rate_type === 'Daily' ? '' : String(l.hours));
     setEntMinutes(l.rate_type === 'Daily' ? '' : String(l.minutes));
     setEntDays(l.rate_type === 'Daily' ? String(l.days || 1) : '1');
-    setEntBatha(String(Number(l.batha) || 0));
   }
 
   const selectedEntVehicle = entVehicleId ? vehiclesById.get(entVehicleId) ?? null : null;
@@ -178,13 +181,6 @@ export default function GstBillingEntry({ invoiceId, onDone }: { invoiceId?: str
     ? computeBillingLineAmounts(entRateType, entRateType === 'Daily' ? 0 : Number(entHours) || 0, entRateType === 'Daily' ? 0 : Number(entMinutes) || 0, entRate, entDaysNum)
     : null;
   const canSaveLine = !!(entDate && entVehicleId && (entRateType === 'Daily' ? Number(entDays) > 0 : (entHours !== '' || entMinutes !== '')) && entCalc?.rateFound);
-  const entBathaNum = Number(entBatha) || 0;
-  // Operator Batha is a manual, transaction-level charge — never read from Rate Master.
-  // For Full Day entries, entBatha is the PER-DAY rate the user typed — the total Batha
-  // amount scales with No. of Days, same as Rental Amount. Hourly entries keep entBatha
-  // as a single flat amount for the entry, unchanged.
-  const entBathaAmount = entRateType === 'Daily' ? round2(entBathaNum * entDaysNum) : entBathaNum;
-  const entTotalWithBatha = (entCalc?.rentalAmount ?? 0) + entBathaAmount;
 
   async function saveLine() {
     if (savingLine) return;
@@ -241,9 +237,6 @@ export default function GstBillingEntry({ invoiceId, onDone }: { invoiceId?: str
     const hours = entRateType === 'Daily' ? 0 : Number(entHours) || 0;
     const minutes = entRateType === 'Daily' ? 0 : Number(entMinutes) || 0;
     const days = entRateType === 'Daily' ? entDaysNum : 1;
-    // batha stays the RATE (per-day for Full Day, flat for Hourly — unchanged);
-    // entBathaAmount is the days-scaled total actually billed for this line.
-    const batha = entBathaNum;
     const payload = {
       invoice_id: invoice.id,
       working_date: entDate,
@@ -257,8 +250,8 @@ export default function GstBillingEntry({ invoiceId, onDone }: { invoiceId?: str
       second_hour_rate: entCalc.secondRate,
       first_hour_amount: entCalc.firstAmt,
       second_hour_amount: entCalc.secondAmt,
-      batha,
-      total_amount: round2((entCalc.rentalAmount ?? 0) + entBathaAmount),
+      batha: 0,
+      total_amount: round2(entCalc.rentalAmount ?? 0),
     };
     const result = editingLineId
       ? await supabase.from('invoice_billing_lines').update(payload).eq('id', editingLineId)
@@ -301,16 +294,17 @@ export default function GstBillingEntry({ invoiceId, onDone }: { invoiceId?: str
     const rentalSubtotal = round2(lines.reduce((s, l) => s + l.total_amount, 0));
     const up = upEnabled ? Number(upAmount) || 0 : 0;
     const down = downEnabled ? Number(downAmount) || 0 : 0;
+    const operatorBatha = operatorBathaEnabled ? round2((Number(operatorBathaRate) || 0) * (Number(operatorBathaQuantity) || 0)) : 0;
     const additional = additionalEnabled ? Number(additionalAmount) || 0 : 0;
-    const taxable = round2(rentalSubtotal + up + down + additional);
+    const taxable = round2(rentalSubtotal + up + down + operatorBatha + additional);
     const cgstAmt = gstType === 'cgst_sgst' ? round2(taxable * CGST_PERCENT / 100) : 0;
     const sgstAmt = gstType === 'cgst_sgst' ? round2(taxable * SGST_PERCENT / 100) : 0;
     const igstAmt = gstType === 'igst' ? round2(taxable * IGST_PERCENT / 100) : 0;
     const totalGst = round2(cgstAmt + sgstAmt + igstAmt);
     const grandTotal = round2(taxable + totalGst);
     const gstLabel = gstType === 'cgst_sgst' ? `GST (CGST ${CGST_PERCENT}% + SGST ${SGST_PERCENT}%)` : gstType === 'igst' ? `GST (IGST ${IGST_PERCENT}%)` : 'No Tax';
-    return { totalHours, rentalSubtotal, up, down, additional, taxable, cgstAmt, sgstAmt, igstAmt, totalGst, grandTotal, gstLabel };
-  }, [lines, upEnabled, upAmount, downEnabled, downAmount, additionalEnabled, additionalAmount, gstType]);
+    return { totalHours, rentalSubtotal, up, down, operatorBatha, additional, taxable, cgstAmt, sgstAmt, igstAmt, totalGst, grandTotal, gstLabel };
+  }, [lines, upEnabled, upAmount, downEnabled, downAmount, operatorBathaEnabled, operatorBathaRate, operatorBathaQuantity, additionalEnabled, additionalAmount, gstType]);
 
   /** Recomputes and persists totals + rebuilds invoice_items - called after every line add/edit/delete and from Save Invoice. Returns whether the invoice row itself was saved successfully. */
   async function syncInvoiceTotals(currentLines: InvoiceBillingLine[], opts?: { billDate?: string | null; finalize?: boolean }, invoiceOverride?: Invoice): Promise<boolean> {
@@ -320,8 +314,11 @@ export default function GstBillingEntry({ invoiceId, onDone }: { invoiceId?: str
     const rentalSubtotal = round2(currentLines.reduce((s, l) => s + l.total_amount, 0));
     const up = upEnabled ? Number(upAmount) || 0 : 0;
     const down = downEnabled ? Number(downAmount) || 0 : 0;
+    const operatorBathaRateNum = operatorBathaEnabled ? Number(operatorBathaRate) || 0 : 0;
+    const operatorBathaQuantityNum = operatorBathaEnabled ? Number(operatorBathaQuantity) || 0 : 0;
+    const operatorBatha = round2(operatorBathaRateNum * operatorBathaQuantityNum);
     const additional = additionalEnabled ? Number(additionalAmount) || 0 : 0;
-    const taxable = round2(rentalSubtotal + up + down + additional);
+    const taxable = round2(rentalSubtotal + up + down + operatorBatha + additional);
     const cgstAmt = gstType === 'cgst_sgst' ? round2(taxable * CGST_PERCENT / 100) : 0;
     const sgstAmt = gstType === 'cgst_sgst' ? round2(taxable * SGST_PERCENT / 100) : 0;
     const igstAmt = gstType === 'igst' ? round2(taxable * IGST_PERCENT / 100) : 0;
@@ -347,6 +344,8 @@ export default function GstBillingEntry({ invoiceId, onDone }: { invoiceId?: str
       amount_in_words: amountInWords(grandTotal),
       up_transportation_enabled: up > 0, up_transportation_amount: up,
       down_transportation_enabled: down > 0, down_transportation_amount: down,
+      operator_batha_enabled: operatorBatha > 0, operator_batha_rate: operatorBathaRateNum, operator_batha_quantity: operatorBathaQuantityNum,
+      batha: operatorBatha,
       additional_charges_enabled: additional > 0, additional_charges_amount: additional,
       additional_charges_description: additionalDescription.trim() || null,
       invoice_status: (opts?.finalize && billDate) ? 'Generated' as const : invoice.invoice_status,
@@ -361,16 +360,12 @@ export default function GstBillingEntry({ invoiceId, onDone }: { invoiceId?: str
     const items: { invoice_id: string; sl_no: number; description: string; hsn_sac: string; quantity: number; rate: number; unit: string; amount: number; batha: number; calculation_details: string }[] = [];
     currentLines.forEach(l => {
       if (l.rate_type !== 'Daily') {
-        // Hourly — the hour-by-hour rental calculation itself (calcSessionAmount,
-        // upstream in saveLine) is completely unchanged. Only the invoice line
-        // generation now matches Full Day: rental and Operator Batha are always two
-        // separate lines, Batha never folded into the rental amount/rate.
-        const bathaAmount = Number(l.batha) || 0;
-        const rentalOnly = round2(Number(l.total_amount) - bathaAmount);
+        // Hourly — one line per entry, rental only. Operator Batha is no longer
+        // per-entry; see the single invoice-level line pushed below.
         const { description, calculation_details } = buildInvoiceLineDescription({
           rate_type: l.rate_type,
           total_hours: l.hours + l.minutes / 60,
-          rental_amount: rentalOnly,
+          rental_amount: l.total_amount,
           trip_date: l.working_date,
           work_date: l.working_date,
           place_of_work: placeOfWork.trim() || '',
@@ -384,31 +379,19 @@ export default function GstBillingEntry({ invoiceId, onDone }: { invoiceId?: str
         }, { omitDate: true });
         items.push({
           invoice_id: invoice.id, sl_no: items.length + 1, description,
-          hsn_sac: hsnSac, quantity: 1, rate: rentalOnly,
-          unit: 'nos', amount: rentalOnly, batha: 0,
+          hsn_sac: hsnSac, quantity: 1, rate: l.total_amount,
+          unit: 'nos', amount: l.total_amount, batha: 0,
           calculation_details,
         });
-        if (bathaAmount > 0) {
-          items.push({
-            invoice_id: invoice.id, sl_no: items.length + 1, description: 'OPERATOR BATHA',
-            hsn_sac: hsnSac, quantity: 1, rate: bathaAmount,
-            unit: 'nos', amount: bathaAmount, batha: bathaAmount,
-            calculation_details: `Operator Batha: ${formatCurrency(bathaAmount)}`,
-          });
-        }
         return;
       }
 
       // Full Day: Rental Amount = No. of Days x per-day Rate (the Rate itself is never
-      // multiplied/changed) and, when Batha applies, a separate "OPERATOR BATHA" line of
-      // Quantity = No. of Days x per-day Batha rate — the same rental/batha split the
-      // app already uses for the old Invoices flow's combined Operator Batha line (see
-      // invoiceCalc.ts), just per line instead of per invoice.
+      // multiplied/changed). Operator Batha is no longer per-entry; see the single
+      // invoice-level line pushed below.
       const days = Math.max(1, Number(l.days) || 1);
       const dayRate = Number(l.first_hour_rate) || 0;
-      const bathaPerDay = Number(l.batha) || 0;
       const rentalAmount = round2(dayRate * days);
-      const bathaAmount = round2(bathaPerDay * days);
 
       const { description, calculation_details } = buildInvoiceLineDescription({
         rate_type: l.rate_type,
@@ -432,20 +415,20 @@ export default function GstBillingEntry({ invoiceId, onDone }: { invoiceId?: str
         unit: 'day', amount: rentalAmount, batha: 0,
         calculation_details,
       });
-      if (bathaAmount > 0) {
-        items.push({
-          invoice_id: invoice.id, sl_no: items.length + 1, description: 'OPERATOR BATHA',
-          hsn_sac: hsnSac, quantity: days, rate: bathaPerDay,
-          unit: 'day', amount: bathaAmount, batha: bathaAmount,
-          calculation_details: `Operator Batha: ${days} day${days > 1 ? 's' : ''} x ${formatCurrency(bathaPerDay)} = ${formatCurrency(bathaAmount)}`,
-        });
-      }
     });
     if (up > 0) {
       items.push({ invoice_id: invoice.id, sl_no: items.length + 1, description: 'UP TRANSPORTATION CHARGES', hsn_sac: invoiceSettings?.hsn_sac || '997319', quantity: 1, rate: up, unit: 'nos', amount: up, batha: 0, calculation_details: `UP Transportation: ${formatCurrency(up)}` });
     }
     if (down > 0) {
       items.push({ invoice_id: invoice.id, sl_no: items.length + 1, description: 'DOWN TRANSPORTATION CHARGES', hsn_sac: invoiceSettings?.hsn_sac || '997319', quantity: 1, rate: down, unit: 'nos', amount: down, batha: 0, calculation_details: `DOWN Transportation: ${formatCurrency(down)}` });
+    }
+    if (operatorBatha > 0) {
+      items.push({
+        invoice_id: invoice.id, sl_no: items.length + 1, description: 'OPERATOR BATHA',
+        hsn_sac: hsnSac, quantity: operatorBathaQuantityNum, rate: operatorBathaRateNum,
+        unit: 'nos', amount: operatorBatha, batha: operatorBatha,
+        calculation_details: `Operator Batha: ${operatorBathaQuantityNum} x ${formatCurrency(operatorBathaRateNum)} = ${formatCurrency(operatorBatha)}`,
+      });
     }
     if (additional > 0) {
       items.push({ invoice_id: invoice.id, sl_no: items.length + 1, description: additionalDescription.trim() || 'ADDITIONAL CHARGES', hsn_sac: invoiceSettings?.hsn_sac || '997319', quantity: 1, rate: additional, unit: 'nos', amount: additional, batha: 0, calculation_details: `Additional Charges: ${formatCurrency(additional)}` });
@@ -582,14 +565,16 @@ export default function GstBillingEntry({ invoiceId, onDone }: { invoiceId?: str
               <Field label="Working Date" required>
                 <DatePicker value={entDate} onChange={setEntDate} />
               </Field>
-              <Field label="Vehicle" required>
-                <SearchableSelect
-                  value={entVehicleId}
-                  onChange={setEntVehicleId}
-                  options={vehicles.map(v => ({ value: v.id, label: `${v.registration_number} - ${v.type}${v.tons ? ' ' + v.tons + ' Ton' : ''}` }))}
-                  placeholder="Select vehicle"
-                />
-              </Field>
+              <div className="lg:col-span-2">
+                <Field label="Vehicle" required>
+                  <SearchableSelect
+                    value={entVehicleId}
+                    onChange={setEntVehicleId}
+                    options={vehicles.map(v => ({ value: v.id, label: `${v.registration_number} - ${v.type}${v.tons ? ' ' + v.tons + ' Ton' : ''}` }))}
+                    placeholder="Select vehicle"
+                  />
+                </Field>
+              </div>
               <Field label="Ton / Type">
                 <div className={classNames(inputClass(), 'bg-slate-100 text-slate-500')}>{selectedEntVehicle ? (selectedEntVehicle.type === 'JCB' ? 'JCB' : `${selectedEntVehicle.tons ?? '-'} Ton · Crane`) : '-'}</div>
               </Field>
@@ -609,9 +594,6 @@ export default function GstBillingEntry({ invoiceId, onDone }: { invoiceId?: str
                   <input type="number" min="1" step="1" className={inputClass()} value={entDays} onChange={e => setEntDays(e.target.value)} placeholder="1" />
                 </Field>
               )}
-              <Field label="Operator Batha">
-                <input type="number" min="0" className={inputClass()} value={entBatha} onChange={e => setEntBatha(e.target.value)} placeholder="0.00" />
-              </Field>
             </div>
 
             {entVehicleId && entDate && (
@@ -621,10 +603,7 @@ export default function GstBillingEntry({ invoiceId, onDone }: { invoiceId?: str
                     <>
                       <span className="text-slate-500">No. of Days: <b className="text-slate-800">{entDaysNum}</b></span>
                       <span className="text-slate-500">Full Day Rate: <b className="text-slate-800">{formatCurrency(entCalc.firstRate)} / day</b></span>
-                      <span className="text-slate-500">Rental Amount: <b className="text-slate-800">{formatCurrency(entCalc.rentalAmount)}</b></span>
-                      <span className="text-slate-500">Operator Batha: <b className="text-slate-800">{formatCurrency(entBathaNum)} / day</b></span>
-                      <span className="text-slate-500">Operator Batha Amount: <b className="text-slate-800">{formatCurrency(entBathaAmount)}</b></span>
-                      <span className="text-emerald-700 font-semibold">Total: {formatCurrency(entTotalWithBatha)}</span>
+                      <span className="text-emerald-700 font-semibold">Rental Amount: {formatCurrency(entCalc.rentalAmount)}</span>
                     </>
                   ) : (
                     <>
@@ -632,8 +611,7 @@ export default function GstBillingEntry({ invoiceId, onDone }: { invoiceId?: str
                       <span className="text-slate-500">2nd Hr Rate: <b className="text-slate-800">{formatCurrency(entCalc.secondRate)}</b></span>
                       <span className="text-slate-500">1st Hr Amt: <b className="text-slate-800">{formatCurrency(entCalc.firstAmt)}</b></span>
                       <span className="text-slate-500">2nd Hr Amt: <b className="text-slate-800">{formatCurrency(entCalc.secondAmt)}</b></span>
-                      <span className="text-slate-500">Operator Batha: <b className="text-slate-800">{formatCurrency(entBathaNum)}</b></span>
-                      <span className="text-emerald-700 font-semibold">Total: {formatCurrency(entTotalWithBatha)}</span>
+                      <span className="text-emerald-700 font-semibold">Total: {formatCurrency(entCalc.rentalAmount)}</span>
                     </>
                   )
                 ) : (
@@ -674,14 +652,13 @@ export default function GstBillingEntry({ invoiceId, onDone }: { invoiceId?: str
                       const rateDisplay = isFullDay
                         ? `${formatCurrency(l.first_hour_rate)}${lineDays > 1 ? ` × ${lineDays}` : ''}`
                         : `${formatCurrency(l.first_hour_rate)} / ${formatCurrency(l.second_hour_rate)}`;
-                      const lineBathaTotal = isFullDay ? round2((Number(l.batha) || 0) * lineDays) : (Number(l.batha) || 0);
                       return (
                         <tr key={l.id} className={classNames(idx % 2 ? 'bg-slate-50' : 'bg-white', editingLineId === l.id && 'ring-2 ring-inset ring-blue-300')}>
                           <td className="border border-slate-100 px-2 py-1.5 text-center tabular-nums">{idx + 1}</td>
                           <td className="border border-slate-100 px-2 py-1.5 whitespace-nowrap">{particulars}</td>
                           <td className="border border-slate-100 px-2 py-1.5 text-center whitespace-nowrap">{l.vehicle_number}</td>
                           <td className="border border-slate-100 px-2 py-1.5 text-center tabular-nums">{isJcb ? 'JCB' : (l.ton ?? '-')}</td>
-                          <td className="border border-slate-100 px-2 py-1.5 text-right tabular-nums whitespace-nowrap">{rateDisplay}{lineBathaTotal > 0 && <span className="block text-[11px] text-slate-400">+ Operator Batha {formatCurrency(lineBathaTotal)}{isFullDay && lineDays > 1 ? ` (${formatCurrency(l.batha)} × ${lineDays})` : ''}</span>}</td>
+                          <td className="border border-slate-100 px-2 py-1.5 text-right tabular-nums whitespace-nowrap">{rateDisplay}</td>
                           <td className="border border-slate-100 px-2 py-1.5 text-right tabular-nums font-bold">{formatCurrency(l.total_amount)}</td>
                           <td className="border border-slate-100 px-2 py-1.5 text-center whitespace-nowrap">
                             <button onClick={() => startEditLine(l)} className="p-1 text-slate-400 hover:text-blue-600 rounded" title="Edit"><Pencil className="w-3.5 h-3.5" /></button>
@@ -710,6 +687,24 @@ export default function GstBillingEntry({ invoiceId, onDone }: { invoiceId?: str
                         </select>
                       </Field>
                     </div>
+                  </div>
+                  <div>
+                    <p className="text-xs font-bold uppercase tracking-wide text-slate-500 mb-1">Operator Batha</p>
+                    <div className="flex items-center gap-2 mb-2">
+                      <input type="checkbox" checked={operatorBathaEnabled} onChange={e => setOperatorBathaEnabled(e.target.checked)} />
+                      <span className="text-sm text-slate-600">Apply Operator Batha</span>
+                    </div>
+                    <div className="grid grid-cols-2 gap-3">
+                      <Field label="Rate">
+                        <input type="number" min="0" className={inputClass()} value={operatorBathaRate} onChange={e => setOperatorBathaRate(e.target.value)} disabled={!operatorBathaEnabled} placeholder="0.00" />
+                      </Field>
+                      <Field label="Quantity">
+                        <input type="number" min="0" className={inputClass()} value={operatorBathaQuantity} onChange={e => setOperatorBathaQuantity(e.target.value)} disabled={!operatorBathaEnabled} placeholder="0" />
+                      </Field>
+                    </div>
+                    {operatorBathaEnabled && (Number(operatorBathaRate) > 0 && Number(operatorBathaQuantity) > 0) && (
+                      <p className="text-xs text-slate-500 mt-1.5">Amount: <b className="text-slate-700">{formatCurrency(round2((Number(operatorBathaRate) || 0) * (Number(operatorBathaQuantity) || 0)))}</b></p>
+                    )}
                   </div>
                   <div>
                     <p className="text-xs font-bold uppercase tracking-wide text-slate-500 mb-1">Charges</p>
@@ -743,6 +738,7 @@ export default function GstBillingEntry({ invoiceId, onDone }: { invoiceId?: str
                     <div className="flex justify-between text-slate-500"><span>Total of Billing Entries</span><b className="text-slate-800 tabular-nums">{formatCurrency(totals.rentalSubtotal)}</b></div>
                     {totals.up > 0 && <div className="flex justify-between text-slate-500"><span>Up Transportation</span><b className="text-slate-800 tabular-nums">{formatCurrency(totals.up)}</b></div>}
                     {totals.down > 0 && <div className="flex justify-between text-slate-500"><span>Down Transportation</span><b className="text-slate-800 tabular-nums">{formatCurrency(totals.down)}</b></div>}
+                    {totals.operatorBatha > 0 && <div className="flex justify-between text-slate-500"><span>Operator Batha</span><b className="text-slate-800 tabular-nums">{formatCurrency(totals.operatorBatha)}</b></div>}
                     {totals.additional > 0 && <div className="flex justify-between text-slate-500"><span>Additional Charges</span><b className="text-slate-800 tabular-nums">{formatCurrency(totals.additional)}</b></div>}
                     <div className="flex justify-between pt-1.5 border-t border-dashed border-slate-200 text-slate-700"><span className="font-semibold">Taxable Amount</span><b className="tabular-nums">{formatCurrency(totals.taxable)}</b></div>
                     {gstType === 'cgst_sgst' && (

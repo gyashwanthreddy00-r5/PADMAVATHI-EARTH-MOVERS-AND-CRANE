@@ -318,6 +318,9 @@ export interface Invoice {
   up_transportation_amount: number;
   down_transportation_enabled: boolean;
   down_transportation_amount: number;
+  operator_batha_enabled: boolean;
+  operator_batha_rate: number;
+  operator_batha_quantity: number;
   tax_type: 'cgst_sgst' | 'igst' | 'no_tax';
   additional_charges_enabled: boolean;
   additional_charges_amount: number;

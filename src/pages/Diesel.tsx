@@ -484,6 +484,7 @@ export default function Diesel() {
         open={purchaseOpen} onClose={() => setPurchaseOpen(false)}
         title={editingPurchase ? `${t('edit')} ${t('addDieselPurchase')}` : t('addDieselPurchase')}
         size="lg"
+        closeOnBackdropClick={false}
         footer={<><Button variant="secondary" onClick={() => setPurchaseOpen(false)}>{t('cancel')}</Button><Button onClick={savePurchase} disabled={savingPurchase}>{savingPurchase ? <><span className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin inline-block" />{t('saving')}</> : t('save')}</Button></>}
       >
         <div className="space-y-4">
@@ -545,6 +546,7 @@ export default function Diesel() {
         open={distOpen} onClose={() => setDistOpen(false)}
         title={t('distributeDiesel')}
         size="2xl"
+        closeOnBackdropClick={false}
         footer={<><Button variant="secondary" onClick={() => setDistOpen(false)}>{t('cancel')}</Button><Button onClick={saveDistribution} disabled={savingDist || !!insufficientStockError}>{savingDist ? <><span className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin inline-block" />{t('saving')}</> : t('save')}</Button></>}
       >
         <div className="space-y-4">

@@ -377,6 +377,7 @@ export default function Maintenance() {
       <Modal
         open={modalOpen} onClose={() => setModalOpen(false)}
         title={editing ? `${t('edit')} ${t('maintenance')}` : `${t('addMaintenance')}`}
+        closeOnBackdropClick={false}
         footer={<><Button variant="secondary" onClick={() => setModalOpen(false)}>{t('cancel')}</Button><Button onClick={save} disabled={saving}>{saving ? t('saving') : t('save')}</Button></>}
       >
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
@@ -392,7 +393,6 @@ export default function Maintenance() {
               options={vehicles.map(v => ({
                 value: v.id,
                 label: `${v.registration_number} (${v.type})`,
-                searchText: v.registration_number,
               }))}
             />
           </Field>

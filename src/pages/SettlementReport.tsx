@@ -488,13 +488,49 @@ export default function SettlementReport() {
     );
   };
 
-  // Consolidated customer account statement - print, one window, one A4 layout,
-  // covering every invoice currently shown for the selected customer (not one
-  // print per invoice).
-  const printCustomerStatement = () => {
-    if (!selectedCustomer) return;
-    const win = window.open('', '_blank');
-    if (!win) { show('Please allow popups to print', 'error'); return; }
+  // Same hidden-iframe print pipeline Invoices.tsx uses for its own Print actions -
+  // triggers the browser print dialog without opening a separate tab/window.
+  const printInIframe = (html: string) => {
+    const iframe = document.createElement('iframe');
+    iframe.style.position = 'fixed';
+    iframe.style.right = '0';
+    iframe.style.bottom = '0';
+    iframe.style.width = '0';
+    iframe.style.height = '0';
+    iframe.style.border = 'none';
+    iframe.style.visibility = 'hidden';
+    document.body.appendChild(iframe);
+
+    const doc = iframe.contentWindow?.document;
+    if (!doc) {
+      document.body.removeChild(iframe);
+      show('Unable to open print dialog', 'error');
+      return;
+    }
+
+    doc.open();
+    doc.write(html);
+    doc.close();
+
+    iframe.onload = () => {
+      setTimeout(() => {
+        try {
+          iframe.contentWindow?.focus();
+          iframe.contentWindow?.print();
+        } catch {
+          show('Unable to open print dialog', 'error');
+        }
+        setTimeout(() => {
+          if (iframe.parentNode) document.body.removeChild(iframe);
+        }, 1000);
+      }, 350);
+    };
+  };
+
+  // Consolidated customer account statement - one HTML source used by both Print
+  // Statement and the Send Full Statement email attachment, so they always match.
+  const buildFullStatementHtml = (): string | null => {
+    if (!selectedCustomer) return null;
     const rows = filteredRows.map((r, idx) => `<tr>
       <td style="text-align:center">${idx + 1}</td>
       <td>${formatDate(r.invoice_date)}</td>
@@ -505,7 +541,7 @@ export default function SettlementReport() {
       <td style="text-align:center">${r.status.toUpperCase()}</td>
     </tr>`).join('');
     const periodLabel = (dateFrom || dateTo) ? `${dateFrom ? formatDate(dateFrom) : 'Start'} – ${dateTo ? formatDate(dateTo) : 'Today'}` : 'All Time';
-    const html = `<!doctype html><html><head><meta charset="utf-8"><title>Statement - ${selectedCustomer.name}</title>
+    return `<!doctype html><html><head><meta charset="utf-8"><title>Statement - ${selectedCustomer.name}</title>
 <style>
   * { box-sizing: border-box; }
   body { font-family: Arial, Helvetica, sans-serif; padding: 20mm; color: #111; }
@@ -536,8 +572,11 @@ export default function SettlementReport() {
     <tfoot><tr><td colspan="3">TOTAL (${summary.totalInvoices} invoices)</td><td style="text-align:right">${formatCurrency(summary.totalInvoiced)}</td><td style="text-align:right">${formatCurrency(summary.totalReceived)}</td><td style="text-align:right">${formatCurrency(summary.totalOutstanding)}</td><td></td></tr></tfoot>
   </table>
 </body></html>`;
-    win.document.write(html.replace('</body></html>', '<script>window.onload = () => { window.print(); }</script></body></html>'));
-    win.document.close();
+  };
+
+  const printCustomerStatement = () => {
+    const html = buildFullStatementHtml();
+    if (html) printInIframe(html);
   };
 
   // Builds the Balance Statement PDF — a separate, standalone template (not a refactor
@@ -658,8 +697,25 @@ export default function SettlementReport() {
     }
     setSendingStatement(true);
     try {
+      // Rendered server-side via Browserless (real Chromium), same as Send Balance
+      // Statement, so both the statement and any attached invoices are pixel-identical
+      // to their Print views. "Also Send Invoices" applies here too, using every
+      // invoice this Full Statement lists (paid + pending, current filters).
+      const pdfHtmls: { filename: string; html: string }[] = [];
+      const html = buildFullStatementHtml();
+      if (html) {
+        const periodSlug = (dateFrom || dateTo) ? `${dateFrom || 'start'}_to_${dateTo || 'today'}` : 'all-time';
+        const filename = `Full_Statement_${selectedCustomer.name.replace(/[^a-zA-Z0-9]+/g, '_')}_${periodSlug}.pdf`;
+        pdfHtmls.push({ filename, html });
+      }
+      if (alsoSendInvoices) {
+        for (const r of filteredRows) {
+          const invHtml = invoiceDocHTML(r.raw, r.items ?? [], settings, invoiceSettings, 'master');
+          pdfHtmls.push({ filename: `Invoice_${r.invoice_number}.pdf`, html: invHtml });
+        }
+      }
       const { data, error } = await supabase.functions.invoke('send-balance-statement', {
-        body: { customerId: selectedCustomer.id, invoiceIds: filteredRows.map(r => r.id) },
+        body: { customerId: selectedCustomer.id, invoiceIds: filteredRows.map(r => r.id), pdfHtmls, statementLabel: 'Full Statement' },
       });
       if (error) {
         let msg = 'Unable to send statement. Please try again.';
@@ -1005,6 +1061,7 @@ export default function SettlementReport() {
         onClose={() => { setViewInvoice(null); setViewItems([]); setViewPayments([]); }}
         title={`Invoice ${viewInvoice?.invoice_number ?? ''}`}
         size="xl"
+        closeOnBackdropClick={false}
         footer={
           <>
             <Button variant="secondary" onClick={() => { setViewInvoice(null); setViewItems([]); setViewPayments([]); }}>{t('close')}</Button>
@@ -1108,6 +1165,7 @@ export default function SettlementReport() {
         onClose={() => setPaymentModal(null)}
         title={t('recordPayment')}
         size="sm"
+        closeOnBackdropClick={false}
         footer={
           <>
             <Button variant="secondary" onClick={() => setPaymentModal(null)}>{t('cancel')}</Button>

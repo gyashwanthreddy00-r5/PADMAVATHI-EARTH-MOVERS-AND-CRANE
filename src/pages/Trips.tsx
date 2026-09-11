@@ -416,6 +416,7 @@ export default function Trips() {
         open={modalOpen} onClose={() => setModalOpen(false)}
         title={editing ? `${t('edit')} ${t('tripEntries')}` : `${t('addNew')} ${t('tripEntries')}`}
         size="xl"
+        closeOnBackdropClick={false}
         footer={<><Button variant="secondary" onClick={() => setModalOpen(false)}>{t('cancel')}</Button><Button onClick={save} disabled={saving}>{saving ? t('saving') : t('save')}</Button></>}
       >
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
@@ -564,7 +565,7 @@ export default function Trips() {
         </div>
       </Modal>
 
-      <Modal open={!!viewTrip} onClose={() => setViewTrip(null)} title={`${t('view')} ${t('tripEntries')}`} size="lg">
+      <Modal open={!!viewTrip} onClose={() => setViewTrip(null)} title={`${t('view')} ${t('tripEntries')}`} size="lg" closeOnBackdropClick={false}>
         {viewTrip && (
           <div className="space-y-3 text-sm">
             <div className="grid grid-cols-2 gap-3">
@@ -602,6 +603,7 @@ export default function Trips() {
         open={fieldModalOpen} onClose={() => setFieldModalOpen(false)}
         title="Select Trip Fields to Show & Export"
         size="md"
+        closeOnBackdropClick={false}
         footer={<><Button variant="secondary" onClick={() => setFieldModalOpen(false)}>Done</Button></>}
       >
         <div className="space-y-3">

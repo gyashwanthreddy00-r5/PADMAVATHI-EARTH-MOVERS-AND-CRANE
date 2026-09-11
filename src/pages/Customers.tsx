@@ -109,6 +109,7 @@ export default function Customers() {
       <Modal
         open={modalOpen} onClose={() => setModalOpen(false)}
         title={editing ? `${t('edit')} ${t('customers')}` : `${t('addNew')} ${t('customers')}`}
+        closeOnBackdropClick={false}
         footer={<><Button variant="secondary" onClick={() => setModalOpen(false)}>{t('cancel')}</Button><Button onClick={save} disabled={saving}>{saving ? t('saving') : t('save')}</Button></>}
       >
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
