@@ -35,9 +35,10 @@ interface Props {
 /**
  * Fast, single-vehicle Cash/UPI billing entry: pick a vehicle (Ton/Type auto-fill from
  * Vehicle Master), pick Full Day or Hourly, and - for Hourly - type Hours/Minutes
- * directly instead of in/out times. Rate Master lookup, the hourly first/second-hour
- * calculation, and Batha auto-fill all reuse the same engine as the rest of the app
- * (rateLookup.ts + rentalCalc.calcSessionAmount) - nothing here re-derives billing math.
+ * directly instead of in/out times. Rate Master lookup and the hourly first/second-hour
+ * calculation reuse the same engine as the rest of the app (rateLookup.ts +
+ * rentalCalc.calcSessionAmount) - nothing here re-derives billing math. Operator Batha is
+ * a manual, transaction-level charge only — it is never read from Rate Master.
  */
 export function SimpleCashBillForm({ onChange }: Props) {
   const [loading, setLoading] = useState(true);
@@ -52,8 +53,9 @@ export function SimpleCashBillForm({ onChange }: Props) {
   // Full Day only — number of full days billed. Whole numbers only (no existing Cash/UPI
   // calculation supports fractional days), minimum 1, default 1. Not used for Hourly.
   const [days, setDays] = useState('1');
+  // Operator Batha — manual, transaction-level entry only. Never auto-filled from Rate
+  // Master; defaults to 0 and stays exactly what the user types.
   const [batha, setBatha] = useState(0);
-  const [bathaTouched, setBathaTouched] = useState(false);
 
   useEffect(() => {
     (async () => {
@@ -72,19 +74,6 @@ export function SimpleCashBillForm({ onChange }: Props) {
     () => (selectedVehicle ? findRateMasterForVehicle(selectedVehicle, rateMasterRows, workingDate) : null),
     [selectedVehicle, rateMasterRows, workingDate]
   );
-
-  // Batha auto-fills from the applicable Rate Master record whenever the vehicle/date
-  // context changes - but only while the user hasn't edited it themselves. Once edited,
-  // it's "pinned" (bathaTouched) so it's never silently overwritten by a re-render.
-  useEffect(() => {
-    if (!bathaTouched) setBatha(Number(rateMaster?.batha) || 0);
-  }, [rateMaster, bathaTouched]);
-
-  // Picking a different vehicle un-pins Batha so the new vehicle's own default takes
-  // over, instead of carrying over an edit that belonged to the previous vehicle.
-  useEffect(() => {
-    setBathaTouched(false);
-  }, [vehicleId]);
 
   const totalMinutes = rateType === 'Hourly' ? (Number(hours) || 0) * 60 + (Number(minutes) || 0) : 0;
   const r1 = Number(rateMaster?.first_hour_rate) || 0;
@@ -221,8 +210,8 @@ export function SimpleCashBillForm({ onChange }: Props) {
             <Field label="Rate (1st Hr / 2nd Hr)">
               <div className={autoFieldClass}>{rateMaster ? `${formatNumber(r1)} / ${formatNumber(r2)}` : '-'}</div>
             </Field>
-            <Field label="Batha">
-              <input type="number" min="0" step="0.01" className={inputClass()} value={batha} onChange={e => { setBatha(e.target.value === '' ? 0 : Number(e.target.value)); setBathaTouched(true); }} />
+            <Field label="Operator Batha">
+              <input type="number" min="0" step="0.01" className={inputClass()} value={batha} onChange={e => setBatha(e.target.value === '' ? 0 : Math.max(0, Number(e.target.value)))} placeholder="0.00" />
             </Field>
           </div>
         ) : (
@@ -233,8 +222,8 @@ export function SimpleCashBillForm({ onChange }: Props) {
             <Field label="Full Day Rate">
               <div className={autoFieldClass}>{rateMaster ? formatCurrency(dailyRate) : '-'}</div>
             </Field>
-            <Field label="Batha">
-              <input type="number" min="0" step="0.01" className={inputClass()} value={batha} onChange={e => { setBatha(e.target.value === '' ? 0 : Number(e.target.value)); setBathaTouched(true); }} />
+            <Field label="Operator Batha">
+              <input type="number" min="0" step="0.01" className={inputClass()} value={batha} onChange={e => setBatha(e.target.value === '' ? 0 : Math.max(0, Number(e.target.value)))} placeholder="0.00" />
             </Field>
           </div>
         )}
@@ -244,7 +233,7 @@ export function SimpleCashBillForm({ onChange }: Props) {
             {rateType === 'Hourly' && <span className="text-slate-500">Duration: <b className="text-slate-800">{formatDuration(totalMinutes / 60)}</b></span>}
             {rateType === 'Daily' && <span className="text-slate-500">Days: <b className="text-slate-800">{daysNum}</b></span>}
             <span className="text-slate-500">Rental: <b className="text-slate-800">{formatCurrency(rentalAmount)}</b></span>
-            <span className="text-slate-500">Batha: <b className="text-slate-800">{formatCurrency(bathaAmount)}</b></span>
+            <span className="text-slate-500">Operator Batha: <b className="text-slate-800">{formatCurrency(bathaAmount)}</b></span>
             <span className="ml-auto font-bold text-blue-700 text-base">{formatCurrency(totalAmount)}</span>
           </div>
         )}

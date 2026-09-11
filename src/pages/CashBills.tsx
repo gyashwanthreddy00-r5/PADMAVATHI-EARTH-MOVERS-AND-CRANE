@@ -68,7 +68,7 @@ function buildCleanRateLines(v: {
     const totalBatha = Number(v.batha) || 0;
     if (totalBatha > 0) {
       const bathaPerDay = Math.round((totalBatha / days) * 100) / 100;
-      lines.push(`Batha: ${formatCurrency(bathaPerDay)} / Day`);
+      lines.push(`Operator Batha: ${formatCurrency(bathaPerDay)} / Day`);
     }
     return lines;
   }
@@ -80,6 +80,8 @@ function buildCleanRateLines(v: {
       lines.push(`Rate: ${formatCurrency(r1)} / First Hour`);
       lines.push(`${formatCurrency(r2)} / Additional Hour`);
     }
+    const batha = Number(v.batha) || 0;
+    if (batha > 0) lines.push(`Operator Batha: ${formatCurrency(batha)}`);
     return lines;
   }
   return [rateType];

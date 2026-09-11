@@ -51,8 +51,9 @@ export default function GstBillingEntry({ invoiceId, onDone }: { invoiceId?: str
   const [entHours, setEntHours] = useState('');
   const [entMinutes, setEntMinutes] = useState('');
   const [entDays, setEntDays] = useState('1');
+  // Operator Batha — manual, transaction-level entry only. Never auto-filled from Rate
+  // Master; defaults to '' (treated as 0) and stays exactly what the user types.
   const [entBatha, setEntBatha] = useState('');
-  const [bathaTouched, setBathaTouched] = useState(false);
   const [editingLineId, setEditingLineId] = useState<string | null>(null);
   const [savingLine, setSavingLine] = useState(false);
   const [deleteLineId, setDeleteLineId] = useState<string | null>(null);
@@ -155,7 +156,7 @@ export default function GstBillingEntry({ invoiceId, onDone }: { invoiceId?: str
   function resetEntryForm() {
     setEntDate(todayISO()); setEntVehicleId(''); setEntRateType('Hourly'); setEntHours(''); setEntMinutes('');
     setEntDays('1');
-    setEntBatha(''); setBathaTouched(false);
+    setEntBatha('');
     setEditingLineId(null);
   }
 
@@ -168,7 +169,6 @@ export default function GstBillingEntry({ invoiceId, onDone }: { invoiceId?: str
     setEntMinutes(l.rate_type === 'Daily' ? '' : String(l.minutes));
     setEntDays(l.rate_type === 'Daily' ? String(l.days || 1) : '1');
     setEntBatha(String(Number(l.batha) || 0));
-    setBathaTouched(true);
   }
 
   const selectedEntVehicle = entVehicleId ? vehiclesById.get(entVehicleId) ?? null : null;
@@ -179,17 +179,12 @@ export default function GstBillingEntry({ invoiceId, onDone }: { invoiceId?: str
     : null;
   const canSaveLine = !!(entDate && entVehicleId && (entRateType === 'Daily' ? Number(entDays) > 0 : (entHours !== '' || entMinutes !== '')) && entCalc?.rateFound);
   const entBathaNum = Number(entBatha) || 0;
-  // For Full Day entries, entBatha is the PER-DAY Batha rate (auto-filled from Rate
-  // Master) — the total Batha amount scales with No. of Days, same as Rental Amount.
-  // Hourly entries keep entBatha as a single flat amount for the entry, unchanged.
+  // Operator Batha is a manual, transaction-level charge — never read from Rate Master.
+  // For Full Day entries, entBatha is the PER-DAY rate the user typed — the total Batha
+  // amount scales with No. of Days, same as Rental Amount. Hourly entries keep entBatha
+  // as a single flat amount for the entry, unchanged.
   const entBathaAmount = entRateType === 'Daily' ? round2(entBathaNum * entDaysNum) : entBathaNum;
   const entTotalWithBatha = (entCalc?.rentalAmount ?? 0) + entBathaAmount;
-
-  // Batha auto-fills from Rate Master whenever the resolved rate changes,
-  // but only until the user edits it by hand for this specific entry.
-  useEffect(() => {
-    if (!bathaTouched) setEntBatha(entRate ? String(Number(entRate.batha) || 0) : '');
-  }, [entRate?.id, entRate?.batha, bathaTouched]);
 
   async function saveLine() {
     if (savingLine) return;
@@ -366,11 +361,16 @@ export default function GstBillingEntry({ invoiceId, onDone }: { invoiceId?: str
     const items: { invoice_id: string; sl_no: number; description: string; hsn_sac: string; quantity: number; rate: number; unit: string; amount: number; batha: number; calculation_details: string }[] = [];
     currentLines.forEach(l => {
       if (l.rate_type !== 'Daily') {
-        // Hourly — completely unchanged: single combined line (rental + its flat Batha).
+        // Hourly — the hour-by-hour rental calculation itself (calcSessionAmount,
+        // upstream in saveLine) is completely unchanged. Only the invoice line
+        // generation now matches Full Day: rental and Operator Batha are always two
+        // separate lines, Batha never folded into the rental amount/rate.
+        const bathaAmount = Number(l.batha) || 0;
+        const rentalOnly = round2(Number(l.total_amount) - bathaAmount);
         const { description, calculation_details } = buildInvoiceLineDescription({
           rate_type: l.rate_type,
           total_hours: l.hours + l.minutes / 60,
-          rental_amount: l.total_amount,
+          rental_amount: rentalOnly,
           trip_date: l.working_date,
           work_date: l.working_date,
           place_of_work: placeOfWork.trim() || '',
@@ -384,10 +384,18 @@ export default function GstBillingEntry({ invoiceId, onDone }: { invoiceId?: str
         }, { omitDate: true });
         items.push({
           invoice_id: invoice.id, sl_no: items.length + 1, description,
-          hsn_sac: hsnSac, quantity: 1, rate: l.total_amount,
-          unit: 'nos', amount: l.total_amount, batha: 0,
+          hsn_sac: hsnSac, quantity: 1, rate: rentalOnly,
+          unit: 'nos', amount: rentalOnly, batha: 0,
           calculation_details,
         });
+        if (bathaAmount > 0) {
+          items.push({
+            invoice_id: invoice.id, sl_no: items.length + 1, description: 'OPERATOR BATHA',
+            hsn_sac: hsnSac, quantity: 1, rate: bathaAmount,
+            unit: 'nos', amount: bathaAmount, batha: bathaAmount,
+            calculation_details: `Operator Batha: ${formatCurrency(bathaAmount)}`,
+          });
+        }
         return;
       }
 
@@ -577,7 +585,7 @@ export default function GstBillingEntry({ invoiceId, onDone }: { invoiceId?: str
               <Field label="Vehicle" required>
                 <SearchableSelect
                   value={entVehicleId}
-                  onChange={v => { setEntVehicleId(v); setBathaTouched(false); }}
+                  onChange={setEntVehicleId}
                   options={vehicles.map(v => ({ value: v.id, label: `${v.registration_number} - ${v.type}${v.tons ? ' ' + v.tons + ' Ton' : ''}` }))}
                   placeholder="Select vehicle"
                 />
@@ -601,8 +609,8 @@ export default function GstBillingEntry({ invoiceId, onDone }: { invoiceId?: str
                   <input type="number" min="1" step="1" className={inputClass()} value={entDays} onChange={e => setEntDays(e.target.value)} placeholder="1" />
                 </Field>
               )}
-              <Field label="Batha">
-                <input type="number" min="0" className={inputClass()} value={entBatha} onChange={e => { setEntBatha(e.target.value); setBathaTouched(true); }} placeholder="0" />
+              <Field label="Operator Batha">
+                <input type="number" min="0" className={inputClass()} value={entBatha} onChange={e => setEntBatha(e.target.value)} placeholder="0.00" />
               </Field>
             </div>
 
@@ -614,8 +622,8 @@ export default function GstBillingEntry({ invoiceId, onDone }: { invoiceId?: str
                       <span className="text-slate-500">No. of Days: <b className="text-slate-800">{entDaysNum}</b></span>
                       <span className="text-slate-500">Full Day Rate: <b className="text-slate-800">{formatCurrency(entCalc.firstRate)} / day</b></span>
                       <span className="text-slate-500">Rental Amount: <b className="text-slate-800">{formatCurrency(entCalc.rentalAmount)}</b></span>
-                      <span className="text-slate-500">Batha: <b className="text-slate-800">{formatCurrency(entBathaNum)} / day</b></span>
-                      <span className="text-slate-500">Batha Amount: <b className="text-slate-800">{formatCurrency(entBathaAmount)}</b></span>
+                      <span className="text-slate-500">Operator Batha: <b className="text-slate-800">{formatCurrency(entBathaNum)} / day</b></span>
+                      <span className="text-slate-500">Operator Batha Amount: <b className="text-slate-800">{formatCurrency(entBathaAmount)}</b></span>
                       <span className="text-emerald-700 font-semibold">Total: {formatCurrency(entTotalWithBatha)}</span>
                     </>
                   ) : (
@@ -624,7 +632,7 @@ export default function GstBillingEntry({ invoiceId, onDone }: { invoiceId?: str
                       <span className="text-slate-500">2nd Hr Rate: <b className="text-slate-800">{formatCurrency(entCalc.secondRate)}</b></span>
                       <span className="text-slate-500">1st Hr Amt: <b className="text-slate-800">{formatCurrency(entCalc.firstAmt)}</b></span>
                       <span className="text-slate-500">2nd Hr Amt: <b className="text-slate-800">{formatCurrency(entCalc.secondAmt)}</b></span>
-                      <span className="text-slate-500">Batha: <b className="text-slate-800">{formatCurrency(entBathaNum)}</b></span>
+                      <span className="text-slate-500">Operator Batha: <b className="text-slate-800">{formatCurrency(entBathaNum)}</b></span>
                       <span className="text-emerald-700 font-semibold">Total: {formatCurrency(entTotalWithBatha)}</span>
                     </>
                   )
@@ -673,7 +681,7 @@ export default function GstBillingEntry({ invoiceId, onDone }: { invoiceId?: str
                           <td className="border border-slate-100 px-2 py-1.5 whitespace-nowrap">{particulars}</td>
                           <td className="border border-slate-100 px-2 py-1.5 text-center whitespace-nowrap">{l.vehicle_number}</td>
                           <td className="border border-slate-100 px-2 py-1.5 text-center tabular-nums">{isJcb ? 'JCB' : (l.ton ?? '-')}</td>
-                          <td className="border border-slate-100 px-2 py-1.5 text-right tabular-nums whitespace-nowrap">{rateDisplay}{lineBathaTotal > 0 && <span className="block text-[11px] text-slate-400">+ Batha {formatCurrency(lineBathaTotal)}{isFullDay && lineDays > 1 ? ` (${formatCurrency(l.batha)} × ${lineDays})` : ''}</span>}</td>
+                          <td className="border border-slate-100 px-2 py-1.5 text-right tabular-nums whitespace-nowrap">{rateDisplay}{lineBathaTotal > 0 && <span className="block text-[11px] text-slate-400">+ Operator Batha {formatCurrency(lineBathaTotal)}{isFullDay && lineDays > 1 ? ` (${formatCurrency(l.batha)} × ${lineDays})` : ''}</span>}</td>
                           <td className="border border-slate-100 px-2 py-1.5 text-right tabular-nums font-bold">{formatCurrency(l.total_amount)}</td>
                           <td className="border border-slate-100 px-2 py-1.5 text-center whitespace-nowrap">
                             <button onClick={() => startEditLine(l)} className="p-1 text-slate-400 hover:text-blue-600 rounded" title="Edit"><Pencil className="w-3.5 h-3.5" /></button>

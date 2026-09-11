@@ -37,6 +37,35 @@ interface InvoicesProps {
   initialTab?: Step;
 }
 
+/** Shared by both Full Statement (all of a customer's invoices in the selected
+ * date/status filter) and Balance Statement (this customer's outstanding invoices
+ * only) — one mapping, not two, so their numbers can never drift apart. */
+function toStatementRow(inv: InvoiceWithRelations) {
+  const payable = inv.discount_enabled ? Number(inv.final_payable_amount ?? inv.grand_total) : Number(inv.grand_total);
+  const received = Number(inv.amount_received) || 0;
+  const balance = Math.max(0, Math.round((payable - received) * 100) / 100);
+  // Received Date comes from the actual invoice_payments transactions — never from
+  // invoice/billed/generated/today's date. Sorted oldest-first; an invoice with several
+  // part-payments shows every distinct date it actually received money on.
+  const paymentDates = Array.from(new Set((inv.payments ?? []).map(p => p.payment_date))).sort();
+  const receivedDateLabel = paymentDates.length === 0 ? '—' : paymentDates.map(d => formatDate(d)).join(', ');
+  return { inv, payable, received, balance, paymentDates, receivedDateLabel };
+}
+
+type StatementRow = ReturnType<typeof toStatementRow>;
+
+function computeStatementTotals(rows: StatementRow[]) {
+  return {
+    count: rows.length,
+    totalAmount: rows.reduce((s, r) => s + r.payable, 0),
+    totalReceived: rows.reduce((s, r) => s + r.received, 0),
+    totalPending: rows.reduce((s, r) => s + r.balance, 0),
+    paidCount: rows.filter(r => r.balance <= 0).length,
+    partialCount: rows.filter(r => r.received > 0 && r.balance > 0).length,
+    unpaidCount: rows.filter(r => r.received <= 0).length,
+  };
+}
+
 function getEmailErrorMessage(message: string): string {
   const normalized = message.toLowerCase();
   if (normalized.includes('testing emails') || normalized.includes('verify a domain') || normalized.includes('testing mode')) {
@@ -215,10 +244,11 @@ export default function Invoices({ initialTab = 'list' }: InvoicesProps = {}) {
   const [statementTo, setStatementTo] = useState('');
   const [statementStatus, setStatementStatus] = useState<'All' | 'Paid' | 'Partially Paid' | 'Pending' | 'Outstanding'>('All');
   const [sendingStatement, setSendingStatement] = useState(false);
+  const [sendingFullStatement, setSendingFullStatement] = useState(false);
 
-  // Email Balance Statement attachment options — both default on, per spec.
-  const [attachStatementPdf, setAttachStatementPdf] = useState(true);
-  const [attachPerInvoicePdfs, setAttachPerInvoicePdfs] = useState(true);
+  // Send Balance Statement's "Also Send Invoices" toggle — OFF by default, so Send
+  // Balance Statement sends only the balance statement sheet unless explicitly opted in.
+  const [alsoSendInvoices, setAlsoSendInvoices] = useState(false);
 
   // Reminders — moved in from the old standalone Balance Reminders page (see
   // reminderCalc.ts). Data is loaded for all invoices in fetchAll; the rows shown here
@@ -230,6 +260,8 @@ export default function Invoices({ initialTab = 'list' }: InvoicesProps = {}) {
   const [reminderPreviewSubject, setReminderPreviewSubject] = useState('');
   const [reminderPreviewBody, setReminderPreviewBody] = useState('');
   const [sendingReminder, setSendingReminder] = useState(false);
+  // "Payment Reminders" button reveals the Day 1/10/20 reminder options below it.
+  const [showReminders, setShowReminders] = useState(false);
 
   // Date Quick Filter — defaults to 'Custom' with empty statementFrom/statementTo, which
   // is exactly the pre-existing "no date filter" behavior, so the default invoice list
@@ -334,24 +366,16 @@ export default function Invoices({ initialTab = 'list' }: InvoicesProps = {}) {
 
   const selectedStatementCustomer = customers.find(c => c.id === statementCustomerId) ?? null;
 
+  // Full Statement data — every invoice for this customer within the selected Date
+  // Quick Filter/Status (paid AND pending) — exactly the existing Customer Statement
+  // table/Print Statement, unchanged.
   const statementRows = useMemo(() => {
     if (!statementCustomerId) return [];
     return invoices
       .filter(inv => inv.customer_id === statementCustomerId && !inv.is_cancelled && !!inv.invoice_number)
       .filter(inv => !statementFrom || inv.invoice_date >= statementFrom)
       .filter(inv => !statementTo || inv.invoice_date <= statementTo)
-      .map(inv => {
-        const payable = inv.discount_enabled ? Number(inv.final_payable_amount ?? inv.grand_total) : Number(inv.grand_total);
-        const received = Number(inv.amount_received) || 0;
-        const balance = Math.max(0, Math.round((payable - received) * 100) / 100);
-        // Received Date comes from the actual invoice_payments transactions -
-        // never from invoice/billed/generated/today's date. Sorted oldest-first;
-        // an invoice with several part-payments shows every distinct date it
-        // actually received money on, not just the latest.
-        const paymentDates = Array.from(new Set((inv.payments ?? []).map(p => p.payment_date))).sort();
-        const receivedDateLabel = paymentDates.length === 0 ? '-' : paymentDates.map(d => formatDate(d)).join(', ');
-        return { inv, payable, received, balance, paymentDates, receivedDateLabel };
-      })
+      .map(toStatementRow)
       .filter(row => {
         if (statementStatus === 'All') return true;
         if (statementStatus === 'Outstanding') return row.balance > 0;
@@ -360,15 +384,22 @@ export default function Invoices({ initialTab = 'list' }: InvoicesProps = {}) {
       .sort((a, b) => a.inv.invoice_date.localeCompare(b.inv.invoice_date));
   }, [invoices, statementCustomerId, statementFrom, statementTo, statementStatus]);
 
-  const statementSummary = useMemo(() => ({
-    count: statementRows.length,
-    totalAmount: statementRows.reduce((s, r) => s + r.payable, 0),
-    totalReceived: statementRows.reduce((s, r) => s + r.received, 0),
-    totalPending: statementRows.reduce((s, r) => s + r.balance, 0),
-    paidCount: statementRows.filter(r => r.balance <= 0).length,
-    partialCount: statementRows.filter(r => r.received > 0 && r.balance > 0).length,
-    unpaidCount: statementRows.filter(r => r.received <= 0).length,
-  }), [statementRows]);
+  const statementSummary = useMemo(() => computeStatementTotals(statementRows), [statementRows]);
+
+  // Balance Statement data — this customer's outstanding invoices across their FULL
+  // history, deliberately independent of the Date Quick Filter/Status dropdown above.
+  // A balance statement means "what they owe right now", not "what's in whatever date
+  // window happens to be selected" — paid invoices never appear here.
+  const balanceStatementRows = useMemo(() => {
+    if (!statementCustomerId) return [];
+    return invoices
+      .filter(inv => inv.customer_id === statementCustomerId && !inv.is_cancelled && !!inv.invoice_number)
+      .map(toStatementRow)
+      .filter(row => row.balance > 0)
+      .sort((a, b) => a.inv.invoice_date.localeCompare(b.inv.invoice_date));
+  }, [invoices, statementCustomerId]);
+
+  const balanceStatementSummary = useMemo(() => computeStatementTotals(balanceStatementRows), [balanceStatementRows]);
 
   // Reminders, scoped to the selected statement customer only — computed from the SAME
   // invoices/reminders/reminderSettings already loaded above, via the shared
@@ -1008,26 +1039,27 @@ export default function Invoices({ initialTab = 'list' }: InvoicesProps = {}) {
     setEmailSending(false);
   };
 
-  // Builds the exact same statement HTML used both for Print Statement (printInIframe,
-  // unchanged) and for the Statement PDF email attachment (htmlToPdfBase64) below — one
-  // source of statement markup, so the emailed PDF always matches what Print Statement
-  // and the on-screen Customer Statement show for the currently selected customer/filters.
-  const buildStatementHtml = (): string | null => {
+  // Builds a statement HTML document from whichever row set/summary/heading is passed
+  // in — Print Statement and Send Full Statement pass statementRows/statementSummary
+  // (paid + pending, current Date Quick Filter/Status), Send Balance Statement passes
+  // balanceStatementRows/balanceStatementSummary (outstanding only, all-time). One
+  // template, so every one of these always matches what's actually on screen/selected.
+  const buildStatementHtml = (rows: StatementRow[], summary: ReturnType<typeof computeStatementTotals>, heading: string, periodLabelOverride?: string): string | null => {
     if (!selectedStatementCustomer) return null;
     const cust = selectedStatementCustomer;
-    const rows = statementRows.map((r, idx) => `<tr>
+    const rowsHtml = rows.map((r, idx) => `<tr>
       <td style="text-align:center">${idx + 1}</td>
       <td>${formatDate(r.inv.invoice_date)}</td>
       <td>${r.inv.invoice_number}</td>
       <td style="text-align:right">${formatCurrency(r.payable)}</td>
       <td style="text-align:right">${formatCurrency(r.received)}</td>
-      <td class="${r.receivedDateLabel === '-' ? 'muted' : ''}">${r.receivedDateLabel}</td>
+      <td class="${r.receivedDateLabel === '—' ? 'muted' : ''}">${r.receivedDateLabel}</td>
       <td style="text-align:right">${formatCurrency(r.balance)}</td>
     </tr>`).join('');
-    const periodLabel = (statementFrom || statementTo) ? `${statementFrom ? formatDate(statementFrom) : 'Start'} &ndash; ${statementTo ? formatDate(statementTo) : 'Today'}` : 'All Time';
-    const overallStatus = statementSummary.totalPending <= 0 && statementSummary.count > 0 ? 'Paid'
-      : statementSummary.totalReceived > 0 ? 'Partially Paid' : 'Unpaid';
-    const html = `<!doctype html><html><head><meta charset="utf-8"><title>Statement - ${cust.name}</title>
+    const periodLabel = periodLabelOverride ?? ((statementFrom || statementTo) ? `${statementFrom ? formatDate(statementFrom) : 'Start'} &ndash; ${statementTo ? formatDate(statementTo) : 'Today'}` : 'All Time');
+    const overallStatus = summary.totalPending <= 0 && summary.count > 0 ? 'Paid'
+      : summary.totalReceived > 0 ? 'Partially Paid' : 'Unpaid';
+    const html = `<!doctype html><html><head><meta charset="utf-8"><title>${heading} - ${cust.name}</title>
 <style>
   * { box-sizing: border-box; }
   body { font-family: Arial, Helvetica, sans-serif; padding: 14mm 12mm; color: #1a1a1a; font-size: 11px; }
@@ -1061,7 +1093,7 @@ export default function Invoices({ initialTab = 'list' }: InvoicesProps = {}) {
   <div class="co">${settings?.company_name ?? ''}</div>
   ${settings?.address ? `<div class="addr">${settings.address.replace(/\n/g, ', ')}</div>` : ''}
   <div class="addr">${[settings?.phone ? 'Ph: ' + settings.phone : '', settings?.email ?? '', settings?.gstin ? 'GSTIN: ' + settings.gstin : ''].filter(Boolean).join(' &middot; ')}</div>
-  <h2>Customer Account Statement</h2>
+  <h2>${heading}</h2>
   <div class="meta-wrap">
     <div class="cust">
       <div class="nm">${cust.name}</div>
@@ -1074,14 +1106,14 @@ export default function Invoices({ initialTab = 'list' }: InvoicesProps = {}) {
   </div>
   <table>
     <thead><tr><th>Sl.No</th><th>Invoice Date</th><th>Invoice Number</th><th>Total Amount</th><th>Received Amount</th><th>Received Date</th><th>Balance Amount</th></tr></thead>
-    <tbody>${rows || '<tr><td colspan="7" style="text-align:center;padding:16px">No invoices found for this period/filter.</td></tr>'}</tbody>
-    ${statementRows.length > 0 ? `<tfoot><tr><td colspan="3">TOTAL (${statementSummary.count} invoice${statementSummary.count === 1 ? '' : 's'})</td><td style="text-align:right">${formatCurrency(statementSummary.totalAmount)}</td><td style="text-align:right">${formatCurrency(statementSummary.totalReceived)}</td><td></td><td style="text-align:right">${formatCurrency(statementSummary.totalPending)}</td></tr></tfoot>` : ''}
+    <tbody>${rowsHtml || '<tr><td colspan="7" style="text-align:center;padding:16px">No invoices found for this period/filter.</td></tr>'}</tbody>
+    ${rows.length > 0 ? `<tfoot><tr><td colspan="3">TOTAL (${summary.count} invoice${summary.count === 1 ? '' : 's'})</td><td style="text-align:right">${formatCurrency(summary.totalAmount)}</td><td style="text-align:right">${formatCurrency(summary.totalReceived)}</td><td></td><td style="text-align:right">${formatCurrency(summary.totalPending)}</td></tr></tfoot>` : ''}
   </table>
   <div class="summary">
     <h3>Account Summary</h3>
-    <div class="row"><span>Total Billing Amount</span><b>${formatCurrency(statementSummary.totalAmount)}</b></div>
-    <div class="row"><span>Total Received Amount</span><b>${formatCurrency(statementSummary.totalReceived)}</b></div>
-    <div class="row total bal"><span>Outstanding Balance</span><b>${formatCurrency(statementSummary.totalPending)}</b></div>
+    <div class="row"><span>Total Billing Amount</span><b>${formatCurrency(summary.totalAmount)}</b></div>
+    <div class="row"><span>Total Received Amount</span><b>${formatCurrency(summary.totalReceived)}</b></div>
+    <div class="row total bal"><span>Outstanding Balance</span><b>${formatCurrency(summary.totalPending)}</b></div>
     <div style="text-align:right"><span class="status-badge status-${overallStatus.replace(/\s/g, '-')}">${overallStatus}</span></div>
   </div>
   <div class="foot-note">E.&amp;O.E. This statement is generated from our records as of the date above.</div>
@@ -1090,12 +1122,16 @@ export default function Invoices({ initialTab = 'list' }: InvoicesProps = {}) {
   };
 
   // Reuses the same printInIframe pipeline every other print button on this page
-  // already uses — a plain HTML statement, not a new PDF-generation path.
+  // already uses — a plain HTML statement, not a new PDF-generation path. Unchanged:
+  // still prints exactly what's on screen (paid + pending, current filters).
   const printStatement = () => {
-    const html = buildStatementHtml();
+    const html = buildStatementHtml(statementRows, statementSummary, 'Customer Account Statement');
     if (html) printInIframe(html);
   };
 
+  // Balance Statement — outstanding invoices only (balanceStatementRows already
+  // excludes every fully-paid invoice), optionally with each one's own invoice PDF
+  // attached too when "Also Send Invoices" is checked.
   const sendBalanceStatement = async () => {
     if (!selectedStatementCustomer) return;
     const email = selectedStatementCustomer.email;
@@ -1103,38 +1139,32 @@ export default function Invoices({ initialTab = 'list' }: InvoicesProps = {}) {
       show('This customer does not have an email address configured. Please add an email in Customer Master.', 'error');
       return;
     }
-    const outstanding = statementRows.filter(r => r.balance > 0);
-    if (outstanding.length === 0) {
+    if (balanceStatementRows.length === 0) {
       show('This customer has no outstanding (unpaid/partially paid) invoices to send.', 'error');
       return;
     }
     setSendingStatement(true);
     try {
-      // Every attachment here (the statement summary and each invoice) is now sent as raw
-      // HTML and rendered server-side via Browserless (real Chromium) — the same path the
+      // Every attachment here (the statement summary and each invoice) is sent as raw HTML
+      // and rendered server-side via Browserless (real Chromium) — the same path the
       // single-invoice Email action uses — instead of being pre-rendered client-side with
       // html2pdf.js/html2canvas, which only approximate the layout. This keeps the emailed
       // statement PDF pixel-identical to Print Statement, same as buildStatementHtml()
       // already guarantees for the two HTML sources being byte-for-byte the same markup.
       const pdfHtmls: { filename: string; html: string }[] = [];
-      const periodSlug = (statementFrom || statementTo)
-        ? `${statementFrom || 'start'}_to_${statementTo || 'today'}`
-        : 'all-time';
-      if (attachStatementPdf) {
-        const html = buildStatementHtml();
-        if (html) {
-          const filename = `Balance_Statement_${selectedStatementCustomer.name.replace(/[^a-zA-Z0-9]+/g, '_')}_${periodSlug}.pdf`;
-          pdfHtmls.push({ filename, html });
-        }
+      const html = buildStatementHtml(balanceStatementRows, balanceStatementSummary, 'Balance Statement', 'Outstanding (All Time)');
+      if (html) {
+        const filename = `Balance_Statement_${selectedStatementCustomer.name.replace(/[^a-zA-Z0-9]+/g, '_')}.pdf`;
+        pdfHtmls.push({ filename, html });
       }
-      if (attachPerInvoicePdfs) {
-        for (const r of outstanding) {
-          const html = invoiceDocHTML(r.inv, r.inv.items ?? [], settings, invoiceSettings, 'master', 'tax', rateMasterRows, vehiclesList);
-          pdfHtmls.push({ filename: `Invoice_${r.inv.invoice_number}.pdf`, html });
+      if (alsoSendInvoices) {
+        for (const r of balanceStatementRows) {
+          const invHtml = invoiceDocHTML(r.inv, r.inv.items ?? [], settings, invoiceSettings, 'master', 'tax', rateMasterRows, vehiclesList);
+          pdfHtmls.push({ filename: `Invoice_${r.inv.invoice_number}.pdf`, html: invHtml });
         }
       }
       const { data, error } = await supabase.functions.invoke('send-balance-statement', {
-        body: { customerId: selectedStatementCustomer.id, invoiceIds: outstanding.map(r => r.inv.id), pdfHtmls },
+        body: { customerId: selectedStatementCustomer.id, invoiceIds: balanceStatementRows.map(r => r.inv.id), pdfHtmls, statementLabel: 'Balance Statement' },
       });
       if (error) {
         let msg = 'Unable to send balance statement. Please try again.';
@@ -1157,6 +1187,57 @@ export default function Invoices({ initialTab = 'list' }: InvoicesProps = {}) {
       show(getEmailErrorMessage(msg), 'error');
     }
     setSendingStatement(false);
+  };
+
+  // Full Statement — every invoice (paid + pending) for the currently selected Date
+  // Quick Filter/Status, i.e. exactly what's shown in the Customer Statement table and
+  // printed by Print Statement. No per-invoice attachments — just the one statement PDF.
+  const sendFullStatement = async () => {
+    if (!selectedStatementCustomer) return;
+    const email = selectedStatementCustomer.email;
+    if (!email) {
+      show('This customer does not have an email address configured. Please add an email in Customer Master.', 'error');
+      return;
+    }
+    if (statementRows.length === 0) {
+      show('There are no invoices to include in this statement for the current filters.', 'error');
+      return;
+    }
+    setSendingFullStatement(true);
+    try {
+      // Rendered server-side via Browserless (real Chromium), same as Send Balance
+      // Statement, so this PDF is pixel-identical to Print Statement too.
+      const pdfHtmls: { filename: string; html: string }[] = [];
+      const html = buildStatementHtml(statementRows, statementSummary, 'Full Statement');
+      if (html) {
+        const periodSlug = (statementFrom || statementTo) ? `${statementFrom || 'start'}_to_${statementTo || 'today'}` : 'all-time';
+        const filename = `Full_Statement_${selectedStatementCustomer.name.replace(/[^a-zA-Z0-9]+/g, '_')}_${periodSlug}.pdf`;
+        pdfHtmls.push({ filename, html });
+      }
+      const { data, error } = await supabase.functions.invoke('send-balance-statement', {
+        body: { customerId: selectedStatementCustomer.id, invoiceIds: statementRows.map(r => r.inv.id), pdfHtmls, statementLabel: 'Full Statement' },
+      });
+      if (error) {
+        let msg = 'Unable to send full statement. Please try again.';
+        if (error.context && typeof error.context.json === 'function') {
+          try {
+            const errBody = await error.context.json();
+            if (errBody?.error) msg = errBody.error;
+          } catch { /* fall through to default */ }
+        } else if (typeof error.message === 'string' && error.message.length > 0) {
+          msg = error.message;
+        }
+        show(getEmailErrorMessage(msg), 'error');
+      } else if (data?.sentTo) {
+        show(`Full statement sent to ${data.sentTo}`, 'success');
+      } else {
+        show('Full statement sent successfully', 'success');
+      }
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Unable to send full statement. Please try again.';
+      show(getEmailErrorMessage(msg), 'error');
+    }
+    setSendingFullStatement(false);
   };
 
   const scheduleReminders = async (invoiceId: string) => {
@@ -1556,28 +1637,38 @@ export default function Invoices({ initialTab = 'list' }: InvoicesProps = {}) {
               </table>
             </div>
 
-            <div className="flex flex-wrap items-center justify-end gap-4">
-              <div className="flex flex-wrap items-center gap-3 text-sm text-slate-600">
-                <label className="flex items-center gap-1.5">
-                  <input type="checkbox" checked={attachStatementPdf} onChange={e => setAttachStatementPdf(e.target.checked)} className="w-4 h-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500" />
-                  Statement PDF
-                </label>
-                <label className="flex items-center gap-1.5">
-                  <input type="checkbox" checked={attachPerInvoicePdfs} onChange={e => setAttachPerInvoicePdfs(e.target.checked)} className="w-4 h-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500" />
-                  Per Invoice Mail
-                </label>
+            <div className="flex flex-wrap items-center justify-between gap-3 p-3 bg-slate-50 rounded-lg border border-slate-200">
+              <div className="text-sm text-slate-600">
+                <span className="font-semibold text-slate-700">Balance Statement</span> (outstanding only, all-time):{' '}
+                {balanceStatementRows.length === 0
+                  ? <span className="text-slate-400">no outstanding invoices</span>
+                  : <>{balanceStatementRows.length} invoice{balanceStatementRows.length === 1 ? '' : 's'}, <b className="text-red-600">{formatCurrency(balanceStatementSummary.totalPending)}</b> due</>}
               </div>
-              <div className="flex flex-wrap gap-2">
-                <Button variant="secondary" onClick={() => setStatementCustomerId('')}>Back to All Invoices</Button>
-                <Button variant="outline" onClick={printStatement}><Printer className="w-4 h-4" />Print Statement</Button>
-                <Button onClick={sendBalanceStatement} disabled={sendingStatement}><Mail className="w-4 h-4" />{sendingStatement ? 'Sending...' : 'Email Balance Statement'}</Button>
-              </div>
+              <label className="flex items-center gap-1.5 text-sm text-slate-600">
+                <input type="checkbox" checked={alsoSendInvoices} onChange={e => setAlsoSendInvoices(e.target.checked)} className="w-4 h-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500" />
+                Also Send Invoices
+              </label>
+            </div>
+
+            <div className="flex flex-wrap items-center justify-end gap-2">
+              <Button variant="secondary" onClick={() => setStatementCustomerId('')}>Back to All Invoices</Button>
+              <Button variant="outline" onClick={printStatement}><Printer className="w-4 h-4" />Print Statement</Button>
+              <Button variant="outline" onClick={sendBalanceStatement} disabled={sendingStatement || balanceStatementRows.length === 0}><Mail className="w-4 h-4" />{sendingStatement ? 'Sending...' : 'Send Balance Statement'}</Button>
+              <Button onClick={sendFullStatement} disabled={sendingFullStatement || statementRows.length === 0}><Mail className="w-4 h-4" />{sendingFullStatement ? 'Sending...' : 'Send Full Statement'}</Button>
             </div>
 
             {/* Reminders — moved in from the old standalone Balance Reminders page,
                 scoped to this one selected customer (see customerReminderRows above). */}
             <div className="pt-2 border-t border-slate-200 space-y-3">
-              <p className="text-xs font-bold uppercase tracking-wide text-slate-500 flex items-center gap-1.5"><Bell className="w-3.5 h-3.5" />Reminders</p>
+              <div className="flex items-center justify-between">
+                <p className="text-xs font-bold uppercase tracking-wide text-slate-500 flex items-center gap-1.5"><Bell className="w-3.5 h-3.5" />Reminders</p>
+                <Button variant="outline" onClick={() => setShowReminders(v => !v)}>
+                  <Bell className="w-4 h-4" />Payment Reminders
+                </Button>
+              </div>
+
+              {showReminders && (
+              <>
               <div className="grid grid-cols-3 gap-3">
                 <div className="bg-slate-50 rounded-lg border border-slate-200 p-3">
                   <div className="flex items-center gap-1.5 mb-1"><Clock className="w-3.5 h-3.5 text-amber-500" /><span className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Day 1 Due</span></div>
@@ -1631,6 +1722,8 @@ export default function Invoices({ initialTab = 'list' }: InvoicesProps = {}) {
                     </tbody>
                   </table>
                 </div>
+              )}
+              </>
               )}
             </div>
           </>
