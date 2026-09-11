@@ -1,5 +1,6 @@
 import { createClient } from "npm:@supabase/supabase-js@2.57.4";
 import { formatDate, formatNumber } from "../_shared/invoice-pdf.ts";
+import { renderPdfViaBrowserless } from "../_shared/browserless.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -56,15 +57,15 @@ Deno.serve(async (req: Request) => {
     }
 
     const body = await req.json();
-    // `attachments` is new and OPTIONAL — existing callers (e.g. Settlement Report's own
+    // `pdfHtmls` is new and OPTIONAL — existing callers (e.g. Settlement Report's own
     // Email Statement action) that never send it keep getting the exact same inline-table
     // email with no attachment as before. Only a caller that explicitly sends a non-empty
-    // attachments array (Customer Statements' Email Balance Statement) gets the new
+    // pdfHtmls array (Customer Statements' Email Balance Statement) gets the new
     // "statement is attached as a PDF" subject/body below.
-    const { customerId, invoiceIds, attachments } = body as {
+    const { customerId, invoiceIds, pdfHtmls } = body as {
       customerId: string;
       invoiceIds: string[];
-      attachments?: { filename: string; content: string }[];
+      pdfHtmls?: { filename: string; html: string }[];
     };
     if (!customerId || !Array.isArray(invoiceIds) || invoiceIds.length === 0) {
       return new Response(
@@ -72,7 +73,23 @@ Deno.serve(async (req: Request) => {
         { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } },
       );
     }
-    const hasAttachments = Array.isArray(attachments) && attachments.length > 0;
+
+    // Every attachment (the statement summary and each invoice alike) is rendered here via
+    // Browserless (real Chromium, the same path the single-invoice Email action uses) from
+    // the print-view HTML the client sends - never pre-built client-side - so each PDF is
+    // pixel-identical to its Print view. A failure on one document is logged and skipped
+    // rather than failing the whole email.
+    const allAttachments: { filename: string; content: string }[] = [];
+    for (const entry of pdfHtmls ?? []) {
+      try {
+        const content = await renderPdfViaBrowserless(entry.html);
+        allAttachments.push({ filename: entry.filename, content });
+      } catch (renderErr) {
+        console.error(`Browserless render failed for ${entry.filename}:`, renderErr);
+      }
+    }
+
+    const hasAttachments = allAttachments.length > 0;
 
     const { data: customer, error: custError } = await adminClient
       .from("customers")
@@ -231,7 +248,7 @@ ${companyName}`;
       html: hasAttachments ? attachedEmailWrapper : emailWrapper,
     };
     if (hasAttachments) {
-      resendBody.attachments = attachments!.map((a) => ({ filename: a.filename, content: a.content }));
+      resendBody.attachments = allAttachments.map((a) => ({ filename: a.filename, content: a.content }));
     }
 
     const resendResponse = await fetch("https://api.resend.com/emails", {

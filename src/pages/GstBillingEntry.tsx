@@ -381,7 +381,7 @@ export default function GstBillingEntry({ invoiceId, onDone }: { invoiceId?: str
           daily_rate_snapshot: null,
           monthly_rate_snapshot: null,
           vehicle: { registration_number: l.vehicle_number, type: l.vehicle_type, capacity: l.ton },
-        });
+        }, { omitDate: true });
         items.push({
           invoice_id: invoice.id, sl_no: items.length + 1, description,
           hsn_sac: hsnSac, quantity: 1, rate: l.total_amount,
@@ -416,7 +416,7 @@ export default function GstBillingEntry({ invoiceId, onDone }: { invoiceId?: str
         daily_rate_snapshot: l.first_hour_rate,
         monthly_rate_snapshot: null,
         vehicle: { registration_number: l.vehicle_number, type: l.vehicle_type, capacity: l.ton },
-      });
+      }, { omitDate: true });
 
       items.push({
         invoice_id: invoice.id, sl_no: items.length + 1, description,

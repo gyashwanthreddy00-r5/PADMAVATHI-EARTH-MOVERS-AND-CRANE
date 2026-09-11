@@ -14,7 +14,6 @@ import {
 } from '@/lib/utils';
 import { DatePicker } from '@/components/ui/DatePicker';
 import { invoiceDocHTML } from '@/components/InvoiceDocument';
-import { generateInvoicePdfBase64 } from '@/lib/invoicePdf';
 import type {
   InvoiceWithRelations, InvoiceItem, InvoicePayment,
   InvoiceSettings, PaymentMode, InvoiceStatus, Customer,
@@ -373,9 +372,9 @@ export default function SettlementReport() {
     }
     setEmailSending(true);
     try {
-      const pdfBase64 = await generateInvoicePdfBase64(inv, inv.items ?? [], settings, invoiceSettings, 'master');
+      const html = invoiceDocHTML(inv, inv.items ?? [], settings, invoiceSettings);
       const { data, error } = await supabase.functions.invoke('send-invoice-email', {
-        body: { invoiceId: inv.id, pdfBase64 },
+        body: { invoiceId: inv.id, html },
       });
       if (error) {
         let msg = 'Unable to send invoice. Please try again.';

@@ -14,7 +14,6 @@ import {
   formatCurrency, formatDate, amountInWords, todayISO, buildInvoiceLineDescription, classNames, addDays,
 } from '@/lib/utils';
 import { invoiceDocHTML, type PrintCopyType, type InvoiceDocType } from '@/components/InvoiceDocument';
-import { generateInvoicePdfBase64 } from '@/lib/invoicePdf';
 import { calculateDiscount, validateDiscountPercentage } from '@/lib/discountCalc';
 import { findRateMasterForVehicle } from '@/lib/rateLookup';
 import { useAuth } from '@/context/AuthContext';
@@ -26,7 +25,6 @@ import {
   computeReminderRows, buildReminderTemplateVars, replaceReminderVars, getReminderEmailErrorMessage,
   type ReminderRowData,
 } from '@/lib/reminderCalc';
-import { htmlToPdfBase64 } from '@/lib/htmlToPdf';
 import type {
   InvoiceWithRelations, InvoiceItem, InvoicePayment,
   Customer, InvoiceSettings, PaymentMode, InvoiceStatus, RateMaster, VehicleType, Vehicle,
@@ -404,6 +402,7 @@ export default function Invoices({ initialTab = 'list' }: InvoicesProps = {}) {
     if (!email) { show('This customer does not have an email address configured. Please add an email in Customer Master.', 'error'); return; }
     setSendingReminder(true);
     try {
+      const html = invoiceDocHTML(reminderPreviewRow.invoice, reminderPreviewRow.invoice.items ?? [], settings, invoiceSettings, 'master', 'tax', rateMasterRows, vehiclesList);
       const { data, error } = await supabase.functions.invoke('process-reminders', {
         body: {
           action: 'send_manual',
@@ -411,6 +410,7 @@ export default function Invoices({ initialTab = 'list' }: InvoicesProps = {}) {
           reminderStage: reminderPreviewRow.stage,
           subjectOverride: reminderPreviewSubject,
           bodyOverride: reminderPreviewBody,
+          html,
         },
       });
       if (error) {
@@ -979,9 +979,9 @@ export default function Invoices({ initialTab = 'list' }: InvoicesProps = {}) {
     }
     setEmailSending(true);
     try {
-      const pdfBase64 = await generateInvoicePdfBase64(inv, inv.items ?? [], settings, invoiceSettings, 'master');
+      const html = invoiceDocHTML(inv, inv.items ?? [], settings, invoiceSettings, 'master', 'tax', rateMasterRows, vehiclesList);
       const { data, error } = await supabase.functions.invoke('send-invoice-email', {
-        body: { invoiceId: inv.id, pdfBase64 },
+        body: { invoiceId: inv.id, html },
       });
       if (error) {
         let msg = 'Unable to send invoice. Please try again.';
@@ -1110,11 +1110,13 @@ export default function Invoices({ initialTab = 'list' }: InvoicesProps = {}) {
     }
     setSendingStatement(true);
     try {
-      // Attachments reuse existing PDF generation exactly — the same buildStatementHtml()
-      // that Print Statement uses (via htmlToPdfBase64), and the same generateInvoicePdfBase64
-      // already used by the per-invoice Email action — nothing new is generated here,
-      // just optionally bundled onto this one customer-level email per the two checkboxes.
-      const attachments: { filename: string; content: string }[] = [];
+      // Every attachment here (the statement summary and each invoice) is now sent as raw
+      // HTML and rendered server-side via Browserless (real Chromium) — the same path the
+      // single-invoice Email action uses — instead of being pre-rendered client-side with
+      // html2pdf.js/html2canvas, which only approximate the layout. This keeps the emailed
+      // statement PDF pixel-identical to Print Statement, same as buildStatementHtml()
+      // already guarantees for the two HTML sources being byte-for-byte the same markup.
+      const pdfHtmls: { filename: string; html: string }[] = [];
       const periodSlug = (statementFrom || statementTo)
         ? `${statementFrom || 'start'}_to_${statementTo || 'today'}`
         : 'all-time';
@@ -1122,18 +1124,17 @@ export default function Invoices({ initialTab = 'list' }: InvoicesProps = {}) {
         const html = buildStatementHtml();
         if (html) {
           const filename = `Balance_Statement_${selectedStatementCustomer.name.replace(/[^a-zA-Z0-9]+/g, '_')}_${periodSlug}.pdf`;
-          const content = await htmlToPdfBase64(html, filename);
-          attachments.push({ filename, content });
+          pdfHtmls.push({ filename, html });
         }
       }
       if (attachPerInvoicePdfs) {
         for (const r of outstanding) {
-          const content = await generateInvoicePdfBase64(r.inv, r.inv.items ?? [], settings, invoiceSettings, 'master');
-          attachments.push({ filename: `Invoice_${r.inv.invoice_number}.pdf`, content });
+          const html = invoiceDocHTML(r.inv, r.inv.items ?? [], settings, invoiceSettings, 'master', 'tax', rateMasterRows, vehiclesList);
+          pdfHtmls.push({ filename: `Invoice_${r.inv.invoice_number}.pdf`, html });
         }
       }
       const { data, error } = await supabase.functions.invoke('send-balance-statement', {
-        body: { customerId: selectedStatementCustomer.id, invoiceIds: outstanding.map(r => r.inv.id), attachments },
+        body: { customerId: selectedStatementCustomer.id, invoiceIds: outstanding.map(r => r.inv.id), pdfHtmls },
       });
       if (error) {
         let msg = 'Unable to send balance statement. Please try again.';

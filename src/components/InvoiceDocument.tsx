@@ -93,12 +93,13 @@ export function invoiceDocHTML(
 
   // Each metadata field is its own label-above-value cell (matching a physical TallyPrime
   // GST invoice), not label-beside-value - metaRow is a single full-width cell (its row has
-  // just one dg-cell, so there's no vertical divider through it), metaRowPair is two cells
-  // side by side sharing one row (with a divider between them).
-  const dgCell = (label: string, val: string | null | undefined, full = false) =>
-    `<div class="dg-cell"${full ? ' style="flex:1 1 100%"' : ''}><div class="dg-lbl-text">${label}</div><div class="dg-val-text">${val || '&nbsp;'}</div></div>`;
+  // just one dg-cell, which - since .dg-row is table-layout:fixed - already spans the full
+  // row width on its own, no extra sizing needed), metaRowPair is two cells side by side
+  // sharing one row (with a divider between them).
+  const dgCell = (label: string, val: string | null | undefined) =>
+    `<div class="dg-cell"><div class="dg-lbl-text">${label}</div><div class="dg-val-text">${val || '&nbsp;'}</div></div>`;
   const metaRow = (label: string, val: string | null | undefined) =>
-    `<div class="dg-row">${dgCell(label, val, true)}</div>`;
+    `<div class="dg-row">${dgCell(label, val)}</div>`;
   const metaRowPair = (label1: string, val1: string | null | undefined, label2: string, val2: string | null | undefined) =>
     `<div class="dg-row">${dgCell(label1, val1)}${dgCell(label2, val2)}</div>`;
 
@@ -197,24 +198,26 @@ export function invoiceDocHTML(
   .copy-label span { font-size: 10px; font-weight: bold; font-style: italic; }
   .ti-heading { text-align: center; margin: 2px 0 4px 0; }
   .ti-heading h2 { font-size: 15px; margin: 0; font-weight: bold; color: #000; }
-  /* A flex row (not a table) so the shorter side (whichever of hdr-left / hdr-right has
-     less content) stretches to match the taller one - see .dg-row:last-child below,
-     which is what actually uses that stretched height to make its last row (and the
-     divider line inside it) reach all the way down to this box's own bottom border. */
-  .hdr-flex { display: flex; align-items: stretch; width: 100%; border: 1px solid #000; }
-  .hdr-left { width: 53%; border-right: 1px solid #000; }
+  /* CSS table (not flex) so the shorter side (whichever of hdr-left / hdr-right has less
+     content) stretches to match the taller one - a table-cell's border always spans its
+     full box, and that box is always the matched row height, so hdr-left's right border
+     (and hdr-right's own bottom edge) reach the bottom automatically with no separate
+     "stretch the last row" trick needed. Kept as CSS tables rather than flex specifically
+     so this HTML can be rasterized by html2canvas for the email PDF - html2canvas does
+     not reliably support flexbox, but does support CSS tables. */
+  .hdr-flex { display: table; table-layout: fixed; width: 100%; border: 1px solid #000; border-spacing: 0; }
+  .hdr-left { display: table-cell; width: 53%; border-right: 1px solid #000; vertical-align: top; }
   .hdr-left > div { padding: 4px 6px; border-bottom: 1px solid #000; }
   .hdr-left > div:last-child { border-bottom: none; }
   .hdr-left h3 { font-size: 10px; margin: 0 0 2px 0; font-weight: bold; color: #000; }
   .hdr-left .nm { font-weight: bold; font-size: 11px; margin: 1px 0; color: #000; }
-  /* Each metadata row is a flex row of one or two label-above-value cells - a physical
+  /* Each metadata row is a table row of one or two label-above-value cells - a physical
      TallyPrime GST invoice stacks the value directly under its own label rather than
-     beside it. The last row is given flex: 1 so it grows to fill any leftover height
-     when hdr-left (company/consignee/buyer) has more content than this side does. */
-  .hdr-right { width: 47%; display: flex; flex-direction: column; }
-  .dg-row { display: flex; border-bottom: 1px solid #999; }
-  .dg-row:last-child { border-bottom: none; flex: 1; }
-  .dg-cell { flex: 1; padding: 3px 4px; min-width: 0; }
+     beside it. */
+  .hdr-right { display: table-cell; width: 47%; vertical-align: top; }
+  .dg-row { display: table; table-layout: fixed; width: 100%; border-spacing: 0; border-bottom: 1px solid #999; }
+  .dg-row:last-child { border-bottom: none; }
+  .dg-cell { display: table-cell; padding: 3px 4px; }
   .dg-cell + .dg-cell { border-left: 1px solid #999; }
   .dg-lbl-text { font-size: 8px; color: #000; }
   .dg-val-text { font-size: 10px; font-weight: bold; color: #000; margin-top: 1px; word-wrap: break-word; overflow-wrap: break-word; }

@@ -1012,6 +1012,7 @@ export const translations = {
     slNo: 'క్ర.సం.',
     remark: 'గమనిక',
     selectColumns: 'కాలమ్‌లను ఎంచుకోండి',
+    paymentStatusFilter: 'చెల్లింపు స్థితి',
     fullyPaid: 'పూర్తి చెల్లింపు',
     unpaid: 'చెల్లించబడలేదు',
     partiallyPaid: 'పాక్షిక చెల్లింపు',

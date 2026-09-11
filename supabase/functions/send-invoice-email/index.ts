@@ -1,5 +1,6 @@
 import { createClient } from "npm:@supabase/supabase-js@2.57.4";
 import { generateInvoicePdfBytes, toBase64, formatDate, formatNumber } from "../_shared/invoice-pdf.ts";
+import { renderPdfViaBrowserless } from "../_shared/browserless.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -57,7 +58,7 @@ Deno.serve(async (req: Request) => {
     }
 
     const body = await req.json();
-    const { invoiceId, pdfBase64 } = body as { invoiceId: string; pdfBase64?: string };
+    const { invoiceId, pdfBase64, html } = body as { invoiceId: string; pdfBase64?: string; html?: string };
     if (!invoiceId) {
       return new Response(
         JSON.stringify({ error: "Invoice ID is required." }),
@@ -178,9 +179,20 @@ GSTIN: ${companyGstin}`;
 <p style="margin-top: 24px;">Regards,<br/><strong>${companyName}</strong><br/>${companyAddress}<br/>GSTIN: ${companyGstin}</p>
 </div>`;
 
-    // Use browser-generated PDF if provided, otherwise generate server-side
+    // Prefer rendering the exact same HTML the print view uses through a real Chromium
+    // instance (Browserless) so the emailed PDF is pixel-identical to Print/View - not an
+    // approximation. Falls back to a pre-built pdfBase64 (legacy client path) or, if
+    // neither is available or Browserless fails, the Deno-native generator.
     let pdfBase64Str: string;
-    if (pdfBase64) {
+    if (html) {
+      try {
+        pdfBase64Str = await renderPdfViaBrowserless(html);
+      } catch (renderErr) {
+        console.error("Browserless render failed, falling back to server-side generator:", renderErr);
+        const pdfBytes = await generateInvoicePdfBytes(invoice, items ?? [], settings, invoiceSettings, totalReceived, balanceAmount);
+        pdfBase64Str = toBase64(pdfBytes);
+      }
+    } else if (pdfBase64) {
       pdfBase64Str = pdfBase64;
     } else {
       const pdfBytes = await generateInvoicePdfBytes(invoice, items ?? [], settings, invoiceSettings, totalReceived, balanceAmount);

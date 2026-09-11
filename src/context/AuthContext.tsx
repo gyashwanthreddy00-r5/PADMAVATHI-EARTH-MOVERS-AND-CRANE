@@ -101,7 +101,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             { path: '/emi', label_key: 'emiVehicles', label: 'EMI Vehicles', section: 'operations', icon: 'CreditCard', sort_order: 13 },
             { path: '/invoices', label_key: 'customerInvoices', label: 'Customer Invoices', section: 'billing', icon: 'FileText', sort_order: 14 },
             { path: '/settlement-report', label_key: 'settlementReport', label: 'Settlement Report', section: 'billing', icon: 'Wallet', sort_order: 34 },
-            { path: '/balance-reminders', label_key: 'balanceReminders', label: 'Balance Reminders', section: 'billing', icon: 'Bell', sort_order: 37 },
             { path: '/reports/cash-payment', label_key: 'cashPaymentReport', label: 'Cash Payment Report', section: 'billing', icon: 'IndianRupee', sort_order: 35 },
             { path: '/reports/customer-billing', label_key: 'customerBillingReport', label: 'Customer Billing Report', section: 'billing', icon: 'BarChart3', sort_order: 29 },
             { path: '/settings', label_key: 'settings', label: 'Settings', section: 'settings', icon: 'Settings', sort_order: 15 },
@@ -122,9 +121,19 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             { path: '/reports/cash-bills', label_key: 'cashBillReport', label: 'Cash Bill Report', section: 'reports', icon: 'BarChart3', sort_order: 28 },
             { path: '/reports/vehicle-wise', label_key: 'vehicleWiseReport', label: 'Vehicle-Wise Report', section: 'reports', icon: 'TrendingUp', sort_order: 30 },
           ];
-          // Fire-and-forget: upsert each route. Errors are silently ignored
-          // so they never block the login flow.
-          Promise.all(appRoutes.map(r => supabase.rpc('upsert_page', r))).catch(() => {});
+          // Fire-and-forget: upsert each route. Errors are silently ignored so they
+          // never block the login flow. Param names must match the SQL function's
+          // signature exactly (p_path, p_label_key, ...) - PostgREST resolves RPC
+          // calls by matching the JSON object's keys against the function's declared
+          // parameter names, and reports a 404 (not a 400) when they don't match.
+          Promise.all(appRoutes.map(r => supabase.rpc('upsert_page', {
+            p_path: r.path,
+            p_label_key: r.label_key,
+            p_label: r.label,
+            p_section: r.section,
+            p_icon: r.icon,
+            p_sort_order: r.sort_order,
+          }))).catch(() => {});
         }
 
         if (adminRole) {

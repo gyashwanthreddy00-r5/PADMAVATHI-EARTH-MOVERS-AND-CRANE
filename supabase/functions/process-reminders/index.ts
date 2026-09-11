@@ -1,6 +1,7 @@
 // process-reminders: sends invoice reminder emails with PDF attachment (v2)
 import { createClient } from "npm:@supabase/supabase-js@2.57.4";
 import { generateInvoicePdfBytes, toBase64 as sharedToBase64, formatDate, formatNumber, buildInvoiceLineDescription as sharedBuildDesc } from "../_shared/invoice-pdf.ts";
+import { renderPdfViaBrowserless } from "../_shared/browserless.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -36,6 +37,7 @@ async function sendReminderEmail(
   pdfBase64Override?: string,
   subjectOverride?: string,
   bodyOverride?: string,
+  htmlOverride?: string,
 ): Promise<{ success: boolean; error?: string }> {
   const resendApiKey = Deno.env.get("RESEND_API_KEY");
   if (!resendApiKey) {
@@ -189,12 +191,21 @@ ${textBody.split("\n").map((l) => l.trim() === "" ? "<br/>" : `<p style="margin:
 </table>
 </div>`;
 
-  // Generate PDF attachment — prefer the browser-generated PDF (identical to the
-  // invoice email attachment, drawn from the same print-matching source) when the
-  // manual "Send Reminder" button supplied one; fall back to server-side generation
-  // for automated/scheduled reminders where no browser session is available.
+  // Generate PDF attachment — prefer rendering the exact print-view HTML through
+  // Browserless (real Chromium, pixel-identical to Print/View) when the manual
+  // "Send Reminder" button supplied it; fall back to a pre-built pdfBase64, then to
+  // server-side generation for automated/scheduled reminders where no browser
+  // session is available to produce either.
   let pdfBase64: string;
-  if (pdfBase64Override) {
+  if (htmlOverride) {
+    try {
+      pdfBase64 = await renderPdfViaBrowserless(htmlOverride);
+    } catch (renderErr) {
+      console.error("Browserless render failed, falling back to server-side generator:", renderErr);
+      const pdfBytes = await generateInvoicePdfBytes(invoice, items ?? [], settings, invoiceSettings, totalReceived, balanceAmount);
+      pdfBase64 = sharedToBase64(pdfBytes);
+    }
+  } else if (pdfBase64Override) {
     pdfBase64 = pdfBase64Override;
   } else {
     const pdfBytes = await generateInvoicePdfBytes(invoice, items ?? [], settings, invoiceSettings, totalReceived, balanceAmount);
@@ -262,13 +273,14 @@ Deno.serve(async (req: Request) => {
 
     // Parse request body
     const body = await req.json().catch(() => ({}));
-    const { action, invoiceId, reminderStage, pdfBase64, subjectOverride, bodyOverride } = body as {
+    const { action, invoiceId, reminderStage, pdfBase64, subjectOverride, bodyOverride, html } = body as {
       action?: string;
       invoiceId?: string;
       reminderStage?: number;
       pdfBase64?: string;
       subjectOverride?: string;
       bodyOverride?: string;
+      html?: string;
     };
 
     // Load reminder settings
@@ -380,7 +392,7 @@ Deno.serve(async (req: Request) => {
         reminder.status = "pending";
       }
 
-      const result = await sendReminderEmail(adminClient, reminder, reminderSettings, pdfBase64, subjectOverride, bodyOverride);
+      const result = await sendReminderEmail(adminClient, reminder, reminderSettings, pdfBase64, subjectOverride, bodyOverride, html);
 
       if (result.success) {
         await adminClient.from("invoice_reminders").update({

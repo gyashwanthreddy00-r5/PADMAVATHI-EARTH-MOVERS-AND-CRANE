@@ -345,7 +345,7 @@ export function buildInvoiceLineDescription(tr: Pick<Trip,
   vehicle?: { registration_number?: string | null; type?: string | null; capacity?: string | number | null } | null;
   sessions?: { session_number: number; duration_hours: number; duration_minutes?: number; session_amount?: number; in_time?: string | null; rate_type?: string | null }[] | null;
   work_date?: string | null;
-}): InvoiceLineDesc {
+}, opts: { omitDate?: boolean } = {}): InvoiceLineDesc {
   const rateType = tr.rate_type;
   const vType = tr.vehicle?.type;
   const capacity = tr.capacity_tons || tr.vehicle?.capacity;
@@ -366,7 +366,7 @@ export function buildInvoiceLineDescription(tr: Pick<Trip,
   const sessions = tr.sessions;
   const sessionCount = sessions && sessions.length > 0 ? sessions.length : 1;
   const sessionStr = sessionCount > 1 ? `${sessionCount} Sessions` : '';
-  const metaStr = [tripDateStr, vehicleStr, hoursStr, sessionStr].filter(Boolean).join(' | ');
+  const metaStr = [opts.omitDate ? null : tripDateStr, vehicleStr, hoursStr, sessionStr].filter(Boolean).join(' | ');
 
   const rentalAmount = Number(tr.rental_amount) || 0;
   const r1 = Number(tr.first_hour_rate) || 0;
