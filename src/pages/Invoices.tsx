@@ -187,6 +187,17 @@ export default function Invoices({ initialTab = 'list' }: InvoicesProps = {}) {
   const [recordingPayment, setRecordingPayment] = useState(false);
   const [paymentForm, setPaymentForm] = useState({ amount: null as number | null, payment_date: todayISO(), payment_mode: 'Cash' as PaymentMode, reference: '', remarks: '' });
   const [invoiceSearch, setInvoiceSearch] = useState('');
+  // Click-to-open list of vehicles for a multi-vehicle invoice row - stores that
+  // row's invoice id, or null when no popup is open. Closed by any outside click.
+  const [vehiclesPopupId, setVehiclesPopupId] = useState<string | null>(null);
+  useEffect(() => {
+    if (!vehiclesPopupId) return;
+    const handleClickOutside = (e: MouseEvent) => {
+      if (!(e.target as HTMLElement).closest('.vehicles-popup-trigger')) setVehiclesPopupId(null);
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, [vehiclesPopupId]);
   const [customerSearchMode, setCustomerSearchMode] = useState<'invoice' | 'customer'>('invoice');
   const [emailSending, setEmailSending] = useState(false);
   const [printCopyModal, setPrintCopyModal] = useState<InvoiceWithRelations | null>(null);
@@ -303,7 +314,8 @@ export default function Invoices({ initialTab = 'list' }: InvoicesProps = {}) {
         .from('invoices')
         .select(FULL_INVOICE_SELECT)
         .in('invoice_type', ['GST', 'MONTHLY_CONTRACT'])
-        .order('invoice_date', { ascending: false }),
+        .order('invoice_date', { ascending: false })
+        .order('created_at', { ascending: false }),
       supabase.from('customers').select('*').order('name'),
       supabase.from('invoice_settings').select('*').limit(1).maybeSingle(),
       supabase.from('rate_master').select('*').in('status', ['Active', 'Closed']),
@@ -1087,8 +1099,10 @@ export default function Invoices({ initialTab = 'list' }: InvoicesProps = {}) {
   .status-Partially-Paid { background: #fef9c3; color: #a16207; }
   .status-Unpaid { background: #fee2e2; color: #b91c1c; }
   .foot-note { margin-top: 10px; font-size: 9px; color: #777; }
-  @media print { body { padding: 0; } @page { size: A4; margin: 14mm 12mm; } }
+  .page-frame { border: 1.5px solid #000; padding: 8mm; min-height: 277mm; -webkit-box-decoration-break: clone; box-decoration-break: clone; }
+  @media print { body { padding: 0; } @page { size: A4; margin: 10mm; } }
 </style></head><body>
+  <div class="page-frame">
   ${settings?.logo_url ? `<div style="text-align:center;margin-bottom:4px"><img src="${settings.logo_url}" alt="Logo" style="max-height:46px"/></div>` : ''}
   <div class="co">${settings?.company_name ?? ''}</div>
   ${settings?.address ? `<div class="addr">${settings.address.replace(/\n/g, ', ')}</div>` : ''}
@@ -1117,6 +1131,7 @@ export default function Invoices({ initialTab = 'list' }: InvoicesProps = {}) {
     <div style="text-align:right"><span class="status-badge status-${overallStatus.replace(/\s/g, '-')}">${overallStatus}</span></div>
   </div>
   <div class="foot-note">E.&amp;O.E. This statement is generated from our records as of the date above.</div>
+  </div>
 </body></html>`;
     return html;
   };
@@ -1272,15 +1287,41 @@ export default function Invoices({ initialTab = 'list' }: InvoicesProps = {}) {
       }).filter(x => x.replace(/.*-\s*/, '').length > 0);
       return parts.length > 0 ? parts.join(', ') : `${count} Vehicle${count > 1 ? 's' : ''}`;
     }
-    return inv.vehicle_number ?? '-';
+    return inv.vehicle_number || inv.motor_vehicle_numbers || '-';
   };
 
   const columns: Column<InvoiceWithRelations>[] = [
     { key: 'invoice_date', header: 'Date', sortable: true, render: i => formatDate(i.invoice_date) },
     { key: 'customer_name', header: t('customer'), render: i => i.customer_name ?? i.customer?.name ?? '-' },
     { key: 'vehicle_number', header: 'Vehicle(s)', render: i => {
-      const count = i.invoiceVehicles?.length ?? 0;
-      if (count > 1) return <span className="font-medium text-blue-600">{count} Vehicles</span>;
+      const ivCount = i.invoiceVehicles?.length ?? 0;
+      // GST Billing Entry invoices have no invoiceVehicles rows - their multiple
+      // vehicles only exist as a comma-joined string on motor_vehicle_numbers.
+      const motorList = (i.motor_vehicle_numbers ?? '').split(',').map(s => s.trim()).filter(Boolean);
+      const labels = ivCount > 1
+        ? i.invoiceVehicles!.map(v => `${v.vehicle_type ? v.vehicle_type + ' - ' : ''}${v.vehicle_number ?? ''}`).filter(Boolean)
+        : (ivCount === 0 && motorList.length > 1 ? motorList : null);
+      if (labels) {
+        const isOpen = vehiclesPopupId === i.id;
+        return (
+          <div className="relative vehicles-popup-trigger inline-block">
+            <button
+              type="button"
+              onClick={() => setVehiclesPopupId(isOpen ? null : i.id)}
+              className="font-medium text-blue-600 hover:underline"
+            >
+              {labels.length} Vehicles
+            </button>
+            {isOpen && (
+              <div className="absolute z-50 mt-1 left-0 min-w-[180px] bg-white border border-slate-200 rounded-lg shadow-lg py-1.5">
+                {labels.map((l, idx) => (
+                  <div key={idx} className="px-3 py-1 text-sm text-slate-700 whitespace-nowrap">{l}</div>
+                ))}
+              </div>
+            )}
+          </div>
+        );
+      }
       return <span>{getVehicleDisplay(i)}</span>;
     }},
     { key: 'grand_total', header: 'Trip Total', align: 'right', sortable: true, render: i => <span className="font-semibold">{formatCurrency(i.grand_total)}</span> },

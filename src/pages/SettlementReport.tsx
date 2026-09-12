@@ -155,7 +155,7 @@ export default function SettlementReport() {
       const items = (inv.items ?? []) as InvoiceItem[];
       const vehicleNumbers = Array.from(new Set(
         items.map(it => it.trip?.vehicle?.registration_number).filter(Boolean)
-      )).join(', ') || null;
+      )).join(', ') || inv.motor_vehicle_numbers || null;
 
       let isOverdue = false;
       if (status !== 'Paid' && inv.invoice_date) {
