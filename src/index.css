@@ -91,23 +91,25 @@
   }
 }
 
-@media print {
-  body * {
-    visibility: hidden;
-  }
-  .print-section, .print-section *,
-  .print-logo, .print-logo * {
-    visibility: visible;
-  }
-  .print-section {
-    position: absolute;
-    left: 0;
-    top: 0;
-    width: 100%;
-  }
-  .print\:hidden {
-    display: none !important;
-  }
+/*
+ * Root cause of "print only shows the logo" on every report (Diesel, Attendance,
+ * Maintenance, EMI, Salary, Daily Vehicle, Monthly, Profit & Loss, Customer Billing —
+ * all rendered by src/pages/Reports.tsx via a plain window.print() on this same
+ * document): this file used to force `visibility: hidden` on every element in <body>,
+ * then only re-enabled visibility for a `.print-section` wrapper that NO page in the
+ * app actually uses (verified — zero matches for `.print-section` outside this file)
+ * plus `.print-logo` (the small logo+title block Reports.tsx does render). Every other
+ * element — filters, tables, totals — already correctly used Tailwind's own
+ * `print:hidden` utility to hide screen-only controls, which only needs `display: none`
+ * (Tailwind already generates that `@media print` rule itself); the dead
+ * `visibility: hidden` blanket rule above is what was actually hiding everything else.
+ * Removed; other reports that print via a separate window (Purchase, Settlement
+ * Report, Vehicle-Wise Report) build a fully self-contained HTML document there and
+ * were never affected by this file either way.
+ */
+@page {
+  size: A4;
+  margin: 12mm;
 }
 
 /* Remove number input spinner controls globally */

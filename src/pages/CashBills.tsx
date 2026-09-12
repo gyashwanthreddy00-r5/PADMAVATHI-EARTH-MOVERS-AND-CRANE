@@ -213,14 +213,31 @@ export default function CashBills() {
     const desc = `${vehicleNumbers} - ${data.place_of_work} - ${data.vehicles.length} vehicle(s)`.trim();
 
     const disc = calculateDiscount({ grandTotal: totalAmt, discountEnabled, discountPercentage: discountPercent });
-    const finalPayable = disc.finalPayableAmount;
+    const finalPayable = Math.round(disc.finalPayableAmount * 100) / 100;
 
     // Payment Status drives what's actually paid at creation time: Paid = full amount,
     // Pending = nothing yet, Partially Paid = the manually entered (and clamped) figure.
-    const paidAmount = billPaymentStatus === 'Paid' ? finalPayable
+    const rawPaidAmount = billPaymentStatus === 'Paid' ? finalPayable
       : billPaymentStatus === 'Pending' ? 0
-      : Math.min(finalPayable, Math.max(0, Number(paidAmountInput) || 0));
+      : Math.max(0, Number(paidAmountInput) || 0);
+    const paidAmount = Math.round(Math.min(finalPayable, rawPaidAmount) * 100) / 100;
     const balanceAmount = calcBalance(finalPayable, paidAmount);
+
+    // Defense-in-depth: the UI (Payment Status buttons + Paid Amount input's onChange,
+    // see the JSX below) already keeps these in sync as the user types, but re-validate
+    // here too so a bill can never reach the database with a paid/status mismatch.
+    if (paidAmount < 0 || paidAmount > finalPayable) {
+      throw new Error('Paid amount must be between 0 and the total payable amount.');
+    }
+    if (billPaymentStatus === 'Paid' && paidAmount !== finalPayable) {
+      throw new Error('Paid amount must equal the total amount when status is "Paid".');
+    }
+    if (billPaymentStatus === 'Pending' && paidAmount !== 0) {
+      throw new Error('Paid amount must be 0 when status is "Pending".');
+    }
+    if (billPaymentStatus === 'Partially Paid' && !(paidAmount > 0 && paidAmount < finalPayable)) {
+      throw new Error('Partially Paid requires a paid amount greater than 0 and less than the total amount.');
+    }
 
     const invoicePayload = {
       invoice_number: invNum,

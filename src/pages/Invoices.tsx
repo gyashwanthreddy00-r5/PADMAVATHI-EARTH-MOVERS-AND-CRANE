@@ -879,7 +879,12 @@ export default function Invoices({ initialTab = 'list' }: InvoicesProps = {}) {
       amount_received: newReceived,
       balance_amount: Math.max(0, newBalance),
       invoice_status: newStatus,
-      payment_status: newStatus === 'Paid' ? 'Paid' : 'Pending',
+      // payment_status shares the same allowed values as invoice_status (see
+      // supabase/migrations/20260911200000_fix_invoices_payment_status_constraint.sql) -
+      // keep it in sync with the real status instead of collapsing "Partially Paid"
+      // down to "Pending", which used to hide partial payments from anything that
+      // filters on payment_status (e.g. the Balance Statement status filter).
+      payment_status: newStatus,
     }).eq('id', paymentModal.id);
     if (invErr) { show(t('saveError'), 'error'); setRecordingPayment(false); return; }
     show('Payment recorded successfully', 'success');
