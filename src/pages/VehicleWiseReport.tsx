@@ -12,6 +12,43 @@ import { getReportLogoUrl } from '@/lib/reportLogo';
 import { DatePicker } from '@/components/ui/DatePicker';
 import type { Vehicle, MonthlyContract, TripWithRelations, DieselWithRelations, MaintenanceWithRelations, InvoiceWithRelations, EmiWithRelations } from '@/types';
 
+// Same hidden-iframe print pipeline used elsewhere in the app (Invoices.tsx,
+// SettlementReport.tsx, poOrdersExport.ts, printReport.ts) - triggers the browser print
+// dialog on the current page instead of opening a new tab.
+function printInIframe(html: string) {
+  const iframe = document.createElement('iframe');
+  iframe.style.position = 'fixed';
+  iframe.style.right = '0';
+  iframe.style.bottom = '0';
+  iframe.style.width = '0';
+  iframe.style.height = '0';
+  iframe.style.border = 'none';
+  iframe.style.visibility = 'hidden';
+  document.body.appendChild(iframe);
+
+  const doc = iframe.contentWindow?.document;
+  if (!doc) {
+    if (iframe.parentNode) document.body.removeChild(iframe);
+    return;
+  }
+
+  doc.open();
+  doc.write(html);
+  doc.close();
+
+  iframe.onload = () => {
+    setTimeout(() => {
+      try {
+        iframe.contentWindow?.focus();
+        iframe.contentWindow?.print();
+      } catch { /* ignore */ }
+      setTimeout(() => {
+        if (iframe.parentNode) document.body.removeChild(iframe);
+      }, 1000);
+    }, 350);
+  };
+}
+
 interface VehicleRow {
   id: string;
   vehicle: Vehicle;
@@ -182,8 +219,6 @@ export default function VehicleWiseReport() {
   };
 
   const handlePrint = () => {
-    const win = window.open('', '_blank');
-    if (!win) { show('Please allow popups to print', 'error'); return; }
     const totalEmiPaid = reportRows.reduce((s, r) => s + r.emiPaid, 0);
     const companyName = settings?.company_name ?? 'PADMAVATHI EARTH MOVERS AND CRANE SERVICES';
     const summaryCard = (label: string, value: string, color?: 'emerald' | 'red' | 'amber' | 'blue') => `
@@ -256,10 +291,8 @@ export default function VehicleWiseReport() {
       <p class="gen">Generated On: ${new Date().toLocaleString('en-IN', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' })}</p>
       <p class="co-name">${companyName}</p>
     </div>
-    <script>window.onload=()=>window.print()</script>
     </body></html>`;
-    win.document.write(html);
-    win.document.close();
+    printInIframe(html);
   };
 
   const selectAll = () => setSelectedIds(new Set(reportRows.map(r => r.id)));

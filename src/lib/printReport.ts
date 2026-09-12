@@ -51,9 +51,10 @@ export function printReportWithCompany(
   headers: string[],
   dataRows: (string | number)[][],
   totalRow?: (string | number)[],
+  orientation?: 'portrait' | 'landscape',
 ): void {
   const numCols = headers.length;
-  const wide = numCols > 7;
+  const wide = orientation ? orientation === 'landscape' : numCols > 7;
 
   // Numbers here come straight from .reduce() sums elsewhere, which can carry floating-
   // point noise (e.g. 158552.66999999998). Round to at most 2 decimals with Indian digit
@@ -80,7 +81,7 @@ export function printReportWithCompany(
   th { background: #d9eaf7; font-weight: 700; text-transform: uppercase; font-size: 9.5px; border: 1px solid #333; }
   tr:nth-child(even) td { background: #fafafa; }
   .total-row td { font-weight: 700; background: #e2f0d9; border-top: 2px solid #333; }
-  .page-frame { border: 1.5px solid #000; padding: 8mm; min-height: 265mm; -webkit-box-decoration-break: clone; box-decoration-break: clone; }
+  .page-frame { border: 1.5px solid #000; padding: 8mm; min-height: ${wide ? '178mm' : '265mm'}; -webkit-box-decoration-break: clone; box-decoration-break: clone; }
   @media print { body { padding: 0; } @page { size: A4 ${wide ? 'landscape' : 'portrait'}; margin: 10mm; } }
 </style></head><body>
   <div class="page-frame">

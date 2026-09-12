@@ -337,7 +337,7 @@ export default function Reports({ type }: ReportProps) {
   // Shared by Export Excel and Print - one source for each report type's title/headers/
   // rows/total row/date-range/filter text, so both outputs always show exactly the same
   // data in exactly the same format.
-  const buildReportTableData = (): { filename: string; title: string; headers: string[]; rows: (string | number)[][]; totalRow?: (string | number)[]; dateRange: string; filterStr: string } | null => {
+  const buildReportTableData = (): { filename: string; title: string; headers: string[]; rows: (string | number)[][]; totalRow?: (string | number)[]; dateRange: string; filterStr: string; orientation?: 'portrait' | 'landscape' } | null => {
     const genericDateRange = `${formatDate(filters.from)} - ${formatDate(filters.to)}`;
     let genericFilterStr = '';
     if (filters.vehicle_id) genericFilterStr += `Vehicle: ${vehicles.find(v => v.id === filters.vehicle_id)?.registration_number ?? ''} `;
@@ -366,7 +366,7 @@ export default function Reports({ type }: ReportProps) {
           headers: [t('date'), t('vehicleNumber'), t('pumpName'), t('quantityLiters'), t('ratePerLiter'), t('totalDieselAmount'), t('paidAmount'), t('pendingAmount'), t('paymentStatus')],
           rows: dieselData.map(d => [formatDate(d.diesel_date), d.vehicle?.registration_number ?? '-', d.pump_name ?? '-', d.quantity_liters, d.rate_per_liter, d.total_amount, d.paid_amount, d.pending_amount, d.payment_status]),
           totalRow: [t('total'), '', '', dieselData.reduce((s, d) => s + Number(d.quantity_liters), 0), '', dieselData.reduce((s, d) => s + Number(d.total_amount), 0), dieselData.reduce((s, d) => s + Number(d.paid_amount), 0), dieselData.reduce((s, d) => s + Number(d.pending_amount), 0), ''],
-          dateRange: genericDateRange, filterStr: genericFilterStr,
+          dateRange: genericDateRange, filterStr: genericFilterStr, orientation: 'portrait',
         };
       }
       case 'maintenance': {
@@ -485,7 +485,7 @@ export default function Reports({ type }: ReportProps) {
   const handlePrint = () => {
     const rd = buildReportTableData();
     if (!rd) return;
-    printReportWithCompany(rd.title, reportCompanyInfo(), rd.dateRange, new Date().toLocaleString('en-IN'), rd.filterStr, rd.headers, rd.rows, rd.totalRow);
+    printReportWithCompany(rd.title, reportCompanyInfo(), rd.dateRange, new Date().toLocaleString('en-IN'), rd.filterStr, rd.headers, rd.rows, rd.totalRow, rd.orientation);
   };
 
   const showMonthYear = type === 'salary' || type === 'monthly';
