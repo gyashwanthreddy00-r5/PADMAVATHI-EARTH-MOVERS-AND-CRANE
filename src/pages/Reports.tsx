@@ -514,19 +514,24 @@ export default function Reports({ type }: ReportProps) {
   })();
 
   return (
-    <div className="space-y-4">
-      <div className="print-logo hidden print:block mb-4">
-        <div className="flex items-center gap-3">
-          <img src={getReportLogoUrl()} alt="logo" className="w-14 h-11 object-contain" />
-          <div>
+    <div className="space-y-4 report-print">
+      {/* Professional print/PDF header — hidden on screen (hidden print:block), shown
+          only when printing/exporting this report. Logo left, company details right,
+          report title + selected date range centered below, thin divider under all of
+          it. Purely additive Tailwind print: classes — the on-screen page is untouched. */}
+      <div className="print-logo hidden print:block mb-3 pb-3 border-b-2 border-slate-800">
+        <div className="flex items-start justify-between gap-4">
+          <img src={getReportLogoUrl()} alt="logo" className="w-16 h-14 object-contain" />
+          <div className="text-right">
             <h1 className="text-base font-bold text-slate-900 uppercase">{settings?.company_name ?? 'PADMAVATHI EARTH MOVERS AND CRANE SERVICES'}</h1>
+            <p className="text-xs text-slate-600">{settings?.address ?? ''}</p>
             <p className="text-xs text-slate-600">
-              {[settings?.address, settings?.phone ? `Ph: ${settings.phone}` : null, settings?.gstin ? `GSTIN: ${settings.gstin}` : null].filter(Boolean).join(' | ')}
+              {[settings?.gstin ? `GSTIN: ${settings.gstin}` : null, settings?.phone ? `Ph: ${settings.phone}` : null].filter(Boolean).join(' | ')}
             </p>
           </div>
         </div>
-        <h2 className="text-sm font-bold text-slate-800 mt-2 pt-2 border-t border-slate-300">{reportTitles[type]}</h2>
-        {printFilterSummary && <p className="text-xs text-slate-600 mt-0.5">{printFilterSummary}</p>}
+        <h2 className="text-center text-sm font-bold text-slate-800 uppercase mt-2">{reportTitles[type]}</h2>
+        {printFilterSummary && <p className="text-center text-xs text-slate-600 mt-0.5">{printFilterSummary}</p>}
       </div>
       {/* Filters */}
       <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-4 print:hidden">
@@ -615,12 +620,35 @@ export default function Reports({ type }: ReportProps) {
       )}
 
       {/* Report Data */}
-      {!errorMsg && <ReportData type={type} data={data} t={t} filters={filters} />}
+      {!errorMsg && <ReportData type={type} data={data} t={t} filters={filters} settings={settings} />}
     </div>
   );
 }
 
-function ReportData({ type, data, t, filters }: { type: ReportType; data: unknown[]; t: (k: string) => string; filters: { from: string; to: string; month: number; year: number } }) {
+// Shared print/PDF-only footer — bordered totals grid + "Generated On" + company name,
+// reused by every report type below so they all get the same professional footer
+// (hidden on screen, only rendered when printing/exporting this report to PDF).
+function PrintFooter({ items, companyName }: { items: { label: string; value: string; color?: 'slate' | 'emerald' | 'red' | 'blue' | 'amber' }[]; companyName?: string | null }) {
+  const colorClass: Record<string, string> = {
+    slate: 'text-slate-800', emerald: 'text-emerald-600', red: 'text-red-600', blue: 'text-blue-600', amber: 'text-amber-600',
+  };
+  return (
+    <div className="hidden print:block mt-3 pt-3 border-t-2 border-slate-800">
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+        {items.map(it => (
+          <div key={it.label} className="bg-white rounded-lg border border-slate-200 p-2">
+            <div className="text-[10px] font-bold text-slate-500 uppercase">{it.label}</div>
+            <div className={`text-sm font-bold ${colorClass[it.color ?? 'slate']}`}>{it.value}</div>
+          </div>
+        ))}
+      </div>
+      <p className="text-[10px] text-slate-500 mt-2">Generated On: {new Date().toLocaleString('en-IN', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' })}</p>
+      <p className="text-[10px] font-bold text-slate-700 uppercase text-center mt-0.5">{companyName || 'PADMAVATHI EARTH MOVERS AND CRANE SERVICES'}</p>
+    </div>
+  );
+}
+
+function ReportData({ type, data, t, filters, settings }: { type: ReportType; data: unknown[]; t: (k: string) => string; filters: { from: string; to: string; month: number; year: number }; settings: { company_name?: string | null } | null }) {
   if (data.length === 0) {
     const rangeText = type === 'salary' || type === 'monthly'
       ? `${monthName(filters.month - 1)} ${filters.year}`
@@ -671,6 +699,13 @@ function ReportData({ type, data, t, filters }: { type: ReportType; data: unknow
             <div className="bg-white rounded-lg border border-red-200 p-3"><div className="text-xs text-slate-500">Pending</div><div className="text-lg font-bold text-red-600">{formatCurrency(totalPending)}</div></div>
           </div>
           <DataTable columns={columns} data={trips} pageSize={50} showSerialNumber />
+          <PrintFooter companyName={settings?.company_name} items={[
+            { label: 'Total Trips', value: String(trips.length) },
+            { label: 'Rental Amount', value: formatCurrency(totalRental) },
+            { label: 'Batha', value: formatCurrency(totalBatha) },
+            { label: 'Paid', value: formatCurrency(totalPaid), color: 'emerald' },
+            { label: 'Pending', value: formatCurrency(totalPending), color: 'red' },
+          ]} />
         </div>
       );
     }
@@ -700,6 +735,12 @@ function ReportData({ type, data, t, filters }: { type: ReportType; data: unknow
             <div className="bg-white rounded-lg border border-red-200 p-3"><div className="text-xs text-slate-500">Pending</div><div className="text-lg font-bold text-red-600">{formatCurrency(totalPending)}</div></div>
           </div>
           <DataTable columns={columns} data={diesel} pageSize={50} showSerialNumber />
+          <PrintFooter companyName={settings?.company_name} items={[
+            { label: 'Total Litres', value: `${totalLiters} L` },
+            { label: 'Total Amount', value: formatCurrency(totalAmount) },
+            { label: 'Paid', value: formatCurrency(totalPaid), color: 'emerald' },
+            { label: 'Pending', value: formatCurrency(totalPending), color: 'red' },
+          ]} />
         </div>
       );
     }
@@ -723,6 +764,12 @@ function ReportData({ type, data, t, filters }: { type: ReportType; data: unknow
             <div className="bg-white rounded-lg border border-blue-200 p-3"><div className="text-xs text-slate-500">Holiday</div><div className="text-lg font-bold text-blue-600">{holiday}</div></div>
           </div>
           <DataTable columns={columns} data={att} pageSize={50} showSerialNumber />
+          <PrintFooter companyName={settings?.company_name} items={[
+            { label: 'Total Records', value: String(att.length) },
+            { label: 'Present', value: String(present), color: 'emerald' },
+            { label: 'Absent', value: String(absent), color: 'red' },
+            { label: 'Holiday', value: String(holiday), color: 'blue' },
+          ]} />
         </div>
       );
     }
@@ -749,6 +796,12 @@ function ReportData({ type, data, t, filters }: { type: ReportType; data: unknow
             <div className="bg-white rounded-lg border border-red-200 p-3"><div className="text-xs text-red-600">{t('balance')}</div><div className="text-lg font-bold text-red-700">{formatCurrency(totalBalance)}</div></div>
           </div>
           <DataTable columns={columns} data={maint} pageSize={50} showSerialNumber />
+          <PrintFooter companyName={settings?.company_name} items={[
+            { label: 'Total Records', value: String(maint.length) },
+            { label: t('totalAmount'), value: formatCurrency(totalAmount) },
+            { label: t('paidAmount'), value: formatCurrency(totalPaid), color: 'emerald' },
+            { label: t('balance'), value: formatCurrency(totalBalance), color: 'red' },
+          ]} />
         </div>
       );
     }
@@ -789,6 +842,12 @@ function ReportData({ type, data, t, filters }: { type: ReportType; data: unknow
             <div className="bg-white rounded-lg border border-orange-200 p-3"><div className="text-xs text-orange-600">Due Today</div><div className="text-lg font-bold text-orange-600">{dueTodayCount}</div></div>
           </div>
           <DataTable columns={columns} data={emis} pageSize={50} showSerialNumber />
+          <PrintFooter companyName={settings?.company_name} items={[
+            { label: 'Total EMI', value: formatCurrency(totalAmount) },
+            { label: 'Paid', value: formatCurrency(totalPaid), color: 'emerald' },
+            { label: 'Pending', value: formatCurrency(totalPending), color: 'red' },
+            { label: 'Overdue Count', value: String(overdueCount), color: 'red' },
+          ]} />
         </div>
       );
     }
@@ -818,6 +877,12 @@ function ReportData({ type, data, t, filters }: { type: ReportType; data: unknow
             <div className="bg-white rounded-lg border border-slate-200 p-3"><div className="text-xs text-slate-500">Total Balance</div><div className={`text-lg font-bold ${totalBalance >= 0 ? 'text-emerald-600' : 'text-red-600'}`}>{formatCurrency(totalBalance)}</div></div>
           </div>
           <DataTable columns={columns} data={sal} pageSize={50} showSerialNumber />
+          <PrintFooter companyName={settings?.company_name} items={[
+            { label: 'Total Salary', value: formatCurrency(totalSalary) },
+            { label: 'Total Payable', value: formatCurrency(totalPayable) },
+            { label: 'Total Advance', value: formatCurrency(totalAdvance) },
+            { label: 'Total Balance', value: formatCurrency(totalBalance), color: totalBalance >= 0 ? 'emerald' : 'red' },
+          ]} />
         </div>
       );
     }
@@ -841,7 +906,21 @@ function ReportData({ type, data, t, filters }: { type: ReportType; data: unknow
         { key: 'net', header: t('netAmount'), align: 'right', render: r => <span className={r.net >= 0 ? 'text-emerald-600 font-medium' : 'text-red-600 font-medium'}>{formatCurrency(r.net)}</span> },
         { key: 'bill_status', header: t('billStatus'), render: r => <StatusBadge status={r.trip.bill_status} /> },
       ];
-      return <DataTable columns={columns} data={dv} pageSize={50} showSerialNumber />;
+      const totalRentalDv = dv.reduce((s, r) => s + Number(r.trip.rental_amount), 0);
+      const totalDieselDv = dv.reduce((s, r) => s + r.dAmount, 0);
+      const totalMaintDv = dv.reduce((s, r) => s + r.mAmount, 0);
+      const totalNetDv = dv.reduce((s, r) => s + r.net, 0);
+      return (
+        <div className="space-y-3">
+          <DataTable columns={columns} data={dv} pageSize={50} showSerialNumber />
+          <PrintFooter companyName={settings?.company_name} items={[
+            { label: 'Rental Amount', value: formatCurrency(totalRentalDv) },
+            { label: t('dieselAmount'), value: formatCurrency(totalDieselDv) },
+            { label: t('maintenance'), value: formatCurrency(totalMaintDv) },
+            { label: t('netAmount'), value: formatCurrency(totalNetDv), color: totalNetDv >= 0 ? 'emerald' : 'red' },
+          ]} />
+        </div>
+      );
     }
     case 'monthly':
     case 'profit-loss': {
@@ -905,6 +984,11 @@ function ReportData({ type, data, t, filters }: { type: ReportType; data: unknow
               </div>
             )}
           </div>
+          <PrintFooter companyName={settings?.company_name} items={[
+            { label: t('totalRevenue'), value: formatCurrency(r.totalRevenue ?? r.revenue ?? 0), color: 'emerald' },
+            { label: t('totalExpenses'), value: formatCurrency(r.totalExpenses ?? 0), color: 'red' },
+            { label: (r.netProfit ?? 0) >= 0 ? t('netProfit') : t('netLoss'), value: formatCurrency(Math.abs(r.netProfit ?? 0)), color: (r.netProfit ?? 0) >= 0 ? 'emerald' : 'red' },
+          ]} />
         </div>
       );
     }
@@ -950,6 +1034,13 @@ function ReportData({ type, data, t, filters }: { type: ReportType; data: unknow
             </div>
           </div>
           <DataTable columns={columns} data={invs} pageSize={50} showSerialNumber />
+          <PrintFooter companyName={settings?.company_name} items={[
+            { label: t('invoiceNumber'), value: String(invs.length) },
+            { label: t('taxableAmount'), value: formatCurrency(totalTaxable) },
+            { label: t('totalGst'), value: formatCurrency(totalGst) },
+            { label: t('paid'), value: formatCurrency(totalPaid), color: 'emerald' },
+            { label: t('pending'), value: formatCurrency(totalPending), color: 'red' },
+          ]} />
         </div>
       );
     }
@@ -999,6 +1090,13 @@ function ReportData({ type, data, t, filters }: { type: ReportType; data: unknow
             </div>
           </div>
           <DataTable columns={columns} data={cbData} pageSize={50} showSerialNumber />
+          <PrintFooter companyName={settings?.company_name} items={[
+            { label: t('customers'), value: String(cbData.length) },
+            { label: t('grandTotal'), value: formatCurrency(grandBilled) },
+            { label: t('paid'), value: formatCurrency(grandReceived), color: 'emerald' },
+            { label: t('balance'), value: formatCurrency(grandBalance), color: 'red' },
+            { label: t('collectionRate'), value: `${collectionRate}%`, color: 'blue' },
+          ]} />
         </div>
       );
     }

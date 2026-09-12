@@ -54,8 +54,9 @@ export function SimpleCashBillForm({ onChange }: Props) {
   // calculation supports fractional days), minimum 1, default 1. Not used for Hourly.
   const [days, setDays] = useState('1');
   // Operator Batha — manual, transaction-level entry only. Never auto-filled from Rate
-  // Master; defaults to 0 and stays exactly what the user types.
-  const [batha, setBatha] = useState(0);
+  // Master; blank by default (never shows a "0") and treated as ₹0 in every
+  // calculation below until the user actually types a value.
+  const [batha, setBatha] = useState('');
 
   useEffect(() => {
     (async () => {
@@ -210,7 +211,7 @@ export function SimpleCashBillForm({ onChange }: Props) {
               <div className={autoFieldClass}>{rateMaster ? `${formatNumber(r1)} / ${formatNumber(r2)}` : '-'}</div>
             </Field>
             <Field label="Operator Batha">
-              <input type="number" min="0" step="0.01" className={inputClass()} value={batha} onChange={e => setBatha(e.target.value === '' ? 0 : Math.max(0, Number(e.target.value)))} placeholder="0.00" />
+              <input type="number" min="0" step="0.01" className={inputClass()} value={batha} onChange={e => setBatha(e.target.value === '' ? '' : Math.max(0, Number(e.target.value)).toString())} placeholder="Enter Operator Batha (Optional)" />
             </Field>
           </div>
         ) : (
@@ -222,7 +223,7 @@ export function SimpleCashBillForm({ onChange }: Props) {
               <div className={autoFieldClass}>{rateMaster ? formatCurrency(dailyRate) : '-'}</div>
             </Field>
             <Field label="Operator Batha">
-              <input type="number" min="0" step="0.01" className={inputClass()} value={batha} onChange={e => setBatha(e.target.value === '' ? 0 : Math.max(0, Number(e.target.value)))} placeholder="0.00" />
+              <input type="number" min="0" step="0.01" className={inputClass()} value={batha} onChange={e => setBatha(e.target.value === '' ? '' : Math.max(0, Number(e.target.value)).toString())} placeholder="Enter Operator Batha (Optional)" />
             </Field>
           </div>
         )}

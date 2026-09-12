@@ -19,6 +19,12 @@ interface SearchableSelectProps {
   noResultsText?: string;
   className?: string;
   disabled?: boolean;
+  /** Opt-in width override for the options panel only (the trigger/field itself is
+   * unaffected) — e.g. when option labels are longer than the field they sit in and
+   * get truncated. Omit to keep the exact existing behavior (panel matches the
+   * trigger's width, "w-full"), so every other SearchableSelect in the app is
+   * untouched unless it explicitly passes this. */
+  dropdownClassName?: string;
 }
 
 export function SearchableSelect({
@@ -31,6 +37,7 @@ export function SearchableSelect({
   noResultsText = 'No results found',
   className,
   disabled = false,
+  dropdownClassName,
 }: SearchableSelectProps) {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState('');
@@ -106,7 +113,7 @@ export function SearchableSelect({
       </button>
 
       {open && (
-        <div className="absolute z-50 mt-1 w-full bg-white border border-slate-200 rounded-lg shadow-lg max-h-60 overflow-hidden flex flex-col">
+        <div className={`absolute z-50 mt-1 bg-white border border-slate-200 rounded-lg shadow-lg max-h-60 overflow-hidden flex flex-col ${dropdownClassName ?? 'w-full'}`}>
           <div className="p-2 border-b border-slate-100 sticky top-0 bg-white z-10">
             <div className="relative">
               <Search className="absolute left-2 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />

@@ -112,6 +112,102 @@
   margin: 12mm;
 }
 
+/*
+ * Reports section print/PDF layout — scoped entirely under `.report-print`, the
+ * wrapper class only src/pages/Reports.tsx's top-level page div carries (see that
+ * file). This makes the whole block a no-op on every other page, including ones
+ * that also render a `.grid` of cards or a `<DataTable>` (Vehicles, Employees,
+ * Trips, Customers, CashBills, etc.) — none of them have a `.report-print`
+ * ancestor, so none of these rules can ever apply to them. Pages that print their
+ * own separate document (Customer Invoices, Cash/UPI Bills, Purchase, Settlement
+ * Report, Vehicle-Wise Report) are a different HTML document entirely (opened in a
+ * new window/iframe with their own inline <style>) and never load this stylesheet
+ * at all, so they are unaffected regardless of scoping.
+ * Only takes effect under @media print (Print button or browser "Save as PDF") —
+ * the on-screen appearance of every Reports page is completely untouched.
+ */
+@media print {
+  /* Hard width guarantee: nothing inside a Reports page can ever be wider than the
+     @page printable area (A4 minus the 12mm margins above), and every element's
+     own padding/border counts inward instead of adding to that width. This, plus
+     Layout.tsx hiding the sidebar/header for print, is what actually stops content
+     from being cut off on the right — without it, a wide table or an odd number of
+     summary cards could still render wider than the page and get clipped. */
+  .report-print,
+  .report-print * {
+    box-sizing: border-box !important;
+  }
+  .report-print {
+    width: 100% !important;
+    max-width: 100% !important;
+    overflow-x: visible !important;
+  }
+
+  /* Summary/footer card grids: a deliberate 2-3 column layout (never one long row,
+     never so many columns they get squeezed) regardless of how many cards a given
+     report has, instead of relying on the sm:/md:/lg: breakpoints, which don't
+     reliably match the printed page width and is why cards used to end up uneven. */
+  .report-print .grid {
+    display: grid !important;
+    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)) !important;
+    gap: 8px !important;
+    width: 100% !important;
+  }
+  .report-print .grid > div {
+    border: 1px solid #d1d5db !important;
+    border-radius: 6px !important;
+    background: #fff !important;
+    box-shadow: none !important;
+    padding: 8px !important;
+    min-width: 0 !important;
+    break-inside: avoid;
+  }
+
+  /* Table container: the on-screen horizontal-scroll wrapper must never scroll or
+     clip in print — let the table itself wrap to fit the page instead. */
+  .report-print .overflow-x-auto {
+    overflow: visible !important;
+    max-width: 100% !important;
+  }
+
+  /* Report table: fixed layout + 100% width means column widths are always
+     computed from the printable area itself, never from the widest cell's natural
+     (nowrap) content — the actual reason right-hand columns were being cut off.
+     Long text (GSTIN, names, addresses, descriptions) wraps instead of overflowing.
+     Light grey borders on every cell, grey header background, alternating row
+     shading — DataTable itself is unchanged, only how it looks when printed from
+     inside a .report-print page. */
+  .report-print table {
+    table-layout: fixed !important;
+    border-collapse: collapse !important;
+    width: 100% !important;
+    max-width: 100% !important;
+  }
+  .report-print table th,
+  .report-print table td {
+    border: 1px solid #d1d5db !important;
+    white-space: normal !important;
+    word-break: break-word !important;
+    overflow-wrap: break-word !important;
+    font-size: 8.5px !important;
+    padding: 3px 4px !important;
+    line-height: 1.3 !important;
+  }
+  .report-print table thead th {
+    background: #f1f5f9 !important;
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+  .report-print table tbody tr:nth-child(even) {
+    background: #f8fafc !important;
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+  .report-print table tbody tr {
+    break-inside: avoid;
+  }
+}
+
 /* Remove number input spinner controls globally */
 input[type="number"]::-webkit-inner-spin-button,
 input[type="number"]::-webkit-outer-spin-button {

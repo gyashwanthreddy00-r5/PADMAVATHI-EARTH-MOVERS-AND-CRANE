@@ -423,16 +423,22 @@ export default function Invoices({ initialTab = 'list' }: InvoicesProps = {}) {
   }, [invoices, reminders, reminderSettings, statementCustomerId]);
 
   const reminderSummary = useMemo(() => ({
-    day1Due: customerReminderRows.filter(r => r.stage === 1 && r.status === 'Due').length,
     day10Due: customerReminderRows.filter(r => r.stage === 10 && r.status === 'Due').length,
     day20Due: customerReminderRows.filter(r => r.stage === 20 && r.status === 'Due').length,
     sentCount: customerReminderRows.filter(r => r.status === 'Sent').length,
   }), [customerReminderRows]);
 
+  // Only Due (10+/20+ days overdue) or already-Sent reminders are ever shown here — a
+  // reminder must never appear before its stage's day threshold is actually reached.
+  const visibleReminderRows = useMemo(
+    () => customerReminderRows.filter(r => r.status === 'Due' || r.status === 'Sent'),
+    [customerReminderRows],
+  );
+
   function openReminderPreview(row: ReminderRowData) {
     if (!reminderSettings) { show('Reminder settings are not configured yet.', 'error'); return; }
-    const subjectTemplate = row.stage === 1 ? reminderSettings.day1_subject : row.stage === 10 ? reminderSettings.day10_subject : reminderSettings.day20_subject;
-    const bodyTemplate = row.stage === 1 ? reminderSettings.day1_body : row.stage === 10 ? reminderSettings.day10_body : reminderSettings.day20_body;
+    const subjectTemplate = row.stage === 10 ? reminderSettings.day10_subject : reminderSettings.day20_subject;
+    const bodyTemplate = row.stage === 10 ? reminderSettings.day10_body : reminderSettings.day20_body;
     const vars = buildReminderTemplateVars(row, settings);
     setReminderPreviewRow(row);
     setReminderPreviewSubject(replaceReminderVars(subjectTemplate, vars));
@@ -1731,11 +1737,7 @@ export default function Invoices({ initialTab = 'list' }: InvoicesProps = {}) {
 
               {showReminders && (
               <>
-              <div className="grid grid-cols-3 gap-3">
-                <div className="bg-slate-50 rounded-lg border border-slate-200 p-3">
-                  <div className="flex items-center gap-1.5 mb-1"><Clock className="w-3.5 h-3.5 text-amber-500" /><span className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Day 1 Due</span></div>
-                  <div className="text-lg font-bold text-slate-800">{reminderSummary.day1Due}</div>
-                </div>
+              <div className="grid grid-cols-2 gap-3">
                 <div className="bg-slate-50 rounded-lg border border-slate-200 p-3">
                   <div className="flex items-center gap-1.5 mb-1"><Clock className="w-3.5 h-3.5 text-amber-500" /><span className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Day 10 Due</span></div>
                   <div className="text-lg font-bold text-slate-800">{reminderSummary.day10Due}</div>
@@ -1746,7 +1748,7 @@ export default function Invoices({ initialTab = 'list' }: InvoicesProps = {}) {
                 </div>
               </div>
 
-              {customerReminderRows.length === 0 ? (
+              {visibleReminderRows.length === 0 ? (
                 <p className="text-sm text-slate-400 py-2">No reminders applicable for this customer/period.</p>
               ) : (
                 <div className="overflow-x-auto border border-slate-200 rounded-lg">
@@ -1762,7 +1764,7 @@ export default function Invoices({ initialTab = 'list' }: InvoicesProps = {}) {
                       </tr>
                     </thead>
                     <tbody>
-                      {customerReminderRows.filter(r => r.status !== 'Not Required').map(r => (
+                      {visibleReminderRows.map(r => (
                         <tr key={`${r.invoice.id}-${r.stage}`} className="hover:bg-slate-50">
                           <td className="px-3 py-1.5 border-b border-slate-100 text-blue-700 font-medium whitespace-nowrap">{r.invoice.invoice_number}</td>
                           <td className="text-right px-3 py-1.5 border-b border-slate-100 font-semibold text-red-600">{formatCurrency(r.balance)}</td>

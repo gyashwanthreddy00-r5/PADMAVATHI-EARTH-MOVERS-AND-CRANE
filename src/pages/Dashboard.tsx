@@ -3,7 +3,6 @@ import { supabase } from '@/lib/supabase';
 import { useLang } from '@/context/LangContext';
 import { LoadingSpinner } from '@/components/ui/common';
 import { DatePicker } from '@/components/ui/DatePicker';
-import { RevenueBarChart } from '@/components/ui/Charts';
 import { formatCurrency, formatDate, todayISO, toISODate, classNames, vehicleTypeLabel } from '@/lib/utils';
 import { useNotifications } from '@/hooks/useNotifications';
 import {
@@ -657,7 +656,7 @@ export default function Dashboard({ onNavigate }: { onNavigate: (path: string) =
       </div>
 
       {/* SECTION 3: OPERATIONS */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+      <div className="grid grid-cols-1 gap-4">
         {/* Vehicle Status */}
         <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-4 min-w-0">
           <div className="flex items-center justify-between mb-3">
@@ -727,39 +726,6 @@ export default function Dashboard({ onNavigate }: { onNavigate: (path: string) =
           {computed.activeContracts.length === 0 && (
             <p className="text-xs text-slate-400 italic">No active monthly contracts</p>
           )}
-        </div>
-
-        {/* Rental Performance + Revenue Chart */}
-        <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-4 min-w-0">
-          <div className="flex items-center justify-between mb-3">
-            <div className="flex items-center gap-2">
-              <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-emerald-50 to-teal-50 flex items-center justify-center flex-shrink-0">
-                <TrendingUp className="w-4 h-4 text-emerald-600" />
-              </div>
-              <h3 className="text-sm font-bold text-slate-800">Rental Performance</h3>
-            </div>
-            <button onClick={() => onNavigate('/trips')} className="text-xs font-semibold text-blue-600 hover:text-blue-700 flex items-center gap-1 flex-shrink-0">
-              View All <ArrowRight className="w-3 h-3" />
-            </button>
-          </div>
-          <div className="grid grid-cols-3 gap-2 mb-3">
-            <div className="p-2.5 rounded-lg bg-blue-50 text-center">
-              <p className="text-[10px] font-semibold text-blue-600 uppercase">Total</p>
-              <p className="text-lg font-bold text-blue-800 tabular-nums">{computed.totalRentals}</p>
-            </div>
-            <div className="p-2.5 rounded-lg bg-amber-50 text-center">
-              <p className="text-[10px] font-semibold text-amber-600 uppercase">Active</p>
-              <p className="text-lg font-bold text-amber-800 tabular-nums">{computed.activeRentals}</p>
-            </div>
-            <div className="p-2.5 rounded-lg bg-emerald-50 text-center">
-              <p className="text-[10px] font-semibold text-emerald-600 uppercase">Completed</p>
-              <p className="text-lg font-bold text-emerald-800 tabular-nums">{computed.completedRentals}</p>
-            </div>
-          </div>
-          <div className="overflow-hidden min-w-0">
-            <p className="text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-2">Rental Over Time</p>
-            <RevenueBarChart data={computed.revenueByMonth} />
-          </div>
         </div>
       </div>
 

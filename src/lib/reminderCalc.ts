@@ -1,8 +1,8 @@
 import { formatCurrency, formatDate, todayISO, addDays } from '@/lib/utils';
 import type { InvoiceWithRelations, InvoiceReminder, ReminderSettings, CompanySettings } from '@/types';
 
-export type ReminderStage = 1 | 10 | 20;
-export const REMINDER_STAGES: ReminderStage[] = [1, 10, 20];
+export type ReminderStage = 10 | 20;
+export const REMINDER_STAGES: ReminderStage[] = [10, 20];
 export type ReminderRowStatus = 'Pending' | 'Due' | 'Sent' | 'Not Required';
 
 export interface ReminderRowData {
@@ -37,7 +37,7 @@ export function computeReminderRows(
     const received = Math.round((inv.payments ?? []).reduce((s, p) => s + Number(p.amount), 0) * 100) / 100;
     const balance = Math.max(0, Math.round((payable - received) * 100) / 100);
     for (const stage of REMINDER_STAGES) {
-      const stageEnabled = stage === 1 ? reminderSettings?.day1_enabled : stage === 10 ? reminderSettings?.day10_enabled : reminderSettings?.day20_enabled;
+      const stageEnabled = stage === 10 ? reminderSettings?.day10_enabled : reminderSettings?.day20_enabled;
       if (reminderSettings && stageEnabled === false) continue;
       const dueDate = addDays(inv.invoice_date, stage);
       const existing = reminders.find(r => r.invoice_id === inv.id && r.reminder_stage === stage) ?? null;

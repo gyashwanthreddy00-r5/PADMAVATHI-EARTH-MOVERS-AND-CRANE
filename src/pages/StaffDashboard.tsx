@@ -1,20 +1,39 @@
-import { useState, useEffect, useCallback, useMemo } from 'react';
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { supabase } from '@/lib/supabase';
 import { useLang } from '@/context/LangContext';
 import { useNotifications } from '@/hooks/useNotifications';
 import { LoadingSpinner } from '@/components/ui/common';
 import { DatePicker } from '@/components/ui/DatePicker';
-import { formatCurrency, formatDate, todayISO, toISODate, classNames, vehicleTypeLabel } from '@/lib/utils';
+import { formatCurrency, formatDate, todayISO, toISODate, classNames } from '@/lib/utils';
 import {
   Truck, Wrench, Fuel, AlertCircle, Calendar, FileText, AlertTriangle,
   RefreshCw, X, ArrowRight, CalendarClock, ShieldCheck, ClipboardCheck,
   CreditCard, Eye, ClipboardList, CheckCircle2, Clock, MapPin,
-  TrendingUp, Activity, Gauge,
+  TrendingUp, Gauge,
 } from 'lucide-react';
 import type {
   Vehicle, TripWithRelations, DieselWithRelations, MaintenanceWithRelations,
-  EmiWithRelations, MonthlyContract, Employee, Quotation,
+  EmiWithRelations, MonthlyContract, Employee, Quotation, PoOrder, InvoiceWithRelations,
 } from '@/types';
+
+type WorkProgressStatus = 'Completed' | 'In Progress' | 'Pending';
+interface WorkProgressRow {
+  id: string;
+  name: string;
+  workType: string;
+  status: WorkProgressStatus;
+}
+
+// Today's Work Progress card + Work Progress List row navigation — each module name
+// used above maps to its own page. ('/diesel-entry' was requested but the app's real
+// route for this page is '/diesel' - see App.tsx - so that's what's used here; every
+// other path below matches the app's routes exactly.)
+const WORK_TYPE_ROUTES: Record<string, string> = {
+  'Diesel Entry': '/diesel',
+  'PO Order': '/po-orders',
+  'Maintenance Entry': '/maintenance',
+  'Customer Invoice': '/invoices',
+};
 
 type DateRangeKey = 'today' | 'week' | 'month' | 'custom';
 
@@ -30,6 +49,8 @@ interface StaffData {
   emiRecords: EmiWithRelations[];
   employees: Employee[];
   quotations: Quotation[];
+  activePoOrders: (PoOrder & { customer?: { id: string; name: string } | null })[];
+  todayInvoices: InvoiceWithRelations[];
 }
 
 function getRangeDates(range: DateRangeKey, customStart?: string, customEnd?: string): { start: string; end: string } {
@@ -110,13 +131,14 @@ export default function StaffDashboard({ onNavigate }: { onNavigate: (path: stri
   const [customStart, setCustomStart] = useState('');
   const [customEnd, setCustomEnd] = useState('');
   const [showCustom, setShowCustom] = useState(false);
+  const workProgressListRef = useRef<HTMLDivElement>(null);
 
   const today = todayISO();
 
   const fetchData = useCallback(async () => {
     const { start, end } = getRangeDates(dateRange, customStart, customEnd);
 
-    const [vRes, cRes, ttRes, ptRes, tdRes, pdRes, tmRes, pmRes, eRes, empRes, qRes] = await Promise.all([
+    const [vRes, cRes, ttRes, ptRes, tdRes, pdRes, tmRes, pmRes, eRes, empRes, qRes, poRes, invRes] = await Promise.all([
       supabase.from('vehicles').select('*'),
       supabase.from('monthly_contracts').select('*'),
       supabase.from('trips').select('*, vehicle:vehicles(id,registration_number,model,type,capacity,hourly_rate,daily_rate,tons), driver:employees(id,name,role,phone,license_number,license_expiry,salary), customer:customers(id,name,address,gstin,phone)').eq('trip_date', today).eq('is_cancelled', false),
@@ -128,6 +150,13 @@ export default function StaffDashboard({ onNavigate }: { onNavigate: (path: stri
       supabase.from('emi_records').select('*, vehicle:vehicles(id,registration_number,model)'),
       supabase.from('employees').select('*').eq('active', true),
       supabase.from('quotations').select('*').order('created_at', { ascending: false }),
+      // Today's Work Progress card/list (Staff Dashboard only). Customer Invoices are
+      // scoped to today (same "today" concept used above for diesel/maintenance), but
+      // PO Orders is deliberately NOT date-scoped — it shows every currently Active PO
+      // Order (ongoing work), not just ones created today; a Completed PO disappears
+      // immediately (filtered server-side here, not by date).
+      supabase.from('po_orders').select('*, customer:customers(id,name)').eq('status', 'Active'),
+      supabase.from('invoices').select('*, customer:customers(id,name)').eq('invoice_date', today).eq('is_cancelled', false).in('invoice_type', ['GST', 'MONTHLY_CONTRACT']),
     ]);
 
     setData({
@@ -142,6 +171,8 @@ export default function StaffDashboard({ onNavigate }: { onNavigate: (path: stri
       emiRecords: (eRes.data ?? []) as EmiWithRelations[],
       employees: (empRes.data ?? []) as Employee[],
       quotations: (qRes.data ?? []) as Quotation[],
+      activePoOrders: (poRes.data ?? []) as (PoOrder & { customer?: { id: string; name: string } | null })[],
+      todayInvoices: (invRes.data ?? []) as InvoiceWithRelations[],
     });
     setLoading(false);
     setRefreshing(false);
@@ -158,6 +189,8 @@ export default function StaffDashboard({ onNavigate }: { onNavigate: (path: stri
       .on('postgres_changes', { event: '*', schema: 'public', table: 'vehicles' }, fetchData)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'monthly_contracts' }, fetchData)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'quotations' }, fetchData)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'po_orders' }, fetchData)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'invoices' }, fetchData)
       .subscribe();
     return () => { supabase.removeChannel(channel); };
   }, [fetchData]);
@@ -261,6 +294,44 @@ export default function StaffDashboard({ onNavigate }: { onNavigate: (path: stri
     });
     upcomingEvents.sort((a, b) => a.date.localeCompare(b.date));
 
+    // Today's Work Progress — one row per entry across the four modules named in the
+    // card (Diesel Entries, Maintenance Entries, Customer Invoices are today-only;
+    // PO Orders is every currently Active one, already fetched pre-filtered to
+    // status='Active' above — a Completed PO is never in data.activePoOrders at all,
+    // so it disappears from both the count and the Work Progress List immediately,
+    // and reopening one (back to Active) brings it right back via the realtime
+    // po_orders subscription re-running this fetch).
+    const todayPoOrdersCount = data.activePoOrders.length;
+    const todayInvoicesCount = data.todayInvoices.length;
+    const totalTodayEntries = todayDieselEntries + todayPoOrdersCount + todayMaintenanceCount + todayInvoicesCount;
+
+    const workProgressRows: WorkProgressRow[] = [
+      ...data.todayDiesel.map(d => ({
+        id: `diesel-${d.id}`,
+        name: d.vehicle?.registration_number ?? '-',
+        workType: 'Diesel Entry',
+        status: (d.payment_status === 'Paid' ? 'Completed' : d.payment_status === 'Partially Paid' ? 'In Progress' : 'Pending') as WorkProgressStatus,
+      })),
+      ...data.activePoOrders.map(p => ({
+        id: `po-${p.id}`,
+        name: p.customer?.name ?? p.po_number,
+        workType: 'PO Order',
+        status: 'In Progress' as WorkProgressStatus,
+      })),
+      ...data.todayMaintenance.map(m => ({
+        id: `maint-${m.id}`,
+        name: m.vehicle?.registration_number ?? '-',
+        workType: 'Maintenance Entry',
+        status: (Number(m.balance) <= 0 ? 'Completed' : Number(m.paid_amount) > 0 ? 'In Progress' : 'Pending') as WorkProgressStatus,
+      })),
+      ...data.todayInvoices.map(i => ({
+        id: `inv-${i.id}`,
+        name: i.customer?.name ?? i.customer_name ?? '-',
+        workType: 'Customer Invoice',
+        status: (i.payment_status === 'Paid' ? 'Completed' : i.payment_status === 'Partially Paid' ? 'In Progress' : 'Pending') as WorkProgressStatus,
+      })),
+    ];
+
     return {
       availableVehicles: availableVehicles.length,
       workingVehicles: workingVehicles.length,
@@ -278,6 +349,8 @@ export default function StaffDashboard({ onNavigate }: { onNavigate: (path: stri
       recentMaintenance,
       upcomingEvents,
       todayTrips: data.todayTrips,
+      todayPoOrdersCount, todayInvoicesCount, totalTodayEntries,
+      workProgressRows,
     };
   }, [data, today, dateRange, customStart, customEnd]);
 
@@ -365,9 +438,7 @@ export default function StaffDashboard({ onNavigate }: { onNavigate: (path: stri
       )}
 
       {/* TODAY'S QUICK STATS */}
-      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
-        <Kpi label={t('todaysJobs')} value={computed.todayTripsCount} icon={ClipboardList} iconColor="text-blue-600" bgColor="bg-blue-50" subtitle={`${computed.pendingTodayTrips} ${t('jobsPending')}`} onClick={() => onNavigate('/trips')} />
-        <Kpi label={t('completedJobs')} value={computed.completedTodayTrips} icon={CheckCircle2} iconColor="text-emerald-600" bgColor="bg-emerald-50" subtitle={t('jobsDoneToday')} subtitleColor="text-emerald-500" onClick={() => onNavigate('/trips')} />
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
         <Kpi label={t('availableCranes')} value={computed.availableVehicles} icon={Truck} iconColor="text-emerald-600" bgColor="bg-emerald-50" subtitle={t('readyForDispatch')} onClick={() => onNavigate('/vehicles')} />
         <Kpi label={t('onRent')} value={computed.workingVehicles} icon={Truck} iconColor="text-blue-600" bgColor="bg-blue-50" subtitle={t('currentlyDeployed')} onClick={() => onNavigate('/vehicles')} />
         <Kpi label={t('maintenance')} value={computed.maintenanceVehicles} icon={Wrench} iconColor="text-amber-600" bgColor="bg-amber-50" subtitle={t('underRepair')} onClick={() => onNavigate('/maintenance')} />
@@ -375,50 +446,82 @@ export default function StaffDashboard({ onNavigate }: { onNavigate: (path: stri
       </div>
 
       {/* PERIOD SUMMARY CARDS */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
-        <Kpi label={t('totalJobs')} value={computed.periodTripsCount} icon={Activity} iconColor="text-blue-600" bgColor="bg-blue-50" subtitle={`${computed.completedPeriodTrips} ${t('completedJobs')}`} onClick={() => onNavigate('/trips')} />
-        <Kpi label={t('activeJobs')} value={computed.activePeriodTrips} icon={Clock} iconColor="text-amber-600" bgColor="bg-amber-50" subtitle={t('inProgress')} onClick={() => onNavigate('/trips')} />
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
         <Kpi label={t('dieselEntries')} value={computed.periodDieselEntries} icon={Fuel} iconColor="text-orange-600" bgColor="bg-orange-50" subtitle={formatCurrency(computed.periodDieselCost)} subtitleColor="text-orange-500" onClick={() => onNavigate('/diesel')} />
         <Kpi label={t('maintenance')} value={computed.periodMaintenanceCount} icon={Wrench} iconColor="text-amber-600" bgColor="bg-amber-50" subtitle={formatCurrency(computed.periodMaintenanceCost)} subtitleColor="text-amber-500" onClick={() => onNavigate('/maintenance')} />
       </div>
 
-      {/* TODAY'S JOBS */}
-      <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden min-w-0">
-        <div className="px-4 py-3 border-b border-slate-100 flex items-center justify-between bg-gradient-to-r from-blue-50/50 to-transparent">
-          <div className="flex items-center gap-2">
-            <Calendar className="w-4 h-4 text-blue-600 flex-shrink-0" />
-            <h3 className="text-sm font-bold text-slate-800">{t('todaysJobs')}</h3>
+      {/* TODAY'S WORK PROGRESS — replaces the old Today's Jobs card/table. Compact
+          per-module count summary + a simple Name/Work Type/Progress list, today only. */}
+      <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-4 min-w-0">
+        <div className="flex items-center gap-2 mb-3">
+          <div className="w-8 h-8 rounded-lg bg-blue-50 flex items-center justify-center">
+            <ClipboardList className="w-4 h-4 text-blue-600" />
           </div>
-          <button onClick={() => onNavigate('/trips')} className="text-xs font-semibold text-blue-600 hover:text-blue-700 flex items-center gap-1 flex-shrink-0">
-            {t('viewAll')} <ArrowRight className="w-3 h-3" />
+          <h3 className="text-sm font-bold text-slate-800">Today's Work Progress</h3>
+        </div>
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+          <button type="button" onClick={() => onNavigate(WORK_TYPE_ROUTES['Diesel Entry'])} className="text-center p-2.5 rounded-lg bg-orange-50 cursor-pointer transition-all hover:shadow-md hover:ring-1 hover:ring-orange-300">
+            <p className="text-lg font-bold text-orange-700 tabular-nums">{computed.todayDieselEntries}</p>
+            <p className="text-[10px] font-semibold text-orange-600 uppercase mt-0.5">Diesel Entries</p>
+          </button>
+          <button type="button" onClick={() => onNavigate(WORK_TYPE_ROUTES['PO Order'])} className="text-center p-2.5 rounded-lg bg-blue-50 cursor-pointer transition-all hover:shadow-md hover:ring-1 hover:ring-blue-300">
+            <p className="text-lg font-bold text-blue-700 tabular-nums">{computed.todayPoOrdersCount}</p>
+            <p className="text-[10px] font-semibold text-blue-600 uppercase mt-0.5">PO Orders</p>
+          </button>
+          <button type="button" onClick={() => onNavigate(WORK_TYPE_ROUTES['Maintenance Entry'])} className="text-center p-2.5 rounded-lg bg-amber-50 cursor-pointer transition-all hover:shadow-md hover:ring-1 hover:ring-amber-300">
+            <p className="text-lg font-bold text-amber-700 tabular-nums">{computed.todayMaintenanceCount}</p>
+            <p className="text-[10px] font-semibold text-amber-600 uppercase mt-0.5">Maintenance Entries</p>
+          </button>
+          <button type="button" onClick={() => onNavigate(WORK_TYPE_ROUTES['Customer Invoice'])} className="text-center p-2.5 rounded-lg bg-slate-50 cursor-pointer transition-all hover:shadow-md hover:ring-1 hover:ring-slate-300">
+            <p className="text-lg font-bold text-slate-700 tabular-nums">{computed.todayInvoicesCount}</p>
+            <p className="text-[10px] font-semibold text-slate-500 uppercase mt-0.5">Customer Invoices</p>
           </button>
         </div>
-        {computed.todayTrips.length === 0 ? (
-          <p className="text-sm text-slate-400 italic px-4 py-8 text-center">{t('noJobsToday')}</p>
+        <button
+          type="button"
+          onClick={() => workProgressListRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })}
+          className="w-full flex items-center justify-between mt-3 pt-3 border-t border-slate-100 cursor-pointer transition-all hover:bg-slate-50 rounded-b-lg -mb-1 pb-1"
+        >
+          <span className="text-sm font-bold text-slate-700">Total Today's Entries</span>
+          <span className="text-lg font-bold text-blue-700 tabular-nums">{computed.totalTodayEntries}</span>
+        </button>
+      </div>
+
+      {/* WORK PROGRESS LIST */}
+      <div ref={workProgressListRef} className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden min-w-0">
+        <div className="px-4 py-3 border-b border-slate-100 flex items-center gap-2 bg-gradient-to-r from-blue-50/50 to-transparent">
+          <Calendar className="w-4 h-4 text-blue-600 flex-shrink-0" />
+          <h3 className="text-sm font-bold text-slate-800">Work Progress List</h3>
+        </div>
+        {computed.workProgressRows.length === 0 ? (
+          <p className="text-sm text-slate-400 italic px-4 py-8 text-center">No entries today.</p>
         ) : (
           <div className="overflow-x-auto">
             <table className="w-full">
               <thead>
                 <tr className="bg-slate-50 border-b border-slate-200">
-                  <th className="px-3 py-2.5 text-[10px] font-bold text-slate-600 uppercase tracking-wider text-left whitespace-nowrap">{t('customerName')}</th>
-                  <th className="px-3 py-2.5 text-[10px] font-bold text-slate-600 uppercase tracking-wider text-left whitespace-nowrap">{t('equipment')}</th>
-                  <th className="px-3 py-2.5 text-[10px] font-bold text-slate-600 uppercase tracking-wider text-left whitespace-nowrap">{t('siteLocation')}</th>
-                  <th className="px-3 py-2.5 text-[10px] font-bold text-slate-600 uppercase tracking-wider text-left whitespace-nowrap">{t('driver')}</th>
-                  <th className="px-3 py-2.5 text-[10px] font-bold text-slate-600 uppercase tracking-wider text-center whitespace-nowrap">{t('status')}</th>
+                  <th className="px-3 py-2.5 text-[10px] font-bold text-slate-600 uppercase tracking-wider text-left whitespace-nowrap">Name</th>
+                  <th className="px-3 py-2.5 text-[10px] font-bold text-slate-600 uppercase tracking-wider text-left whitespace-nowrap">Work Type</th>
+                  <th className="px-3 py-2.5 text-[10px] font-bold text-slate-600 uppercase tracking-wider text-center whitespace-nowrap">Progress</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
-                {computed.todayTrips.slice(0, 8).map(tr => (
-                  <tr key={tr.id} onClick={() => onNavigate('/trips')} className="hover:bg-slate-50 cursor-pointer transition-colors">
-                    <td className="px-3 py-2.5 text-sm font-medium text-slate-800 whitespace-nowrap max-w-[120px] truncate">{tr.customer?.name ?? tr.place_of_work}</td>
-                    <td className="px-3 py-2.5 text-sm text-slate-600 whitespace-nowrap">{tr.vehicle ? `${tr.vehicle.registration_number} - ${vehicleTypeLabel(tr.vehicle.type, tr.vehicle.tons ?? tr.vehicle.capacity)}` : '-'}</td>
-                    <td className="px-3 py-2.5 text-sm text-slate-600 whitespace-nowrap max-w-[120px] truncate">{tr.place_of_work}</td>
-                    <td className="px-3 py-2.5 text-sm text-slate-600 whitespace-nowrap">{tr.driver?.name ?? '-'}</td>
+                {computed.workProgressRows.map(row => (
+                  <tr
+                    key={row.id}
+                    onClick={() => { const path = WORK_TYPE_ROUTES[row.workType]; if (path) onNavigate(path); }}
+                    className="hover:bg-slate-50 hover:shadow-sm transition-all cursor-pointer"
+                  >
+                    <td className="px-3 py-2.5 text-sm font-medium text-slate-800 whitespace-nowrap max-w-[160px] truncate">{row.name}</td>
+                    <td className="px-3 py-2.5 text-sm text-slate-600 whitespace-nowrap">{row.workType}</td>
                     <td className="px-3 py-2.5 text-center whitespace-nowrap">
                       <span className={classNames(
                         'inline-flex px-2.5 py-0.5 rounded-full text-[10px] font-bold',
-                        tr.bill_status === 'Paid' ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-700',
-                      )}>{tr.bill_status}</span>
+                        row.status === 'Completed' ? 'bg-emerald-100 text-emerald-700' :
+                        row.status === 'In Progress' ? 'bg-blue-100 text-blue-700' :
+                        'bg-orange-100 text-orange-700',
+                      )}>{row.status}</span>
                     </td>
                   </tr>
                 ))}
