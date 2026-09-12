@@ -55,16 +55,49 @@ function totals(records: PoWorkingRecord[]) {
   return { subtotal, gst, grand };
 }
 
-/** Opens a print-friendly Excel-style billing statement in a new tab and triggers the print dialog. */
+// Same hidden-iframe print pipeline used elsewhere in the app (Invoices.tsx,
+// SettlementReport.tsx) - triggers the browser print dialog without opening a new tab.
+function printInIframe(html: string) {
+  const iframe = document.createElement('iframe');
+  iframe.style.position = 'fixed';
+  iframe.style.right = '0';
+  iframe.style.bottom = '0';
+  iframe.style.width = '0';
+  iframe.style.height = '0';
+  iframe.style.border = 'none';
+  iframe.style.visibility = 'hidden';
+  document.body.appendChild(iframe);
+
+  const doc = iframe.contentWindow?.document;
+  if (!doc) {
+    if (iframe.parentNode) document.body.removeChild(iframe);
+    return;
+  }
+
+  doc.open();
+  doc.write(html);
+  doc.close();
+
+  iframe.onload = () => {
+    setTimeout(() => {
+      try {
+        iframe.contentWindow?.focus();
+        iframe.contentWindow?.print();
+      } catch { /* ignore */ }
+      setTimeout(() => {
+        if (iframe.parentNode) document.body.removeChild(iframe);
+      }, 1000);
+    }, 350);
+  };
+}
+
+/** Prints a print-friendly Excel-style billing statement on the current page (no new tab). */
 export function printPoWorkingData(ctx: PoExportContext, records: PoWorkingRecord[]) {
   const { subtotal, gst, grand } = totals(records);
-  const win = window.open('', '_blank');
-  if (!win) return;
-
   const rowsHtml = records.map((r, idx) => `<tr>${rowCells(r, idx, ctx).map(c => `<td>${c}</td>`).join('')}</tr>`).join('');
 
-  win.document.write(`<!doctype html>
-<html><head><title>${ctx.poNumber} - Working Day Billing</title>
+  const html = `<!doctype html>
+<html><head><meta charset="utf-8"><title>${ctx.poNumber} - Working Day Billing</title>
 <style>
   * { box-sizing: border-box; }
   body { font-family: Arial, Helvetica, sans-serif; padding: 24px; color: #111; }
@@ -78,7 +111,12 @@ export function printPoWorkingData(ctx: PoExportContext, records: PoWorkingRecor
   .totals { margin-top: 10px; width: 320px; margin-left: auto; font-size: 13px; }
   .totals td { border: none; text-align: right; padding: 3px 6px; }
   .totals .grand { font-weight: 800; border-top: 2px solid #333; }
-  @media print { body { padding: 0; } }
+  @media print {
+    body { padding: 0; }
+    table { font-size: 9px; }
+    th, td { padding: 3px 4px; }
+    @page { size: A4 landscape; margin: 8mm; }
+  }
 </style>
 </head><body>
   <div class="co">${ctx.companyName}</div>
@@ -99,10 +137,8 @@ export function printPoWorkingData(ctx: PoExportContext, records: PoWorkingRecor
     <tr><td>GST @ 18%</td><td>${formatCurrency(gst)}</td></tr>
     <tr class="grand"><td>Grand Total</td><td>${formatCurrency(grand)}</td></tr>
   </table>
-</body></html>`);
-  win.document.close();
-  win.focus();
-  setTimeout(() => win.print(), 300);
+</body></html>`;
+  printInIframe(html);
 }
 
 /** Downloads a formatted .xlsx billing statement for this PO's working-day records. */
@@ -137,12 +173,16 @@ export function exportPoWorkingDataToExcel(ctx: PoExportContext, records: PoWork
 
   const ws = XLSX.utils.aoa_to_sheet(aoa);
 
+  const titleRowRange = ctx.companyAddress ? 2 : 1;
+  const metaRow = titleRowRange + 1;
   ws['!merges'] = [
     { s: { r: 0, c: 0 }, e: { r: 0, c: colCount - 1 } },
     ...(ctx.companyAddress ? [{ s: { r: 1, c: 0 }, e: { r: 1, c: colCount - 1 } }] : []),
+    // Customer name - merged across the same span "Sl.No" through "VL No" would occupy,
+    // so the full name always displays instead of being clipped by the narrow first column.
+    { s: { r: metaRow, c: 0 }, e: { r: metaRow, c: 4 } },
   ];
 
-  const titleRowRange = ctx.companyAddress ? 2 : 1;
   for (let c = 0; c < colCount; c++) {
     const titleCell = ws[XLSX.utils.encode_cell({ r: 0, c })];
     if (titleCell) titleCell.s = titleStyle;
@@ -151,7 +191,6 @@ export function exportPoWorkingDataToExcel(ctx: PoExportContext, records: PoWork
       if (addrCell) addrCell.s = { alignment: { horizontal: 'center' } };
     }
   }
-  const metaRow = titleRowRange + 1;
   [0, 5].forEach(c => {
     const cell = ws[XLSX.utils.encode_cell({ r: metaRow, c })];
     if (cell) cell.s = metaStyle;

@@ -5,7 +5,8 @@ import { useSettings } from '@/context/SettingsContext';
 import { Modal, ConfirmDialog, Button, Field, inputClass, LoadingSpinner } from '@/components/ui/common';
 import { DataTable, type Column } from '@/components/ui/DataTable';
 import { DatePicker } from '@/components/ui/DatePicker';
-import { formatCurrency, formatDate, todayISO, exportToExcelWithCompany, classNames } from '@/lib/utils';
+import { formatCurrency, formatDate, todayISO, classNames } from '@/lib/utils';
+import { exportToXlsxWithCompany } from '@/lib/exportXlsx';
 import { round2 } from '@/lib/gstBillingCalc';
 import { Plus, Pencil, Trash2, ArrowLeft, ShoppingCart, Search, Printer, FileSpreadsheet } from 'lucide-react';
 import type { Vendor, Purchase as PurchaseRow } from '@/types';
@@ -346,8 +347,8 @@ export default function Purchase() {
       Number(p.amount), Number(p.gst_amount), Number(p.total_amount), Number(p.paid_amount), Number(p.balance_amount),
     ]);
     const totalRow = ['', '', '', 'TOTAL', summary.totalAmount, summary.totalGst, summary.totalBill, summary.totalPaid, summary.totalBalance];
-    exportToExcelWithCompany(
-      `Purchase_Statement_${selectedVendor.name.replace(/\s+/g, '_')}.csv`,
+    exportToXlsxWithCompany(
+      `Purchase_Statement_${selectedVendor.name.replace(/\s+/g, '_')}.xlsx`,
       'Purchase Statement',
       companyInfo,
       filterLabel(),

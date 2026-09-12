@@ -10,8 +10,10 @@ import {
   CheckCircle2, FileText, ChevronLeft, ChevronRight, Wallet, AlertCircle, Send,
 } from 'lucide-react';
 import {
-  formatCurrency, formatDate, todayISO, exportToExcelWithCompany, buildInvoiceLineDescription,
+  formatCurrency, formatDate, todayISO, buildInvoiceLineDescription,
 } from '@/lib/utils';
+import { exportSettlementReportXlsx } from '@/lib/exportSettlementXlsx';
+import { exportToXlsxWithCompany } from '@/lib/exportXlsx';
 import { DatePicker } from '@/components/ui/DatePicker';
 import { invoiceDocHTML } from '@/components/InvoiceDocument';
 import type {
@@ -456,8 +458,8 @@ export default function SettlementReport() {
         inv.taxable_amount, inv.cgst_amount, inv.sgst_amount, inv.total_gst, inv.grand_total,
       ]);
     }
-    exportToExcelWithCompany(
-      `Invoice_${inv.invoice_number}.csv`, 'GST Tax Invoice',
+    exportToXlsxWithCompany(
+      `Invoice_${inv.invoice_number}.xlsx`, 'GST Tax Invoice',
       settings ? { company_name: settings.company_name, address: settings.address, phone: settings.phone, email: settings.email, gstin: settings.gstin } : { company_name: 'Crane ERP' },
       formatDate(inv.invoice_date), '', '', headers, rows,
     );
@@ -466,25 +468,26 @@ export default function SettlementReport() {
   // Export all filtered settlement rows
   const exportSettlementExcel = () => {
     const headers = [t('invoiceNumber'), t('invoiceDate'), t('referenceNo'), t('companyCustomer'), t('vehicleNumber'), t('sessions'), t('grandTotal'), t('totalReceived'), t('balance'), t('status'), t('overdue'), t('payments'), t('lastPayment')];
-    const rows: (string | number)[][] = filteredRows.map(r => [
-      r.invoice_number,
-      formatDate(r.invoice_date),
-      r.reference_no ?? '',
-      r.customer_name ?? '',
-      r.vehicle_numbers ?? '',
-      r.items.reduce((s, it) => s + ((it.trip as { sessions?: unknown[] } | null)?.sessions?.length ?? 1), 0),
-      r.grand_total,
-      r.amount_received,
-      r.balance,
-      r.status,
-      r.is_overdue ? 'Yes' : 'No',
-      r.payment_count,
-      r.last_payment_date ? formatDate(r.last_payment_date) : '',
-    ]);
-    exportToExcelWithCompany(
-      'Settlement_Report.csv', 'Settlement Report',
+    const rows = filteredRows.map(r => ({
+      invoice_number: r.invoice_number,
+      invoice_date: formatDate(r.invoice_date),
+      reference_no: r.reference_no ?? '',
+      customer_name: r.customer_name ?? '',
+      vehicle_numbers: r.vehicle_numbers ?? '',
+      sessions: r.items.reduce((s, it) => s + ((it.trip as { sessions?: unknown[] } | null)?.sessions?.length ?? 1), 0),
+      grand_total: r.grand_total,
+      amount_received: r.amount_received,
+      balance: r.balance,
+      status: r.status,
+      overdue: r.is_overdue ? 'Yes' : 'No',
+      payment_count: r.payment_count,
+      last_payment_date: r.last_payment_date ? formatDate(r.last_payment_date) : '',
+    }));
+    const dateRangeLabel = (dateFrom || dateTo) ? `${dateFrom ? formatDate(dateFrom) : 'Start'} - ${dateTo ? formatDate(dateTo) : 'Today'}` : 'All Time';
+    exportSettlementReportXlsx(
+      'Settlement_Report.xlsx',
       settings ? { company_name: settings.company_name, address: settings.address, phone: settings.phone, email: settings.email, gstin: settings.gstin } : { company_name: 'Crane ERP' },
-      '', '', '', headers, rows,
+      headers, rows, dateRangeLabel,
     );
   };
 
@@ -547,15 +550,17 @@ export default function SettlementReport() {
   body { font-family: Arial, Helvetica, sans-serif; padding: 20mm; color: #111; }
   .co { text-align: center; font-weight: 800; font-size: 18px; text-transform: uppercase; }
   .addr { text-align: center; font-size: 11px; color: #333; margin-top: 2px; }
-  h2 { text-align: center; font-size: 15px; letter-spacing: 1px; margin: 16px 0 4px; text-transform: uppercase; }
+  h2 { text-align: center; font-size: 15px; letter-spacing: 1px; margin: 16px -8mm 4px -8mm; padding: 4px 8mm; text-transform: uppercase; }
   .cust { font-size: 12px; margin: 10px 0; padding: 8px 10px; background: #f8f8f8; border: 1px solid #ddd; }
   table { width: 100%; border-collapse: collapse; font-size: 12px; margin-top: 10px; }
   th, td { border: 1px solid #333; padding: 5px 8px; }
   th { background: #f0f0f0; text-transform: uppercase; font-size: 10px; }
   td:first-child, th:first-child { text-align: center; }
   tfoot td { font-weight: 700; background: #fafafa; }
+  .page-frame { border: 1.5px solid #000; padding: 8mm; min-height: 265mm; -webkit-box-decoration-break: clone; box-decoration-break: clone; }
   @media print { body { padding: 0; } @page { size: A4; margin: 12mm; } }
 </style></head><body>
+  <div class="page-frame">
   ${settings?.logo_url ? `<div style="text-align:center"><img src="${settings.logo_url}" alt="Logo" style="max-height:50px"/></div>` : ''}
   <div class="co">${settings?.company_name ?? ''}</div>
   ${settings?.address ? `<div class="addr">${settings.address.replace(/\n/g, ', ')}</div>` : ''}
@@ -571,6 +576,7 @@ export default function SettlementReport() {
     <tbody>${rows || '<tr><td colspan="7" style="text-align:center;padding:16px">No invoices found for this period/filter.</td></tr>'}</tbody>
     <tfoot><tr><td colspan="3">TOTAL (${summary.totalInvoices} invoices)</td><td style="text-align:right">${formatCurrency(summary.totalInvoiced)}</td><td style="text-align:right">${formatCurrency(summary.totalReceived)}</td><td style="text-align:right">${formatCurrency(summary.totalOutstanding)}</td><td></td></tr></tfoot>
   </table>
+  </div>
 </body></html>`;
   };
 
@@ -599,15 +605,17 @@ export default function SettlementReport() {
   body { font-family: Arial, Helvetica, sans-serif; padding: 20mm; color: #111; }
   .co { text-align: center; font-weight: 800; font-size: 18px; text-transform: uppercase; }
   .addr { text-align: center; font-size: 11px; color: #333; margin-top: 2px; }
-  h2 { text-align: center; font-size: 15px; letter-spacing: 1px; margin: 16px 0 4px; text-transform: uppercase; }
+  h2 { text-align: center; font-size: 15px; letter-spacing: 1px; margin: 16px -8mm 4px -8mm; padding: 4px 8mm; text-transform: uppercase; }
   .cust { font-size: 12px; margin: 10px 0; padding: 8px 10px; background: #f8f8f8; border: 1px solid #ddd; }
   table { width: 100%; border-collapse: collapse; font-size: 12px; margin-top: 10px; }
   th, td { border: 1px solid #333; padding: 5px 8px; }
   th { background: #f0f0f0; text-transform: uppercase; font-size: 10px; }
   td:first-child, th:first-child { text-align: center; }
   tfoot td { font-weight: 700; background: #fafafa; }
+  .page-frame { border: 1.5px solid #000; padding: 8mm; min-height: 265mm; -webkit-box-decoration-break: clone; box-decoration-break: clone; }
   @media print { body { padding: 0; } @page { size: A4; margin: 12mm; } }
 </style></head><body>
+  <div class="page-frame">
   ${settings?.logo_url ? `<div style="text-align:center"><img src="${settings.logo_url}" alt="Logo" style="max-height:50px"/></div>` : ''}
   <div class="co">${settings?.company_name ?? ''}</div>
   ${settings?.address ? `<div class="addr">${settings.address.replace(/\n/g, ', ')}</div>` : ''}
@@ -623,6 +631,7 @@ export default function SettlementReport() {
     <tbody>${rows || '<tr><td colspan="7" style="text-align:center;padding:16px">No outstanding invoices.</td></tr>'}</tbody>
     <tfoot><tr><td colspan="3">TOTAL (${balanceStatementTotals.count} invoice${balanceStatementTotals.count === 1 ? '' : 's'})</td><td style="text-align:right">${formatCurrency(balanceStatementTotals.totalAmount)}</td><td style="text-align:right">${formatCurrency(balanceStatementTotals.totalReceived)}</td><td style="text-align:right">${formatCurrency(balanceStatementTotals.totalBalance)}</td><td></td></tr></tfoot>
   </table>
+  </div>
 </body></html>`;
   };
 

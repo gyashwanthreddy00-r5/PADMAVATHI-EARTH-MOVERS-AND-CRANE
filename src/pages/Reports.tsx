@@ -5,7 +5,9 @@ import { useSettings } from '@/context/SettingsContext';
 import { DataTable, type Column } from '@/components/ui/DataTable';
 import { Button, Field, inputClass, LoadingSpinner, StatusBadge } from '@/components/ui/common';
 import { Download, Printer } from 'lucide-react';
-import { formatCurrency, formatDate, formatTime, exportToExcelWithCompany, todayISO, monthName } from '@/lib/utils';
+import { formatCurrency, formatDate, formatTime, todayISO, monthName } from '@/lib/utils';
+import { exportToXlsxWithCompany } from '@/lib/exportXlsx';
+import { printReportWithCompany } from '@/lib/printReport';
 import { getReportLogoUrl } from '@/lib/reportLogo';
 import { DatePicker } from '@/components/ui/DatePicker';
 import type { TripWithRelations, DieselWithRelations, MaintenanceWithRelations, EmiWithRelations, AttendanceWithEmployee, Employee, Vehicle, InvoiceWithRelations, InvoiceVehicle } from '@/types';
@@ -332,95 +334,104 @@ export default function Reports({ type }: ReportProps) {
     setData(Array.from(byCustomer.values()).sort((a, b) => b.total_billed - a.total_billed));
   };
 
-  const handleExport = () => {
-    const dateRange = `${formatDate(filters.from)} - ${formatDate(filters.to)}`;
-    const generatedDate = new Date().toLocaleString('en-IN');
-    let filterStr = '';
-    if (filters.vehicle_id) filterStr += `Vehicle: ${vehicles.find(v => v.id === filters.vehicle_id)?.registration_number ?? ''} `;
-    if (filters.driver_id) filterStr += `Driver: ${employees.find(e => e.id === filters.driver_id)?.name ?? ''} `;
-    if (filters.payment_status) filterStr += `Status: ${filters.payment_status} `;
-
-    const companyInfo = settings ? { company_name: settings.company_name, address: settings.address, phone: settings.phone, email: settings.email, gstin: settings.gstin } : { company_name: 'Crane ERP' };
+  // Shared by Export Excel and Print - one source for each report type's title/headers/
+  // rows/total row/date-range/filter text, so both outputs always show exactly the same
+  // data in exactly the same format.
+  const buildReportTableData = (): { filename: string; title: string; headers: string[]; rows: (string | number)[][]; totalRow?: (string | number)[]; dateRange: string; filterStr: string } | null => {
+    const genericDateRange = `${formatDate(filters.from)} - ${formatDate(filters.to)}`;
+    let genericFilterStr = '';
+    if (filters.vehicle_id) genericFilterStr += `Vehicle: ${vehicles.find(v => v.id === filters.vehicle_id)?.registration_number ?? ''} `;
+    if (filters.driver_id) genericFilterStr += `Driver: ${employees.find(e => e.id === filters.driver_id)?.name ?? ''} `;
+    if (filters.payment_status) genericFilterStr += `Status: ${filters.payment_status} `;
+    const monthYearRange = `${monthName(filters.month - 1)} ${filters.year}`;
 
     switch (type) {
       case 'trips': {
         const tripsData = data as TripWithRelations[];
-        exportToExcelWithCompany(`Trip_Report_${filters.from}_${filters.to}.csv`, 'Trip Entries Report', companyInfo, dateRange, generatedDate, filterStr,
-          [t('tripNumber'), t('date'), t('vehicleNumber'), t('driver'), t('customer'), t('placeOfWork'), t('totalHours'), t('sessions'), t('rentalAmount'), t('batha'), t('totalAmount'), t('billStatus')],
-          tripsData.map(tr => {
+        return {
+          filename: `Trip_Report_${filters.from}_${filters.to}.xlsx`, title: 'Trip Entries Report',
+          headers: [t('tripNumber'), t('date'), t('vehicleNumber'), t('driver'), t('customer'), t('placeOfWork'), t('totalHours'), t('sessions'), t('rentalAmount'), t('batha'), t('totalAmount'), t('billStatus')],
+          rows: tripsData.map(tr => {
             const ss = (tr as TripWithRelations & { sessions?: unknown[] }).sessions;
             return [tr.trip_number, formatDate(tr.trip_date), tr.vehicle?.registration_number ?? '-', tr.driver?.name ?? '-', tr.customer?.name ?? '-', tr.place_of_work, tr.total_hours, ss && ss.length > 0 ? ss.length : 1, tr.rental_amount, tr.batha, tr.total_amount, tr.bill_status];
           }),
-          [t('total'), '', '', '', '', '', tripsData.reduce((s, tr) => s + tr.total_hours, 0), '', tripsData.reduce((s, tr) => s + Number(tr.rental_amount), 0), tripsData.reduce((s, tr) => s + Number(tr.batha), 0), tripsData.reduce((s, tr) => s + Number(tr.total_amount), 0), ''],
-        );
-        break;
+          totalRow: [t('total'), '', '', '', '', '', tripsData.reduce((s, tr) => s + tr.total_hours, 0), '', tripsData.reduce((s, tr) => s + Number(tr.rental_amount), 0), tripsData.reduce((s, tr) => s + Number(tr.batha), 0), tripsData.reduce((s, tr) => s + Number(tr.total_amount), 0), ''],
+          dateRange: genericDateRange, filterStr: genericFilterStr,
+        };
       }
       case 'diesel': {
         const dieselData = data as DieselWithRelations[];
-        exportToExcelWithCompany(`Diesel_Report_${filters.from}_${filters.to}.csv`, 'Diesel Report', companyInfo, dateRange, generatedDate, filterStr,
-          [t('date'), t('vehicleNumber'), t('pumpName'), t('quantityLiters'), t('ratePerLiter'), t('totalDieselAmount'), t('paidAmount'), t('pendingAmount'), t('paymentStatus')],
-          dieselData.map(d => [formatDate(d.diesel_date), d.vehicle?.registration_number ?? '-', d.pump_name ?? '-', d.quantity_liters, d.rate_per_liter, d.total_amount, d.paid_amount, d.pending_amount, d.payment_status]),
-          [t('total'), '', '', dieselData.reduce((s, d) => s + Number(d.quantity_liters), 0), '', dieselData.reduce((s, d) => s + Number(d.total_amount), 0), dieselData.reduce((s, d) => s + Number(d.paid_amount), 0), dieselData.reduce((s, d) => s + Number(d.pending_amount), 0), ''],
-        );
-        break;
+        return {
+          filename: `Diesel_Report_${filters.from}_${filters.to}.xlsx`, title: 'Diesel Report',
+          headers: [t('date'), t('vehicleNumber'), t('pumpName'), t('quantityLiters'), t('ratePerLiter'), t('totalDieselAmount'), t('paidAmount'), t('pendingAmount'), t('paymentStatus')],
+          rows: dieselData.map(d => [formatDate(d.diesel_date), d.vehicle?.registration_number ?? '-', d.pump_name ?? '-', d.quantity_liters, d.rate_per_liter, d.total_amount, d.paid_amount, d.pending_amount, d.payment_status]),
+          totalRow: [t('total'), '', '', dieselData.reduce((s, d) => s + Number(d.quantity_liters), 0), '', dieselData.reduce((s, d) => s + Number(d.total_amount), 0), dieselData.reduce((s, d) => s + Number(d.paid_amount), 0), dieselData.reduce((s, d) => s + Number(d.pending_amount), 0), ''],
+          dateRange: genericDateRange, filterStr: genericFilterStr,
+        };
       }
       case 'maintenance': {
         const maintData = data as MaintenanceWithRelations[];
-        exportToExcelWithCompany(`Maintenance_Report_${filters.from}_${filters.to}.csv`, 'Maintenance Report', companyInfo, dateRange, generatedDate, filterStr,
-          [t('date'), t('vehicleNumber'), t('maintenanceType'), t('remark'), t('totalAmount'), t('paidAmount'), t('balance')],
-          maintData.map(m => [formatDate(m.maintenance_date), m.vehicle?.registration_number ?? '-', m.maintenance_type, m.remark ?? m.description ?? '-', m.amount, m.paid_amount, m.balance]),
-          [t('total'), '', '', '', maintData.reduce((s, m) => s + Number(m.amount), 0), maintData.reduce((s, m) => s + Number(m.paid_amount), 0), maintData.reduce((s, m) => s + Number(m.balance), 0)],
-        );
-        break;
+        return {
+          filename: `Maintenance_Report_${filters.from}_${filters.to}.xlsx`, title: 'Maintenance Report',
+          headers: [t('date'), t('vehicleNumber'), t('maintenanceType'), t('remark'), t('totalAmount'), t('paidAmount'), t('balance')],
+          rows: maintData.map(m => [formatDate(m.maintenance_date), m.vehicle?.registration_number ?? '-', m.maintenance_type, m.remark ?? m.description ?? '-', m.amount, m.paid_amount, m.balance]),
+          totalRow: [t('total'), '', '', '', maintData.reduce((s, m) => s + Number(m.amount), 0), maintData.reduce((s, m) => s + Number(m.paid_amount), 0), maintData.reduce((s, m) => s + Number(m.balance), 0)],
+          dateRange: genericDateRange, filterStr: genericFilterStr,
+        };
       }
       case 'emi': {
         const emiData = data as EmiWithRelations[];
-        exportToExcelWithCompany('EMI_Report.csv', 'EMI Report', companyInfo, dateRange, generatedDate, '',
-          [t('vehicleNumber'), t('emiAmount'), t('dueDate'), t('endDate'), 'Days Remaining/Overdue', t('status'), t('paidDate'), t('paymentMode')],
-          emiData.map(e => {
+        return {
+          filename: 'EMI_Report.xlsx', title: 'EMI Report',
+          headers: [t('vehicleNumber'), t('emiAmount'), t('dueDate'), t('endDate'), 'Days Remaining/Overdue', t('status'), t('paidDate'), t('paymentMode')],
+          rows: emiData.map(e => {
             const today = new Date(); today.setHours(0,0,0,0);
             const due = new Date(e.due_date + 'T00:00:00');
             const d = Math.round((due.getTime() - today.getTime()) / 86400000);
             const dayLabel = e.status === 'Paid' ? '-' : d < 0 ? `${Math.abs(d)} days overdue` : d === 0 ? 'Due today' : `${d} days remaining`;
             return [e.vehicle?.registration_number ?? '-', e.emi_amount, formatDate(e.due_date), formatDate(e.end_date), dayLabel, e.status, formatDate(e.paid_date), e.payment_mode ?? '-'];
           }),
-          [t('total'), emiData.reduce((s, e) => s + Number(e.emi_amount), 0), '', '', '', '', '', ''],
-        );
-        break;
+          totalRow: [t('total'), emiData.reduce((s, e) => s + Number(e.emi_amount), 0), '', '', '', '', '', ''],
+          dateRange: genericDateRange, filterStr: '',
+        };
       }
       case 'attendance': {
         const attData = data as AttendanceWithEmployee[];
-        exportToExcelWithCompany(`Attendance_Report_${filters.from}_${filters.to}.csv`, 'Attendance Report', companyInfo, dateRange, generatedDate, '',
-          [t('date'), t('name'), t('role'), t('status')],
-          attData.map(a => [formatDate(a.attendance_date), a.employee?.name ?? '-', a.employee?.role ?? '-', a.status]),
-          [t('total'), '', '', ''],
-        );
-        break;
+        return {
+          filename: `Attendance_Report_${filters.from}_${filters.to}.xlsx`, title: 'Attendance Report',
+          headers: [t('date'), t('name'), t('role'), t('status')],
+          rows: attData.map(a => [formatDate(a.attendance_date), a.employee?.name ?? '-', a.employee?.role ?? '-', a.status]),
+          totalRow: [t('total'), '', '', ''],
+          dateRange: genericDateRange, filterStr: '',
+        };
       }
       case 'salary': {
         const salData = data as { employee: Employee; present: number; absent: number; holiday: number; payable: number; advance: number; balance: number; salary: number }[];
-        exportToExcelWithCompany(`Salary_Statement_${monthName(filters.month - 1)}_${filters.year}.csv`, 'Salary Statement', companyInfo, `${monthName(filters.month - 1)} ${filters.year}`, generatedDate, '',
-          [t('name'), t('role'), t('salary'), t('presentDays'), t('absentDays'), t('holidayDays'), t('advanceSalary'), t('salaryPayable'), t('balance')],
-          salData.map(s => [s.employee.name, s.employee.role, s.salary, s.present, s.absent, s.holiday, s.advance, s.payable, s.balance]),
-          [t('total'), '', salData.reduce((s, d) => s + d.salary, 0), salData.reduce((s, d) => s + d.present, 0), salData.reduce((s, d) => s + d.absent, 0), salData.reduce((s, d) => s + d.holiday, 0), salData.reduce((s, d) => s + d.advance, 0), salData.reduce((s, d) => s + d.payable, 0), salData.reduce((s, d) => s + d.balance, 0)],
-        );
-        break;
+        return {
+          filename: `Salary_Statement_${monthName(filters.month - 1)}_${filters.year}.xlsx`, title: 'Salary Statement',
+          headers: [t('name'), t('role'), t('salary'), t('presentDays'), t('absentDays'), t('holidayDays'), t('advanceSalary'), t('salaryPayable'), t('balance')],
+          rows: salData.map(s => [s.employee.name, s.employee.role, s.salary, s.present, s.absent, s.holiday, s.advance, s.payable, s.balance]),
+          totalRow: [t('total'), '', salData.reduce((s, d) => s + d.salary, 0), salData.reduce((s, d) => s + d.present, 0), salData.reduce((s, d) => s + d.absent, 0), salData.reduce((s, d) => s + d.holiday, 0), salData.reduce((s, d) => s + d.advance, 0), salData.reduce((s, d) => s + d.payable, 0), salData.reduce((s, d) => s + d.balance, 0)],
+          dateRange: monthYearRange, filterStr: '',
+        };
       }
       case 'daily-vehicle': {
         const dvData = data as { trip: TripWithRelations; dAmount: number; dLiters: number; mAmount: number; net: number }[];
-        exportToExcelWithCompany(`Daily_Vehicle_Report_${filters.from}.csv`, 'Daily Vehicle Report', companyInfo, formatDate(filters.from), generatedDate, filterStr,
-          [t('date'), t('vehicleNumber'), t('driver'), t('placeOfWork'), t('inTime'), t('outTime'), t('totalHours'), t('rentalAmount'), t('batha'), t('totalAmount'), t('dieselLiters'), t('dieselAmount'), t('maintenance'), t('totalCost'), t('netAmount'), t('billStatus')],
-          dvData.map(r => [formatDate(r.trip.trip_date), r.trip.vehicle?.registration_number ?? '-', r.trip.driver?.name ?? '-', r.trip.place_of_work, formatTime(r.trip.in_time), formatTime(r.trip.out_time), r.trip.total_hours, r.trip.rental_amount, r.trip.batha, r.trip.total_amount, r.dLiters, r.dAmount, r.mAmount, r.dAmount + r.mAmount + r.trip.batha, r.net, r.trip.bill_status]),
-          [t('total'), '', '', '', '', '', dvData.reduce((s, r) => s + r.trip.total_hours, 0), dvData.reduce((s, r) => s + Number(r.trip.rental_amount), 0), dvData.reduce((s, r) => s + Number(r.trip.batha), 0), dvData.reduce((s, r) => s + Number(r.trip.total_amount), 0), dvData.reduce((s, r) => s + r.dLiters, 0), dvData.reduce((s, r) => s + r.dAmount, 0), dvData.reduce((s, r) => s + r.mAmount, 0), dvData.reduce((s, r) => s + r.dAmount + r.mAmount + r.trip.batha, 0), dvData.reduce((s, r) => s + r.net, 0), ''],
-        );
-        break;
+        return {
+          filename: `Daily_Vehicle_Report_${filters.from}.xlsx`, title: 'Daily Vehicle Report',
+          headers: [t('date'), t('vehicleNumber'), t('driver'), t('placeOfWork'), t('inTime'), t('outTime'), t('totalHours'), t('rentalAmount'), t('batha'), t('totalAmount'), t('dieselLiters'), t('dieselAmount'), t('maintenance'), t('totalCost'), t('netAmount'), t('billStatus')],
+          rows: dvData.map(r => [formatDate(r.trip.trip_date), r.trip.vehicle?.registration_number ?? '-', r.trip.driver?.name ?? '-', r.trip.place_of_work, formatTime(r.trip.in_time), formatTime(r.trip.out_time), r.trip.total_hours, r.trip.rental_amount, r.trip.batha, r.trip.total_amount, r.dLiters, r.dAmount, r.mAmount, r.dAmount + r.mAmount + r.trip.batha, r.net, r.trip.bill_status]),
+          totalRow: [t('total'), '', '', '', '', '', dvData.reduce((s, r) => s + r.trip.total_hours, 0), dvData.reduce((s, r) => s + Number(r.trip.rental_amount), 0), dvData.reduce((s, r) => s + Number(r.trip.batha), 0), dvData.reduce((s, r) => s + Number(r.trip.total_amount), 0), dvData.reduce((s, r) => s + r.dLiters, 0), dvData.reduce((s, r) => s + r.dAmount, 0), dvData.reduce((s, r) => s + r.mAmount, 0), dvData.reduce((s, r) => s + r.dAmount + r.mAmount + r.trip.batha, 0), dvData.reduce((s, r) => s + r.net, 0), ''],
+          dateRange: formatDate(filters.from), filterStr: genericFilterStr,
+        };
       }
       case 'monthly':
       case 'profit-loss': {
         const r = (data as Record<string, number>[])[0] ?? {};
-        exportToExcelWithCompany(`${type === 'monthly' ? 'Monthly' : 'Profit_Loss'}_Report.csv`, reportTitles[type], companyInfo, `${monthName(filters.month - 1)} ${filters.year}`, new Date().toLocaleString('en-IN'), '',
-          ['Metric', 'Amount'],
-          [
+        return {
+          filename: `${type === 'monthly' ? 'Monthly' : 'Profit_Loss'}_Report.xlsx`, title: reportTitles[type],
+          headers: ['Metric', 'Amount'],
+          rows: [
             [t('grossMonthlyIncome'), r.grossIncome ?? r.totalRevenue ?? r.revenue ?? 0],
             [t('maintenanceExpenses'), r.maintCost ?? 0],
             [t('netIncomeAfterMaintenance'), (r.grossIncome ?? r.totalRevenue ?? r.revenue ?? 0) - (r.maintCost ?? 0)],
@@ -434,28 +445,47 @@ export default function Reports({ type }: ReportProps) {
             [t('totalExpenses'), r.totalExpenses ?? 0],
             [r.netProfit >= 0 ? t('netProfit') : t('netLoss'), Math.abs(r.netProfit ?? 0)],
           ],
-        );
-        break;
+          dateRange: monthYearRange, filterStr: '',
+        };
       }
       case 'cash-bills': {
         const invData = data as InvoiceWithRelations[];
-        exportToExcelWithCompany('Cash_Bill_Report.csv', reportTitles[type], companyInfo, dateRange, generatedDate, filterStr,
-          [t('invoiceNumber'), t('date'), t('customer'), t('vehicleNumber'), t('taxableAmount'), t('totalGst'), t('grandTotal'), t('paymentStatus')],
-          invData.map(i => [i.invoice_number, formatDate(i.invoice_date), i.customer_name ?? i.customer?.name ?? '-', i.vehicle_number ?? '-', i.taxable_amount, i.total_gst, i.grand_total, i.payment_status]),
-          [t('total'), '', '', '', invData.reduce((s, i) => s + Number(i.taxable_amount), 0), invData.reduce((s, i) => s + Number(i.total_gst), 0), invData.reduce((s, i) => s + Number(i.grand_total), 0), ''],
-        );
-        break;
+        return {
+          filename: 'Cash_Bill_Report.xlsx', title: reportTitles[type],
+          headers: [t('invoiceNumber'), t('date'), t('customer'), t('vehicleNumber'), t('taxableAmount'), t('totalGst'), t('grandTotal'), t('paymentStatus')],
+          rows: invData.map(i => [i.invoice_number, formatDate(i.invoice_date), i.customer_name ?? i.customer?.name ?? '-', i.vehicle_number ?? '-', i.taxable_amount, i.total_gst, i.grand_total, i.payment_status]),
+          totalRow: [t('total'), '', '', '', invData.reduce((s, i) => s + Number(i.taxable_amount), 0), invData.reduce((s, i) => s + Number(i.total_gst), 0), invData.reduce((s, i) => s + Number(i.grand_total), 0), ''],
+          dateRange: genericDateRange, filterStr: genericFilterStr,
+        };
       }
       case 'customer-billing': {
         const cbData = data as { customer_name: string; company_name: string | null; phone: string | null; gstin: string | null; invoice_count: number; total_billed: number; total_received: number; balance: number }[];
-        exportToExcelWithCompany('Customer_Billing_Report.csv', reportTitles[type], companyInfo, dateRange, generatedDate, filterStr,
-          [t('customer'), t('phone'), 'GSTIN', t('invoiceNumber'), t('grandTotal'), t('paid'), t('balance')],
-          cbData.map(c => [c.customer_name, c.phone ?? '-', c.gstin ?? '-', c.invoice_count, c.total_billed, c.total_received, c.balance]),
-          [t('total'), '', '', cbData.reduce((s, c) => s + c.invoice_count, 0), cbData.reduce((s, c) => s + c.total_billed, 0), cbData.reduce((s, c) => s + c.total_received, 0), cbData.reduce((s, c) => s + c.balance, 0)],
-        );
-        break;
+        return {
+          filename: 'Customer_Billing_Report.xlsx', title: reportTitles[type],
+          headers: [t('customer'), t('phone'), 'GSTIN', t('invoiceNumber'), t('grandTotal'), t('paid'), t('balance')],
+          rows: cbData.map(c => [c.customer_name, c.phone ?? '-', c.gstin ?? '-', c.invoice_count, c.total_billed, c.total_received, c.balance]),
+          totalRow: [t('total'), '', '', cbData.reduce((s, c) => s + c.invoice_count, 0), cbData.reduce((s, c) => s + c.total_billed, 0), cbData.reduce((s, c) => s + c.total_received, 0), cbData.reduce((s, c) => s + c.balance, 0)],
+          dateRange: genericDateRange, filterStr: genericFilterStr,
+        };
       }
+      default:
+        return null;
     }
+  };
+
+  const reportCompanyInfo = () =>
+    settings ? { company_name: settings.company_name, address: settings.address, phone: settings.phone, email: settings.email, gstin: settings.gstin } : { company_name: 'Crane ERP' };
+
+  const handleExport = () => {
+    const rd = buildReportTableData();
+    if (!rd) return;
+    exportToXlsxWithCompany(rd.filename, rd.title, reportCompanyInfo(), rd.dateRange, new Date().toLocaleString('en-IN'), rd.filterStr, rd.headers, rd.rows, rd.totalRow);
+  };
+
+  const handlePrint = () => {
+    const rd = buildReportTableData();
+    if (!rd) return;
+    printReportWithCompany(rd.title, reportCompanyInfo(), rd.dateRange, new Date().toLocaleString('en-IN'), rd.filterStr, rd.headers, rd.rows, rd.totalRow);
   };
 
   const showMonthYear = type === 'salary' || type === 'monthly';
@@ -596,7 +626,7 @@ export default function Reports({ type }: ReportProps) {
           )}
           <div className="flex gap-2">
             <Button variant="outline" onClick={handleExport} disabled={data.length === 0}><Download className="w-4 h-4" />{t('export')}</Button>
-            <Button variant="outline" onClick={() => window.print()}><Printer className="w-4 h-4" />{t('print')}</Button>
+            <Button variant="outline" onClick={handlePrint}><Printer className="w-4 h-4" />{t('print')}</Button>
           </div>
         </div>
       </div>

@@ -5,7 +5,8 @@ import { useToast } from '@/components/ui/Toast';
 import { DataTable, type Column } from '@/components/ui/DataTable';
 import { Button, Field, inputClass, LoadingSpinner, StatusBadge, EmptyState } from '@/components/ui/common';
 import { CheckCircle2, CheckSquare, Square, Users, CalendarCheck, FileSpreadsheet } from 'lucide-react';
-import { formatDate, todayISO, exportToExcelWithCompany } from '@/lib/utils';
+import { formatDate, todayISO } from '@/lib/utils';
+import { exportToXlsxWithCompany } from '@/lib/exportXlsx';
 import { useSettings } from '@/context/SettingsContext';
 import { DatePicker } from '@/components/ui/DatePicker';
 import type { Employee, AttendanceRecord, AttendanceStatus, AttendanceWithEmployee } from '@/types';
@@ -155,8 +156,8 @@ export default function Attendance() {
       r.employee?.name ?? '-', r.employee?.role ?? '-', r.employee?.phone ?? '-',
       formatDate(r.attendance_date), r.status,
     ]);
-    exportToExcelWithCompany(
-      'Attendance_Report.csv', 'Attendance Report',
+    exportToXlsxWithCompany(
+      'Attendance_Report.xlsx', 'Attendance Report',
       settings ? { company_name: settings.company_name, address: settings.address, phone: settings.phone, email: settings.email, gstin: settings.gstin } : { company_name: 'Crane ERP' },
       reportDateFilter ? formatDate(reportDateFilter) : formatDate(date), todayISO(),
       [reportRoleFilter, reportStatusFilter].filter(Boolean).join(', '),

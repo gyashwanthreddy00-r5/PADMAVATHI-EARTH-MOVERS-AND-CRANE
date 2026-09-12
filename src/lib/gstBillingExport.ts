@@ -111,8 +111,10 @@ export function exportGstBillingDataToExcel(ctx: GstExportContext, lines: Invoic
   const colCount = HEADERS.length;
 
   const thin = { style: 'thin', color: { rgb: '333333' } } as const;
+  const medium = { style: 'medium', color: { rgb: '333333' } } as const;
   const allBorders = { top: thin, bottom: thin, left: thin, right: thin };
-  const headerStyle = { font: { bold: true }, alignment: { horizontal: 'center', vertical: 'center', wrapText: true }, fill: { fgColor: { rgb: 'F2C94C' } }, border: allBorders };
+  const headerBorders = { top: medium, bottom: medium, left: medium, right: medium };
+  const headerStyle = { font: { bold: true }, alignment: { horizontal: 'center', vertical: 'center', wrapText: true }, fill: { fgColor: { rgb: 'F2C94C' } }, border: headerBorders };
   const cellStyle = { border: allBorders, alignment: { horizontal: 'center', vertical: 'center' } };
   const titleStyle = { font: { bold: true, sz: 14 }, alignment: { horizontal: 'center' } };
   const metaStyle = { font: { bold: true } };

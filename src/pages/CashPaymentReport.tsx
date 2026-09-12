@@ -8,7 +8,8 @@ import {
   FileSpreadsheet, X, Search, IndianRupee, Wallet, Banknote,
   CreditCard, Smartphone, ChevronLeft, ChevronRight, FileText,
 } from 'lucide-react';
-import { formatCurrency, formatDate, exportToExcelWithCompany } from '@/lib/utils';
+import { formatCurrency, formatDate } from '@/lib/utils';
+import { exportToXlsxWithCompany } from '@/lib/exportXlsx';
 import { DatePicker } from '@/components/ui/DatePicker';
 import type { PaymentMode } from '@/types';
 
@@ -194,8 +195,8 @@ export default function CashPaymentReport() {
       r.remarks ?? '',
       r.recorded_by ?? '',
     ]);
-    exportToExcelWithCompany(
-      'Cash_Payment_Report.csv', 'Cash & Payment Report',
+    exportToXlsxWithCompany(
+      'Cash_Payment_Report.xlsx', 'Cash & Payment Report',
       companyInfo, `${dateFrom || 'All'} - ${dateTo || 'All'}`, new Date().toLocaleString('en-IN'),
       modeFilter !== 'All' ? `Mode: ${modeFilter}` : '',
       headers, rows,

@@ -368,13 +368,15 @@ export default function Invoices({ initialTab = 'list' }: InvoicesProps = {}) {
   const filteredInvoices = useMemo(() => {
     if (!invoiceSearch.trim()) return invoices.slice(0, 8);
     const q = invoiceSearch.toLowerCase();
+    if (customerSearchMode === 'invoice') {
+      return invoices.filter(i => i.invoice_number?.toLowerCase().includes(q));
+    }
     return invoices.filter(i =>
-      i.invoice_number?.toLowerCase().includes(q) ||
       (i.customer_name ?? '').toLowerCase().includes(q) ||
       (i.customer?.name ?? '').toLowerCase().includes(q) ||
       (i.customer?.company_name ?? '').toLowerCase().includes(q)
     );
-  }, [invoices, invoiceSearch]);
+  }, [invoices, invoiceSearch, customerSearchMode]);
 
   const selectedStatementCustomer = customers.find(c => c.id === statementCustomerId) ?? null;
 
@@ -1082,7 +1084,7 @@ export default function Invoices({ initialTab = 'list' }: InvoicesProps = {}) {
   body { font-family: Arial, Helvetica, sans-serif; padding: 14mm 12mm; color: #1a1a1a; font-size: 11px; }
   .co { text-align: center; font-weight: 800; font-size: 17px; text-transform: uppercase; letter-spacing: 0.3px; }
   .addr { text-align: center; font-size: 10px; color: #444; margin-top: 2px; line-height: 1.5; }
-  h2 { text-align: center; font-size: 13px; letter-spacing: 1.5px; margin: 12px 0 10px; padding: 5px 0; border-top: 1.5px solid #000; border-bottom: 1.5px solid #000; text-transform: uppercase; }
+  h2 { text-align: center; font-size: 13px; letter-spacing: 1.5px; margin: 12px -8mm 10px -8mm; padding: 5px 8mm; border-top: 1.5px solid #000; border-bottom: 1.5px solid #000; text-transform: uppercase; }
   .meta-wrap { display: flex; justify-content: space-between; gap: 16px; margin-bottom: 10px; }
   .cust { font-size: 11px; line-height: 1.6; }
   .cust .lbl { color: #666; display: inline-block; min-width: 90px; }
@@ -1104,7 +1106,7 @@ export default function Invoices({ initialTab = 'list' }: InvoicesProps = {}) {
   .status-Partially-Paid { background: #fef9c3; color: #a16207; }
   .status-Unpaid { background: #fee2e2; color: #b91c1c; }
   .foot-note { margin-top: 10px; font-size: 9px; color: #777; }
-  .page-frame { border: 1.5px solid #000; padding: 8mm; min-height: 277mm; -webkit-box-decoration-break: clone; box-decoration-break: clone; }
+  .page-frame { border: 1.5px solid #000; padding: 8mm; min-height: 270mm; -webkit-box-decoration-break: clone; box-decoration-break: clone; }
   @media print { body { padding: 0; } @page { size: A4; margin: 10mm; } }
 </style></head><body>
   <div class="page-frame">

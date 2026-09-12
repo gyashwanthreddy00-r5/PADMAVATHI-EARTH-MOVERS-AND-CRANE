@@ -5,7 +5,8 @@ import { useToast } from '@/components/ui/Toast';
 import { DataTable, type Column } from '@/components/ui/DataTable';
 import { Modal, ConfirmDialog, StatusBadge, Button, Field, inputClass, LoadingSpinner } from '@/components/ui/common';
 import { Plus, Pencil, Trash2, Eye, Download, AlertTriangle } from 'lucide-react';
-import { formatCurrency, formatDate, exportToExcelWithCompany, sanitizePhone, phoneValidationError } from '@/lib/utils';
+import { formatCurrency, formatDate, sanitizePhone, phoneValidationError } from '@/lib/utils';
+import { exportToXlsxWithCompany } from '@/lib/exportXlsx';
 import { useSettings } from '@/context/SettingsContext';
 import { DatePicker } from '@/components/ui/DatePicker';
 import type { Employee, EmployeeRole } from '@/types';
@@ -126,7 +127,7 @@ export default function Employees() {
       e.license_expiry ? formatDate(e.license_expiry) : '-', Number(e.advance_salary),
       e.active ? 'Active' : 'Inactive',
     ]);
-    exportToExcelWithCompany('employee-master-export.csv', 'Employee Master Report',
+    exportToXlsxWithCompany('employee-master-export.xlsx', 'Employee Master Report',
       settings ? { company_name: settings.company_name, address: settings.address, phone: settings.phone, email: settings.email, gstin: settings.gstin } : { company_name: 'Crane ERP' },
       'All Records', new Date().toLocaleString(),
       [roleFilter && `Role: ${roleFilter}`, statusFilter && `Status: ${statusFilter}`].filter(Boolean).join('; '),

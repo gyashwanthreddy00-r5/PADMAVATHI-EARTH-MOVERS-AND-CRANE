@@ -5,7 +5,8 @@ import { useToast } from '@/components/ui/Toast';
 import { DataTable, type Column } from '@/components/ui/DataTable';
 import { Modal, ConfirmDialog, StatusBadge, Button, Field, inputClass, LoadingSpinner, ErrorState } from '@/components/ui/common';
 import { Plus, Pencil, Trash2, Eye, Download, RefreshCw, Truck } from 'lucide-react';
-import { formatCurrency, formatDate, exportToExcelWithCompany } from '@/lib/utils';
+import { formatCurrency, formatDate } from '@/lib/utils';
+import { exportToXlsxWithCompany } from '@/lib/exportXlsx';
 import { useSettings } from '@/context/SettingsContext';
 import { DatePicker } from '@/components/ui/DatePicker';
 import type { Vehicle, VehicleStatus, EmiStatus } from '@/types';
@@ -212,9 +213,9 @@ export default function Vehicles() {
       return;
     }
 
-    const headers = ['S.No', 'Serial No', 'Registration Number', 'Vehicle Type', 'Model', 'Tons / Capacity', 'Status', 'EMI Status', 'EMI Amount', 'Hourly Rate', 'Daily Rate'];
+    const headers = ['S.No', 'Registration Number', 'Vehicle Type', 'Model', 'Tons / Capacity', 'Status', 'EMI Status', 'EMI Amount', 'Hourly Rate', 'Daily Rate'];
     const dataRows = exportData.map((v, i) => [
-      i + 1, v.serial_number, v.registration_number, v.type,
+      i + 1, v.registration_number, v.type,
       v.model ?? '-',
       v.tons != null ? `${v.tons} Ton` : (v.capacity ?? '-'),
       v.status, v.emi_status, v.emi_status === 'EMI Applicable' ? Number(v.emi_amount) : 0,
@@ -223,7 +224,7 @@ export default function Vehicles() {
 
     const selectionInfo = [statusFilter && `Status: ${statusFilter}`].filter(Boolean).join('; ') || 'All Records';
 
-    exportToExcelWithCompany('crane-master-export.csv', 'Crane Master Report',
+    exportToXlsxWithCompany('crane-master-export.xlsx', 'Crane Master Report',
       settings ? { company_name: settings.company_name, address: settings.address, phone: settings.phone, email: settings.email, gstin: settings.gstin } : { company_name: 'Crane ERP' },
       selectionInfo, new Date().toLocaleString(),
       selectionInfo,

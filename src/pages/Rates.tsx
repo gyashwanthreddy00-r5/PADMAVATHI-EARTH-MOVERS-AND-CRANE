@@ -6,7 +6,8 @@ import { useToast } from '@/components/ui/Toast';
 import { DataTable, type Column } from '@/components/ui/DataTable';
 import { Modal, ConfirmDialog, StatusBadge, Button, Field, inputClass, LoadingSpinner } from '@/components/ui/common';
 import { Plus, Pencil, History, Download, Filter } from 'lucide-react';
-import { formatCurrency, formatDate, exportToExcelWithCompany, todayISO } from '@/lib/utils';
+import { formatCurrency, formatDate, todayISO } from '@/lib/utils';
+import { exportToXlsxWithCompany } from '@/lib/exportXlsx';
 import { DatePicker } from '@/components/ui/DatePicker';
 import type { RateMaster, RateMasterRateType } from '@/types';
 
@@ -228,7 +229,7 @@ export default function Rates() {
       formatDate(r.effective_from),
       r.effective_to ? formatDate(r.effective_to) : '-', r.status, `V${r.version_number}`,
     ]);
-    exportToExcelWithCompany('rate-master-export.csv', 'Rate Master Report', settings ? { company_name: settings.company_name, address: settings.address, phone: settings.phone, email: settings.email, gstin: settings.gstin } : { company_name: 'Crane ERP' },
+    exportToXlsxWithCompany('rate-master-export.xlsx', 'Rate Master Report', settings ? { company_name: settings.company_name, address: settings.address, phone: settings.phone, email: settings.email, gstin: settings.gstin } : { company_name: 'Crane ERP' },
       'All Records', new Date().toLocaleString(),
       [typeFilter && `Type: ${typeFilter}`, statusFilter && `Status: ${statusFilter}`].filter(Boolean).join('; '),
       headers, dataRows);

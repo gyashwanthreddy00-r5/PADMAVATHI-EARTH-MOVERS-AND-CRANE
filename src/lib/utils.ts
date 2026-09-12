@@ -170,25 +170,6 @@ export function calcRentalForTrip(
   return calcRentalFromSlabs(totalHours, rate);
 }
 
-export function downloadCSV(filename: string, rows: (string | number)[][]): void {
-  const csv = rows.map(row =>
-    row.map(cell => {
-      const s = String(cell ?? '');
-      if (s.includes(',') || s.includes('"') || s.includes('\n')) {
-        return '"' + s.replace(/"/g, '""') + '"';
-      }
-      return s;
-    }).join(',')
-  ).join('\n');
-  const blob = new Blob(['\ufeff' + csv], { type: 'text/csv;charset=utf-8;' });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = filename;
-  a.click();
-  URL.revokeObjectURL(url);
-}
-
 export interface ExportCompanyInfo {
   company_name: string;
   address?: string | null;
@@ -196,40 +177,6 @@ export interface ExportCompanyInfo {
   email?: string | null;
   gstin?: string | null;
   pan?: string | null;
-}
-
-export function exportToExcelWithCompany(
-  filename: string,
-  title: string,
-  company: ExportCompanyInfo,
-  dateRange: string,
-  generatedDate: string,
-  filters: string,
-  headers: string[],
-  dataRows: (string | number)[][],
-  totalRow?: (string | number)[],
-): void {
-  const contactParts = [
-    company.phone ? `Phone: ${company.phone}` : null,
-    company.email ? `Email: ${company.email}` : null,
-    company.gstin ? `GSTIN: ${company.gstin}` : null,
-    company.pan ? `PAN: ${company.pan}` : null,
-  ].filter(Boolean);
-
-  const rows: (string | number)[][] = [];
-  rows.push([company.company_name]);
-  if (company.address) rows.push([company.address]);
-  if (contactParts.length > 0) rows.push([contactParts.join('  |  ')]);
-  rows.push([]);
-  rows.push([title]);
-  rows.push(['Date Range:', dateRange]);
-  rows.push(['Generated:', generatedDate]);
-  if (filters) rows.push(['Filters:', filters]);
-  rows.push([]);
-  rows.push(headers);
-  dataRows.forEach(r => rows.push(r));
-  if (totalRow) rows.push(totalRow);
-  downloadCSV(filename, rows);
 }
 
 // @deprecated Use calcSessionAmount from rentalCalc.ts instead.

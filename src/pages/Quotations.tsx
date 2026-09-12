@@ -12,7 +12,7 @@ import {
 import type { QuotationFormatSettings } from '@/types';
 import { calculateDiscount, validateDiscountPercentage } from '@/lib/discountCalc';
 import { formatCurrency, formatDate, todayISO, addDays, amountInWords, classNames, sanitizePhone, phoneValidationError } from '@/lib/utils';
-import { exportToExcelWithCompany } from '@/lib/utils';
+import { exportToXlsxWithCompany } from '@/lib/exportXlsx';
 import { generateQuotationPdfFromUrl } from '@/lib/quotationPdf';
 import { RichTextEditor } from '@/components/RichTextEditor';
 import { DatePicker } from '@/components/ui/DatePicker';
@@ -409,7 +409,7 @@ export default function Quotations() {
       formatCurrency(q.discount_enabled ? (q.final_payable_amount ?? q.grand_total) : q.grand_total),
       q.valid_until ? formatDate(q.valid_until) : '-', q.status,
     ]);
-    exportToExcelWithCompany('quotations-export.csv', 'Quotations Report',
+    exportToXlsxWithCompany('quotations-export.xlsx', 'Quotations Report',
       settings ? { company_name: settings.company_name, address: settings.address, phone: settings.phone, email: settings.email, gstin: settings.gstin } : { company_name: 'Company' },
       'All Records', new Date().toLocaleString('en-IN'), '', headers, dataRows);
   };

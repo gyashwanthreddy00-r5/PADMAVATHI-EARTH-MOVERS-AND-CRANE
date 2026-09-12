@@ -5,7 +5,8 @@ import { useToast } from '@/components/ui/Toast';
 import { DataTable, type Column } from '@/components/ui/DataTable';
 import { Modal, ConfirmDialog, StatusBadge, Button, Field, inputClass, LoadingSpinner } from '@/components/ui/common';
 import { Plus, Pencil, Trash2, Download, CheckCircle } from 'lucide-react';
-import { formatCurrency, formatDate, exportToExcelWithCompany, todayISO } from '@/lib/utils';
+import { formatCurrency, formatDate, todayISO } from '@/lib/utils';
+import { exportToXlsxWithCompany } from '@/lib/exportXlsx';
 import { useSettings } from '@/context/SettingsContext';
 import { DatePicker } from '@/components/ui/DatePicker';
 import type { EmiRecord, EmiWithRelations, Vehicle, EmiStatus2, PaymentMode } from '@/types';
@@ -111,7 +112,7 @@ export default function Emi() {
       ];
     });
     const totalRow = ['', 'Total', '', records.reduce((s, e) => s + e.emi_amount, 0), '', '', '', '', '', '', ''];
-    exportToExcelWithCompany('emi-export.csv', 'EMI Report',
+    exportToXlsxWithCompany('emi-export.xlsx', 'EMI Report',
       settings ? { company_name: settings.company_name, address: settings.address, phone: settings.phone, email: settings.email, gstin: settings.gstin } : { company_name: 'Crane ERP' },
       'All Records', new Date().toLocaleString('en-IN'), '', headers, dataRows, totalRow);
   };

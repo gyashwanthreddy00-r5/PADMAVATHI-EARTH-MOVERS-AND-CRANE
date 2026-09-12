@@ -6,7 +6,8 @@ import { useToast } from '@/components/ui/Toast';
 import { DataTable, type Column } from '@/components/ui/DataTable';
 import { Button, Field, inputClass, LoadingSpinner, StatusBadge } from '@/components/ui/common';
 import { Download, Printer, CheckSquare, Square } from 'lucide-react';
-import { formatCurrency, formatDate, todayISO, vehicleTypeLabel, exportToExcelWithCompany } from '@/lib/utils';
+import { formatCurrency, formatDate, todayISO, vehicleTypeLabel } from '@/lib/utils';
+import { exportToXlsxWithCompany } from '@/lib/exportXlsx';
 import { getReportLogoUrl } from '@/lib/reportLogo';
 import { DatePicker } from '@/components/ui/DatePicker';
 import type { Vehicle, MonthlyContract, TripWithRelations, DieselWithRelations, MaintenanceWithRelations, InvoiceWithRelations, EmiWithRelations } from '@/types';
@@ -171,8 +172,8 @@ export default function VehicleWiseReport() {
     const selected = reportRows.filter(r => selectedIds.has(r.id));
     const dateRange = `${formatDate(filters.from)} - ${formatDate(filters.to)}`;
     const companyInfo = settings ? { company_name: settings.company_name, address: settings.address, phone: settings.phone, email: settings.email, gstin: settings.gstin, pan: settings.pan } : { company_name: 'PADMAVATHI EARTH MOVERS AND CRANE SERVICES' };
-    exportToExcelWithCompany(
-      `Vehicle_Wise_Report_${filters.from}_${filters.to}.csv`, 'Vehicle-Wise Report', companyInfo, dateRange,
+    exportToXlsxWithCompany(
+      `Vehicle_Wise_Report_${filters.from}_${filters.to}.xlsx`, 'Vehicle-Wise Report', companyInfo, dateRange,
       new Date().toLocaleString('en-IN'), '',
       ['Vehicle Number', 'Type', 'Total Trips', 'Working Days', 'Monthly Contracts', 'Total Revenue', 'Diesel Cost', 'Maintenance Cost', 'Total Expenses', 'EMI Paid', 'Net Revenue', 'Status'],
       selected.map(r => [r.vehicle.registration_number, vehicleTypeLabel(r.vehicle.type, r.vehicle.tons ?? r.vehicle.capacity), r.totalTrips, r.totalWorkingDays, r.totalMonthlyContracts, r.totalRevenue, r.totalDieselCost, r.totalMaintenanceCost, r.totalExpenses, r.emiPaid, r.netRevenue, r.currentStatus]),

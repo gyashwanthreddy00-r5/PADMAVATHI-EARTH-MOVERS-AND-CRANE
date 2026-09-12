@@ -5,7 +5,8 @@ import { useToast } from '@/components/ui/Toast';
 import { DataTable, type Column } from '@/components/ui/DataTable';
 import { Modal, ConfirmDialog, StatusBadge, Button, Field, inputClass, LoadingSpinner } from '@/components/ui/common';
 import { Plus, Pencil, Trash2, Download } from 'lucide-react';
-import { exportToExcelWithCompany, sanitizePhone, phoneValidationError } from '@/lib/utils';
+import { sanitizePhone, phoneValidationError } from '@/lib/utils';
+import { exportToXlsxWithCompany } from '@/lib/exportXlsx';
 import { useSettings } from '@/context/SettingsContext';
 import type { Customer } from '@/types';
 
@@ -69,7 +70,7 @@ export default function Customers() {
       c.address ?? '-', c.state ?? '-', c.state_code ?? '-',
       c.payment_terms ?? '-', c.active ? 'Active' : 'Inactive',
     ]);
-    exportToExcelWithCompany('customers-export.csv', 'Customer Master Report',
+    exportToXlsxWithCompany('customers-export.xlsx', 'Customer Master Report',
       settings ? { company_name: settings.company_name, address: settings.address, phone: settings.phone, email: settings.email, gstin: settings.gstin } : { company_name: 'Crane ERP' },
       'All Records', new Date().toLocaleString('en-IN'), '', headers, dataRows);
   };

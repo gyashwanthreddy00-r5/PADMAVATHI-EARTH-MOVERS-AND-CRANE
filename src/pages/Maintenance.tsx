@@ -7,7 +7,8 @@ import { DataTable, type Column } from '@/components/ui/DataTable';
 import { Modal, ConfirmDialog, StatusBadge, Button, Field, inputClass, LoadingSpinner } from '@/components/ui/common';
 import { SearchableSelect } from '@/components/ui/SearchableSelect';
 import { Plus, Pencil, Trash2, Download, Filter, Columns3, X } from 'lucide-react';
-import { formatCurrency, formatDate, exportToExcelWithCompany, todayISO, monthName } from '@/lib/utils';
+import { formatCurrency, formatDate, todayISO, monthName } from '@/lib/utils';
+import { exportToXlsxWithCompany } from '@/lib/exportXlsx';
 import { DatePicker } from '@/components/ui/DatePicker';
 import type { MaintenanceRecord, MaintenanceWithRelations, Vehicle, MaintenanceTypeConfig } from '@/types';
 
@@ -233,7 +234,7 @@ export default function Maintenance() {
       totalRow[idx] = data.reduce((s, m) => s + Number(m.balance), 0);
     }
 
-    exportToExcelWithCompany('Maintenance_Report.csv', t('maintenanceReport'), companyInfo, filterStr || 'All Records', new Date().toLocaleString('en-IN'), filterStr, headers, rows, totalRow);
+    exportToXlsxWithCompany('Maintenance_Report.xlsx', t('maintenanceReport'), companyInfo, filterStr || 'All Records', new Date().toLocaleString('en-IN'), filterStr, headers, rows, totalRow);
   };
 
   // Build columns dynamically based on visibleColumns

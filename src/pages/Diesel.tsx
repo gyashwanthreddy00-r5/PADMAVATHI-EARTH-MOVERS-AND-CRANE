@@ -7,7 +7,8 @@ import { DataTable, type Column } from '@/components/ui/DataTable';
 import { Modal, ConfirmDialog, StatusBadge, Button, Field, inputClass, LoadingSpinner, EmptyState } from '@/components/ui/common';
 import { DatePicker } from '@/components/ui/DatePicker';
 import { Plus, Pencil, Trash2, Fuel, CheckSquare, Square, Search, Share2, Layers, List } from 'lucide-react';
-import { formatCurrency, formatDate, todayISO, exportToExcelWithCompany } from '@/lib/utils';
+import { formatCurrency, formatDate, todayISO } from '@/lib/utils';
+import { exportToXlsxWithCompany } from '@/lib/exportXlsx';
 import type { DieselEntry, DieselWithRelations, DieselDistribution, DieselDistributionWithRelations, Vehicle, BillStatus } from '@/types';
 
 type DistTab = 'purchases' | 'distributions';
@@ -342,8 +343,8 @@ export default function Diesel() {
       d.quantity_liters, d.rate_per_liter, d.total_amount, d.paid_amount, d.pending_amount,
       d.payment_status, d.remarks ?? '',
     ]);
-    exportToExcelWithCompany(
-      'Diesel_Purchases.csv', 'Diesel Purchase Report',
+    exportToXlsxWithCompany(
+      'Diesel_Purchases.xlsx', 'Diesel Purchase Report',
       settings ? { company_name: settings.company_name, address: settings.address, phone: settings.phone, email: settings.email, gstin: settings.gstin } : { company_name: 'Crane ERP' },
       dateFilter ? formatDate(dateFilter) : 'All Dates', todayISO(), dateFilter ? `Date: ${formatDate(dateFilter)}` : '',
       headers, rows,
@@ -356,8 +357,8 @@ export default function Diesel() {
       formatDate(d.distribution_date), d.vehicle?.registration_number ?? '-',
       d.quantity_liters, d.rate_per_liter, d.amount, d.remarks ?? '',
     ]);
-    exportToExcelWithCompany(
-      'Diesel_Distributions.csv', 'Diesel Distribution Report',
+    exportToXlsxWithCompany(
+      'Diesel_Distributions.xlsx', 'Diesel Distribution Report',
       settings ? { company_name: settings.company_name, address: settings.address, phone: settings.phone, email: settings.email, gstin: settings.gstin } : { company_name: 'Crane ERP' },
       dateFilter ? formatDate(dateFilter) : 'All Dates', todayISO(), dateFilter ? `Date: ${formatDate(dateFilter)}` : '',
       headers, rows,
