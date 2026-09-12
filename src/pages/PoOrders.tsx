@@ -347,7 +347,7 @@ export default function PoOrders() {
             {poOrders.length === 0 ? (
               <p className="text-sm text-slate-400 italic px-4 py-8 text-center">No PO Orders yet for {customerName || 'this customer'}. Click "New PO Order" to create one.</p>
             ) : (
-              <div className="overflow-x-auto">
+              <div className="overflow-x-auto scroll-fade">
                 <table className="w-full text-sm">
                   <thead>
                     <tr className="text-left text-slate-500 border-b border-slate-200">
@@ -496,7 +496,7 @@ export default function PoOrders() {
                 </div>
               )}
 
-              <div className="overflow-x-auto border border-slate-200 rounded-xl bg-white">
+              <div className="overflow-x-auto scroll-fade border border-slate-200 rounded-xl bg-white">
                 <table className="w-full text-sm border-collapse min-w-[1600px]">
                   <thead>
                     <tr className="bg-amber-50">

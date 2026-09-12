@@ -1863,8 +1863,6 @@ export default function Invoices({ initialTab = 'list' }: InvoicesProps = {}) {
           <DataTable
             columns={columns}
             data={filteredInvoices}
-            searchKeys={['invoice_number', 'customer_name']}
-            searchPlaceholder={`${t('search')}...`}
             showSerialNumber
           />
         </>

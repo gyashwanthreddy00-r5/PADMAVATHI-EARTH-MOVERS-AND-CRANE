@@ -197,7 +197,7 @@ export function DataTable<T extends { id?: string }>({
         </div>
       )}
 
-      <div className="overflow-x-auto print:overflow-visible print:!max-h-none" style={{ maxHeight: stickyHeader ? '70vh' : undefined }}>
+      <div className="overflow-x-auto scroll-fade print:overflow-visible print:!max-h-none" style={{ maxHeight: stickyHeader ? '70vh' : undefined }}>
         <table className="w-full">
           <thead className="print:table-header-group">
             <tr className={classNames2(headerClass, 'border-b border-slate-200')}>

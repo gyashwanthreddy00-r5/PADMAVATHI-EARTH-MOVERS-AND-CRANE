@@ -379,11 +379,8 @@ export default function SettlementReport() {
 
   // Print
   const printInvoice = (inv: InvoiceWithRelations, items: InvoiceItem[]) => {
-    const win = window.open('', '_blank');
-    if (!win) { show('Please allow popups to print', 'error'); return; }
     const html = invoiceDocHTML(inv, items, settings, invoiceSettings);
-    win.document.write(html.replace('</body></html>', '<script>window.onload = () => { window.print(); }</script></body></html>'));
-    win.document.close();
+    printInIframe(html);
   };
 
   // Email
@@ -903,7 +900,7 @@ export default function SettlementReport() {
             </label>
           </div>
 
-          <div className="overflow-x-auto border border-slate-200 rounded-lg">
+          <div className="overflow-x-auto scroll-fade border border-slate-200 rounded-lg">
             <table className="w-full text-sm">
               <thead>
                 <tr className="bg-slate-50 text-xs uppercase text-slate-600">
@@ -969,7 +966,7 @@ export default function SettlementReport() {
             {t('noInvoicesFound')}
           </div>
         ) : (
-          <div className="overflow-x-auto">
+          <div className="overflow-x-auto scroll-fade">
             <table className="w-full">
               <thead>
                 <tr className="border-b border-slate-200 bg-slate-100">
@@ -1108,7 +1105,7 @@ export default function SettlementReport() {
             {viewPayments.length > 0 && (
               <details className="text-sm" open>
                 <summary className="cursor-pointer font-semibold text-slate-700 mb-1">{t('paymentHistory')} ({viewPayments.length})</summary>
-                <div className="overflow-x-auto mt-2">
+                <div className="overflow-x-auto scroll-fade mt-2">
                   <table className="w-full">
                     <thead>
                       <tr className="bg-slate-50">

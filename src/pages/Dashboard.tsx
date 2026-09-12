@@ -434,7 +434,7 @@ export default function Dashboard({ onNavigate }: { onNavigate: (path: string) =
           <p className="text-sm text-slate-500 mt-0.5">{t('dashboardSubtitle')}</p>
         </div>
         <div className="flex items-center gap-2 flex-wrap">
-          <div className="flex items-center rounded-lg border border-slate-200 bg-white overflow-hidden shadow-sm">
+          <div className="flex items-center rounded-lg border border-slate-200 bg-white overflow-x-auto shadow-sm max-w-full">
             {rangeOptions.map(opt => (
               <button
                 key={opt.key}

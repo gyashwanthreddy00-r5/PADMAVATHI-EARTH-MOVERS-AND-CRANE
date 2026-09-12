@@ -246,3 +246,23 @@ input[type="number"] {
 ::-webkit-scrollbar-thumb:hover {
   background: #94a3b8;
 }
+
+/* Persistent left/right shadow cue on wide, horizontally-scrollable tables -
+   the browser's own scrollbar auto-hides on touch/mobile and on some desktop
+   OS settings, so it isn't a reliable signal that a table has more columns
+   off-screen. Apply alongside overflow-x-auto on the scrolling element
+   itself (not a wrapper) - the two "local" layers scroll with the content
+   and mask the shadow once you've reached that edge; the two "scroll"
+   layers are the actual shadow and stay put until masked. */
+.scroll-fade {
+  background-image:
+    linear-gradient(to right, #fff 30%, rgba(255, 255, 255, 0)),
+    linear-gradient(to left, #fff 30%, rgba(255, 255, 255, 0)),
+    linear-gradient(to right, rgba(15, 23, 42, 0.15), rgba(15, 23, 42, 0)),
+    linear-gradient(to left, rgba(15, 23, 42, 0.15), rgba(15, 23, 42, 0));
+  background-position: left, right, left, right;
+  background-repeat: no-repeat;
+  background-color: #fff;
+  background-size: 24px 100%, 24px 100%, 10px 100%, 10px 100%;
+  background-attachment: local, local, scroll, scroll;
+}

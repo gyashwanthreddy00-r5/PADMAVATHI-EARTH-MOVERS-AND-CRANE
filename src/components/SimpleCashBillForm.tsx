@@ -202,7 +202,7 @@ export function SimpleCashBillForm({ onChange }: Props) {
         {rateType === 'Hourly' ? (
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
             <Field label="Hours" required>
-              <input type="number" min="0" className={inputClass()} value={hours} onChange={e => setHours(e.target.value)} placeholder="0" />
+              <input type="number" min="0" className={inputClass()} value={hours} onChange={e => setHours(e.target.value === '' ? '' : Math.max(0, Number(e.target.value)).toString())} placeholder="0" />
             </Field>
             <Field label="Minutes" required>
               <input type="number" min="0" max="59" className={inputClass()} value={minutes} onChange={e => setMinutes(Math.min(59, Math.max(0, Number(e.target.value) || 0)).toString())} placeholder="0" />

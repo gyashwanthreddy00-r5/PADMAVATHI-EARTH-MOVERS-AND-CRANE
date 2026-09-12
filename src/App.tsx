@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, lazy, Suspense } from 'react';
 import { Shield } from 'lucide-react';
 import { AuthProvider, useAuth } from '@/context/AuthContext';
 import { LangProvider } from '@/context/LangContext';
@@ -7,34 +7,37 @@ import { ToastProvider } from '@/components/ui/Toast';
 import { Layout } from '@/components/Layout';
 import { LoadingSpinner } from '@/components/ui/common';
 import Login from '@/pages/Login';
-import Dashboard from '@/pages/Dashboard';
-import StaffDashboard from '@/pages/StaffDashboard';
-import Vehicles from '@/pages/Vehicles';
-import Employees from '@/pages/Employees';
-import Rates from '@/pages/Rates';
-import Customers from '@/pages/Customers';
-import Contracts from '@/pages/Contracts';
-import Trips from '@/pages/Trips';
 import { ErrorBoundary } from '@/components/ErrorBoundary';
-import Diesel from '@/pages/Diesel';
-import Attendance from '@/pages/Attendance';
-import Maintenance from '@/pages/Maintenance';
-import Emi from '@/pages/Emi';
-import CashBills from '@/pages/CashBills';
-import Invoices from '@/pages/Invoices';
-import SettlementReport from '@/pages/SettlementReport';
-import CashPaymentReport from '@/pages/CashPaymentReport';
-import Reports from '@/pages/Reports';
-import VehicleWiseReport from '@/pages/VehicleWiseReport';
-import SettingsPage from '@/pages/Settings';
-import MaintenanceTypes from '@/pages/MaintenanceTypes';
-import RolesPermissions from '@/pages/RolesPermissions';
-import UserManagement from '@/pages/UserManagement';
-import PagesManagement from '@/pages/PagesManagement';
-import RolePagesManagement from '@/pages/RolePagesManagement';
-import Quotations from '@/pages/Quotations';
-import PoOrders from '@/pages/PoOrders';
-import Purchase from '@/pages/Purchase';
+
+// Lazy-loaded so each page ships as its own chunk, downloaded only when actually
+// opened, instead of every page (and every export library) landing in one bundle.
+const Dashboard = lazy(() => import('@/pages/Dashboard'));
+const StaffDashboard = lazy(() => import('@/pages/StaffDashboard'));
+const Vehicles = lazy(() => import('@/pages/Vehicles'));
+const Employees = lazy(() => import('@/pages/Employees'));
+const Rates = lazy(() => import('@/pages/Rates'));
+const Customers = lazy(() => import('@/pages/Customers'));
+const Contracts = lazy(() => import('@/pages/Contracts'));
+const Trips = lazy(() => import('@/pages/Trips'));
+const Diesel = lazy(() => import('@/pages/Diesel'));
+const Attendance = lazy(() => import('@/pages/Attendance'));
+const Maintenance = lazy(() => import('@/pages/Maintenance'));
+const Emi = lazy(() => import('@/pages/Emi'));
+const CashBills = lazy(() => import('@/pages/CashBills'));
+const Invoices = lazy(() => import('@/pages/Invoices'));
+const SettlementReport = lazy(() => import('@/pages/SettlementReport'));
+const CashPaymentReport = lazy(() => import('@/pages/CashPaymentReport'));
+const Reports = lazy(() => import('@/pages/Reports'));
+const VehicleWiseReport = lazy(() => import('@/pages/VehicleWiseReport'));
+const SettingsPage = lazy(() => import('@/pages/Settings'));
+const MaintenanceTypes = lazy(() => import('@/pages/MaintenanceTypes'));
+const RolesPermissions = lazy(() => import('@/pages/RolesPermissions'));
+const UserManagement = lazy(() => import('@/pages/UserManagement'));
+const PagesManagement = lazy(() => import('@/pages/PagesManagement'));
+const RolePagesManagement = lazy(() => import('@/pages/RolePagesManagement'));
+const Quotations = lazy(() => import('@/pages/Quotations'));
+const PoOrders = lazy(() => import('@/pages/PoOrders'));
+const Purchase = lazy(() => import('@/pages/Purchase'));
 
 function AppContent() {
   const { session, profile, loading, allowedPages, isAdmin, isOwner } = useAuth();
@@ -59,12 +62,6 @@ function AppContent() {
     }
     prevUserId.current = currentUserId;
   }, [session?.user?.id]);
-
-  useEffect(() => {
-    if (session && !loading && profile && !isAdmin && !isOwner && path !== '/') {
-      navigate('/');
-    }
-  }, [session, loading, profile?.id, isAdmin, isOwner]);
 
   if (loading) {
     return (
@@ -136,7 +133,9 @@ function AppContent() {
   return (
     <Layout currentPath={path} onNavigate={navigate}>
       <ErrorBoundary key={path}>
-        {renderPage()}
+        <Suspense fallback={<div className="flex items-center justify-center min-h-[60vh]"><LoadingSpinner size="lg" /></div>}>
+          {renderPage()}
+        </Suspense>
       </ErrorBoundary>
     </Layout>
   );

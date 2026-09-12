@@ -293,7 +293,7 @@ export default function Reports({ type }: ReportProps) {
   };
 
   const fetchInvoiceReport = async (invType: 'Cash') => {
-    let q = supabase.from('invoices').select('*, customer:customers(id,name,address,gstin), trip:trips(id,trip_number,place_of_work), vehicle:vehicles(id,registration_number,type)').eq('invoice_type', invType).eq('is_cancelled', false);
+    let q = supabase.from('invoices').select('*, customer:customers(id,name,address,gstin), trip:trips!invoices_trip_id_fkey(id,trip_number,place_of_work), vehicle:vehicles(id,registration_number,type)').eq('invoice_type', invType).eq('is_cancelled', false);
     if (filters.from) q = q.gte('invoice_date', filters.from);
     if (filters.to) q = q.lte('invoice_date', filters.to);
     if (filters.payment_status) q = q.eq('payment_status', filters.payment_status);

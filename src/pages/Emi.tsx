@@ -66,7 +66,7 @@ export default function Emi() {
     if (new Date(form.end_date) < new Date(form.due_date)) { show('EMI End Date cannot be before Due Date', 'error'); return; }
 
     setSaving(true);
-    const payload = { ...form, emi_amount: Number(form.emi_amount) || 0 };
+    const payload = { ...form, emi_amount: Number(form.emi_amount) || 0, paid_date: form.paid_date || null };
     if (editing) {
       const { error } = await supabase.from('emi_records').update(payload).eq('id', editing.id);
       if (error) show(t('saveError'), 'error');
