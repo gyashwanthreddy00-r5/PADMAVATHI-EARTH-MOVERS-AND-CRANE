@@ -86,6 +86,20 @@ export default function Purchase() {
   // currently-selected vendor's filtered/paginated rows).
   const [allPurchases, setAllPurchases] = useState<PurchaseRow[]>([]);
 
+  // First-page (vendor list) date filter — same Today/This Week/This Month quick-range
+  // buttons + always-editable From/To pickers used on the Reports pages, reusing this
+  // file's own dateRangeFor() so the date math never drifts from what "Today"/"This
+  // Week"/"This Month" already mean elsewhere on this page. Deliberately separate from
+  // dateFilter/customFrom/customTo above, which stay exactly as they were (the per-vendor
+  // Purchase Entries view's own dropdown filter, unchanged).
+  const [dashboardFrom, setDashboardFrom] = useState('');
+  const [dashboardTo, setDashboardTo] = useState('');
+  const setDashboardQuickRange = (preset: 'Today' | 'This Week' | 'This Month') => {
+    const { from, to } = dateRangeFor(preset, '', '');
+    setDashboardFrom(from ?? '');
+    setDashboardTo(to ?? '');
+  };
+
   const [selectedVendorId, setSelectedVendorId] = useState<string | null>(null);
   const [purchases, setPurchases] = useState<PurchaseRow[]>([]);
   const [purchasesLoading, setPurchasesLoading] = useState(false);
@@ -320,15 +334,26 @@ export default function Purchase() {
 
   // First-page Purchase Summary dashboard — the complete dataset (every vendor, every
   // purchase, shared across all users via the same purchases/vendors tables), never just
-  // the rows currently visible/paginated on some other view.
+  // the rows currently visible/paginated on some other view. Narrowed to dashboardFrom/
+  // dashboardTo when either is set (the new date filter above); with no filter selected
+  // this is exactly the same all-time totals as before.
+  const dashboardPurchases = useMemo(() => {
+    let result = allPurchases;
+    if (dashboardFrom) result = result.filter(p => p.purchase_date >= dashboardFrom);
+    if (dashboardTo) result = result.filter(p => p.purchase_date <= dashboardTo);
+    return result;
+  }, [allPurchases, dashboardFrom, dashboardTo]);
+
   const purchaseDashboard = useMemo(() => ({
-    totalVendors: vendors.length,
-    totalPurchaseAmount: round2(allPurchases.reduce((s, p) => s + Number(p.amount), 0)),
-    totalGst: round2(allPurchases.reduce((s, p) => s + Number(p.gst_amount), 0)),
-    totalBillAmount: round2(allPurchases.reduce((s, p) => s + Number(p.total_amount), 0)),
-    totalPaidAmount: round2(allPurchases.reduce((s, p) => s + Number(p.paid_amount), 0)),
-    totalBalanceAmount: round2(allPurchases.reduce((s, p) => s + Number(p.balance_amount), 0)),
-  }), [vendors, allPurchases]);
+    totalVendors: (dashboardFrom || dashboardTo)
+      ? new Set(dashboardPurchases.map(p => p.vendor_id)).size
+      : vendors.length,
+    totalPurchaseAmount: round2(dashboardPurchases.reduce((s, p) => s + Number(p.amount), 0)),
+    totalGst: round2(dashboardPurchases.reduce((s, p) => s + Number(p.gst_amount), 0)),
+    totalBillAmount: round2(dashboardPurchases.reduce((s, p) => s + Number(p.total_amount), 0)),
+    totalPaidAmount: round2(dashboardPurchases.reduce((s, p) => s + Number(p.paid_amount), 0)),
+    totalBalanceAmount: round2(dashboardPurchases.reduce((s, p) => s + Number(p.balance_amount), 0)),
+  }), [vendors, dashboardPurchases, dashboardFrom, dashboardTo]);
 
   const companyInfo = settings
     ? { company_name: settings.company_name, address: settings.address, phone: settings.phone, email: settings.email, gstin: settings.gstin }
@@ -441,8 +466,26 @@ export default function Purchase() {
             <Button onClick={openAddVendor}><Plus className="w-4 h-4" />Add Vendor</Button>
           </div>
 
+          {/* Date filter — same From/To pickers + Today/This Week/This Month quick-range
+              buttons used on the Reports pages (e.g. Customer Billing Report), reusing
+              this page's own dateRangeFor() so the date math matches exactly. Narrows the
+              Purchase Summary cards below; leaving both dates empty keeps the original
+              all-time totals. */}
+          <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-4">
+            <div className="flex flex-wrap gap-3 items-end">
+              <Field label="From"><DatePicker value={dashboardFrom} onChange={setDashboardFrom} /></Field>
+              <Field label="To"><DatePicker value={dashboardTo} onChange={setDashboardTo} /></Field>
+              <div className="flex gap-1">
+                <Button variant="outline" onClick={() => setDashboardQuickRange('Today')}>Today</Button>
+                <Button variant="outline" onClick={() => setDashboardQuickRange('This Week')}>This Week</Button>
+                <Button variant="outline" onClick={() => setDashboardQuickRange('This Month')}>This Month</Button>
+              </div>
+            </div>
+          </div>
+
           {/* Purchase Summary — the complete dataset across every vendor (allPurchases),
-              not just whatever vendor happens to be selected elsewhere on this page. */}
+              narrowed to the date filter above; not just whatever vendor happens to be
+              selected elsewhere on this page. */}
           <div className="bg-white border border-slate-200 rounded-xl p-4">
             <p className="text-xs font-bold uppercase tracking-wide text-slate-500 mb-3">Purchase Summary</p>
             <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">

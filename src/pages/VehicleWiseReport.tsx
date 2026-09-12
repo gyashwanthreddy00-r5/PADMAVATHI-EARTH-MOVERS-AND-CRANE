@@ -184,15 +184,56 @@ export default function VehicleWiseReport() {
   const handlePrint = () => {
     const win = window.open('', '_blank');
     if (!win) { show('Please allow popups to print', 'error'); return; }
-    const html = `<!DOCTYPE html><html><head><title>Vehicle-Wise Report</title>
-    <style>body{font-family:Arial,sans-serif;margin:20px}h1{text-align:center;color:#1e3a5f}h2{text-align:center;font-size:14px;color:#475569}
-    table{width:100%;border-collapse:collapse;margin-top:10px}th{background:#1e3a5f;color:#fff;padding:8px;font-size:11px}
-    td{padding:6px 8px;font-size:10px;border:1px solid #e2e8f0;text-align:left}
-    .right{text-align:right}.center{text-align:center}.pos{color:#059669;font-weight:bold}.neg{color:#dc2626;font-weight:bold}
-    .logo-block{display:flex;align-items:center;gap:12px;margin-bottom:8px}.logo-block img{width:48px;height:36px;object-fit:contain}
+    const totalEmiPaid = reportRows.reduce((s, r) => s + r.emiPaid, 0);
+    const companyName = settings?.company_name ?? 'PADMAVATHI EARTH MOVERS AND CRANE SERVICES';
+    const summaryCard = (label: string, value: string, color?: 'emerald' | 'red' | 'amber' | 'blue') => `
+    <div class="sum-card"><div class="sum-lbl">${label}</div><div class="sum-val${color ? ' ' + color : ''}">${value}</div></div>`;
+    const html = `<!DOCTYPE html><html><head><meta charset="utf-8"><title>Vehicle-Wise Report</title>
+    <style>
+      @page { size: A4; margin: 12mm; }
+      * { box-sizing: border-box; }
+      body { font-family: Arial, Helvetica, sans-serif; margin: 0; color: #1a1a1a; font-size: 11px; }
+      .hdr { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; padding-bottom: 10px; border-bottom: 2px solid #1e293b; margin-bottom: 10px; }
+      .hdr img { width: 56px; height: 44px; object-fit: contain; }
+      .hdr .co { text-align: right; }
+      .hdr .co h1 { margin: 0; font-size: 14px; text-transform: uppercase; color: #0f172a; }
+      .hdr .co p { margin: 2px 0 0; font-size: 10px; color: #475569; }
+      h2.title { text-align: center; font-size: 13px; letter-spacing: 0.5px; margin: 0; text-transform: uppercase; color: #1e293b; }
+      p.period { text-align: center; font-size: 10px; color: #475569; margin: 3px 0 12px; }
+      .sum-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 8px; margin-bottom: 12px; }
+      .sum-card { border: 1px solid #d1d5db; border-radius: 6px; background: #fff; padding: 8px; }
+      .sum-lbl { font-size: 9px; font-weight: 700; text-transform: uppercase; color: #64748b; }
+      .sum-val { font-size: 14px; font-weight: 800; color: #0f172a; margin-top: 2px; }
+      .sum-val.emerald { color: #059669; } .sum-val.red { color: #dc2626; } .sum-val.amber { color: #b45309; } .sum-val.blue { color: #2563eb; }
+      table { width: 100%; max-width: 100%; table-layout: fixed; border-collapse: collapse; }
+      th, td { border: 1px solid #d1d5db; padding: 4px 5px; font-size: 8.5px; white-space: normal; word-break: break-word; overflow-wrap: break-word; }
+      thead th { background: #f1f5f9; font-weight: 700; text-align: left; text-transform: uppercase; font-size: 8.5px; color: #334155; }
+      tbody tr:nth-child(even) { background: #f8fafc; }
+      tfoot td { background: #f1f5f9; font-weight: 700; border-top: 2px solid #1e293b; }
+      .right { text-align: right; } .center { text-align: center; }
+      .pos { color: #059669; font-weight: bold; } .neg { color: #dc2626; font-weight: bold; }
+      .ftr { margin-top: 12px; padding-top: 8px; border-top: 2px solid #1e293b; }
+      .ftr .gen { font-size: 9px; color: #64748b; }
+      .ftr .co-name { font-size: 9px; font-weight: 700; text-transform: uppercase; text-align: center; color: #334155; margin-top: 2px; }
     </style></head><body>
-    <div class="logo-block"><img src="${getReportLogoUrl()}" alt="logo"/><div><h1 style="margin:0">${settings?.company_name ?? 'PADMAVATHI EARTH MOVERS AND CRANE SERVICES'}</h1></div></div>
-    <h2>Vehicle-Wise Report (${formatDate(filters.from)} - ${formatDate(filters.to)})</h2>
+    <div class="hdr">
+      <img src="${getReportLogoUrl()}" alt="logo"/>
+      <div class="co">
+        <h1>${companyName}</h1>
+        ${settings?.address ? `<p>${settings.address}</p>` : ''}
+        <p>${[settings?.gstin ? `GSTIN: ${settings.gstin}` : null, settings?.phone ? `Ph: ${settings.phone}` : null].filter(Boolean).join(' | ')}</p>
+      </div>
+    </div>
+    <h2 class="title">Vehicle-Wise Report</h2>
+    <p class="period">${formatDate(filters.from)} - ${formatDate(filters.to)}</p>
+    <div class="sum-grid">
+      ${summaryCard('Total Vehicles', String(reportRows.length))}
+      ${summaryCard('Total Revenue', formatCurrency(totals.revenue), 'emerald')}
+      ${summaryCard('Total Diesel', formatCurrency(totals.diesel), 'red')}
+      ${summaryCard('Maintenance', formatCurrency(totals.maintenance), 'amber')}
+      ${summaryCard('Total Expenses', formatCurrency(totals.expenses))}
+      ${summaryCard('Net Revenue', formatCurrency(totals.net), totals.net >= 0 ? 'emerald' : 'red')}
+    </div>
     <table><thead><tr>
     <th>Vehicle</th><th>Type</th><th>Trips</th><th>Days</th><th>Contracts</th><th>Revenue</th><th>Diesel</th><th>Maint.</th><th>Expenses</th><th>EMI Paid</th><th>Net</th><th>Status</th>
     </tr></thead><tbody>
@@ -204,13 +245,17 @@ export default function VehicleWiseReport() {
     <td class="right">${formatCurrency(r.emiPaid)}</td>
     <td class="right ${r.netRevenue >= 0 ? 'pos' : 'neg'}">${formatCurrency(r.netRevenue)}</td><td class="center">${r.currentStatus}</td>
     </tr>`).join('')}
-    </tbody><tfoot><tr style="background:#1e3a5f;color:#fff;font-weight:bold">
+    </tbody><tfoot><tr>
     <td colspan="2">TOTAL</td><td class="center">${totals.trips}</td><td></td><td></td>
     <td class="right">${formatCurrency(totals.revenue)}</td><td class="right">${formatCurrency(totals.diesel)}</td>
     <td class="right">${formatCurrency(totals.maintenance)}</td><td class="right">${formatCurrency(totals.expenses)}</td>
-    <td class="right">${formatCurrency(reportRows.reduce((s, r) => s + r.emiPaid, 0))}</td>
+    <td class="right">${formatCurrency(totalEmiPaid)}</td>
     <td class="right">${formatCurrency(totals.net)}</td><td></td>
     </tr></tfoot></table>
+    <div class="ftr">
+      <p class="gen">Generated On: ${new Date().toLocaleString('en-IN', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' })}</p>
+      <p class="co-name">${companyName}</p>
+    </div>
     <script>window.onload=()=>window.print()</script>
     </body></html>`;
     win.document.write(html);

@@ -326,24 +326,30 @@ export function Layout({ currentPath, onNavigate, children }: LayoutProps) {
   );
 
   return (
-    <div className="flex h-screen bg-slate-50">
-      {/* Desktop sidebar */}
-      <div className="hidden lg:block flex-shrink-0 transition-all duration-300 ease-in-out">
+    <div className="flex h-screen bg-slate-50 print:h-auto print:block print:bg-white">
+      {/* Desktop sidebar — hidden for print (Reports.tsx is the only page that prints via
+          window.print() on this same document; every other print flow opens a fully
+          separate window/iframe with its own HTML and never reaches this component, so
+          this print:hidden can only ever affect Reports pages). Without this, the
+          sidebar's fixed width stayed part of the printed layout and pushed/cut off the
+          report content on the right. */}
+      <div className="hidden lg:block flex-shrink-0 transition-all duration-300 ease-in-out print:hidden">
         {sidebar}
       </div>
 
       {/* Mobile sidebar overlay */}
       {mobileOpen && (
-        <div className="lg:hidden fixed inset-0 z-40 flex">
+        <div className="lg:hidden fixed inset-0 z-40 flex print:hidden">
           <div className="absolute inset-0 bg-slate-900/60 backdrop-blur-sm animate-fade-in" onClick={() => setMobileOpen(false)} />
           <div className="relative animate-slide-in-right">{sidebar}</div>
         </div>
       )}
 
       {/* Main content */}
-      <div className="flex-1 flex flex-col overflow-hidden">
-        {/* Top bar */}
-        <header className="bg-white border-b border-slate-200 px-4 lg:px-6 py-3 flex items-center justify-between flex-shrink-0 h-16">
+      <div className="flex-1 flex flex-col overflow-hidden print:overflow-visible print:h-auto print:w-full">
+        {/* Top bar — hidden for print (navbar, language toggle, notification bell all
+            live in here, see print:hidden below). */}
+        <header className="bg-white border-b border-slate-200 px-4 lg:px-6 py-3 flex items-center justify-between flex-shrink-0 h-16 print:hidden">
           <div className="flex items-center gap-3">
             {/* Hamburger - desktop */}
             <button
@@ -379,7 +385,7 @@ export function Layout({ currentPath, onNavigate, children }: LayoutProps) {
           </div>
         </header>
 
-        <main className="flex-1 overflow-y-auto p-4 lg:p-6">{children}</main>
+        <main className="flex-1 overflow-y-auto p-4 lg:p-6 print:overflow-visible print:h-auto print:w-full print:p-0 print:m-0">{children}</main>
       </div>
     </div>
   );

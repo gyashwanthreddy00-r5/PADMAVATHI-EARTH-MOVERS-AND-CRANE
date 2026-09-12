@@ -334,6 +334,11 @@ export interface Invoice {
   discount_percent: number;
   discount_amount: number;
   final_payable_amount: number;
+  /** GST/Company Billing only — a flat ₹ discount deducted from the taxable amount
+   *  BEFORE GST is calculated (unrelated to discount_enabled/discount_percent above,
+   *  which is a post-GST percentage rebate off the grand total). */
+  pretax_discount_enabled: boolean;
+  pretax_discount_amount: number;
 }
 
 export interface InvoiceItem {
@@ -767,7 +772,7 @@ export interface QuotationEmailHistory {
 }
 
 export type PoRateType = 'Hourly' | 'Daily';
-export type PoOrderStatus = 'Active' | 'Closed';
+export type PoOrderStatus = 'Active' | 'Completed';
 
 /** The PO header: a customer's Purchase Order, under which working-day billing records are maintained. */
 export interface PoOrder {

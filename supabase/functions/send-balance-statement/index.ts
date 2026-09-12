@@ -227,9 +227,21 @@ ${companyEmail}`;
 </div>`;
 
     // When a PDF/attachments are sent along (Customer Statements' Email Balance
-    // Statement), the email body is the short "please find attached" note from the
-    // spec — the statement itself is in the PDF, not retyped as an inline HTML table.
+    // Statement / Full Statement, and Settlement Report's own Send Balance/Full
+    // Statement — all four call this same function), the email body keeps its short
+    // "please find attached" note, with a Summary Box inserted right after the
+    // greeting and before that note. The box always uses this statement's own
+    // already-computed totals (totalInvoiced/totalReceived/totalOutstanding, derived
+    // above from exactly the invoiceIds/date-range the caller filtered the PDF to —
+    // never recomputed or refetched here), in the same ₹ currency format the PDF
+    // itself uses (Intl 'en-IN' currency formatting), so the email can never show
+    // different numbers than the attached PDF.
     const attachedTextBody = `Dear ${customer.name},
+
+Summary
+Total Amount: ₹${formatNumber(totalInvoiced)}
+Received Amount: ₹${formatNumber(totalReceived)}
+Balance Amount: ₹${formatNumber(totalOutstanding)}
 
 Please find attached your ${label.toLowerCase()} for the selected period.
 
@@ -237,6 +249,11 @@ Regards,
 ${companyName}`;
     const attachedEmailWrapper = `<div style="font-family: Arial, Helvetica, sans-serif; font-size: 14px; color: #333; max-width: 700px; margin: 0 auto;">
 <p>Dear ${customer.name},</p>
+<table style="margin: 12px 0; border-collapse: collapse; width: 100%; border: 1px solid #ddd;">
+<tr><td style="padding: 4px 8px; border: 1px solid #ddd; font-weight: 600;">Total Amount:</td><td style="padding: 4px 8px; border: 1px solid #ddd; text-align: right;">₹${formatNumber(totalInvoiced)}</td></tr>
+<tr><td style="padding: 4px 8px; border: 1px solid #ddd; font-weight: 600;">Received Amount:</td><td style="padding: 4px 8px; border: 1px solid #ddd; text-align: right; color: #16a34a;">₹${formatNumber(totalReceived)}</td></tr>
+<tr><td style="padding: 4px 8px; border: 1px solid #ddd; font-weight: 600;">Balance Amount:</td><td style="padding: 4px 8px; border: 1px solid #ddd; text-align: right; color: #dc2626;">₹${formatNumber(totalOutstanding)}</td></tr>
+</table>
 <p>Please find attached your ${label.toLowerCase()} for the selected period.</p>
 <p style="margin-top: 24px;">Regards,<br/><strong>${companyName}</strong></p>
 </div>`;

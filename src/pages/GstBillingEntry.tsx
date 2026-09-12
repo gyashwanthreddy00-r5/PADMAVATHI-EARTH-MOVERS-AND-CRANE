@@ -59,18 +59,25 @@ export default function GstBillingEntry({ invoiceId, onDone }: { invoiceId?: str
   // today but can be changed, and can still be set later once the invoice exists.
   const [billDateDraft, setBillDateDraft] = useState(todayISO());
   const [gstType, setGstType] = useState<'cgst_sgst' | 'igst' | 'no_tax'>('cgst_sgst');
+  // Up & Down Transportation Charges — merged into a single checkbox + amount (the
+  // separate Up/Down fields and their own DB columns still exist for old invoices;
+  // this form only ever writes the combined amount into up_transportation_*, and
+  // always clears down_transportation_* to disabled/0 going forward).
   const [upEnabled, setUpEnabled] = useState(false);
   const [upAmount, setUpAmount] = useState('');
-  const [downEnabled, setDownEnabled] = useState(false);
-  const [downAmount, setDownAmount] = useState('');
   // Operator Batha — invoice-level charge (Rate x Quantity = Amount), not per billing
-  // entry. Positioned after Down Transportation on the generated invoice.
+  // entry. Positioned after Up & Down Transportation on the generated invoice.
   const [operatorBathaEnabled, setOperatorBathaEnabled] = useState(false);
   const [operatorBathaRate, setOperatorBathaRate] = useState('');
   const [operatorBathaQuantity, setOperatorBathaQuantity] = useState('');
   const [additionalEnabled, setAdditionalEnabled] = useState(false);
   const [additionalAmount, setAdditionalAmount] = useState('');
   const [additionalDescription, setAdditionalDescription] = useState('');
+  // Discount — flat ₹ amount deducted from the taxable amount BEFORE GST (see
+  // pretax_discount_enabled/pretax_discount_amount). Distinct from the existing
+  // discount_enabled/discount_percent post-GST rebate used elsewhere in the app.
+  const [preTaxDiscountEnabled, setPreTaxDiscountEnabled] = useState(false);
+  const [preTaxDiscountAmount, setPreTaxDiscountAmount] = useState('');
   const [savingInvoice, setSavingInvoice] = useState(false);
 
   useEffect(() => { init(); }, []);
@@ -103,16 +110,20 @@ export default function GstBillingEntry({ invoiceId, onDone }: { invoiceId?: str
     setPlaceOfWork(invoice.place_of_work ?? '');
     setBillDateDraft(invoice.invoice_date || todayISO());
     setGstType(invoice.tax_type ?? (invoice.igst_amount > 0 ? 'igst' : 'cgst_sgst'));
-    setUpEnabled(invoice.up_transportation_enabled);
-    setUpAmount(invoice.up_transportation_amount ? String(invoice.up_transportation_amount) : '');
-    setDownEnabled(invoice.down_transportation_enabled);
-    setDownAmount(invoice.down_transportation_amount ? String(invoice.down_transportation_amount) : '');
+    // Older invoices may have separate Up + Down amounts saved from before these were
+    // merged into one field — combine them so editing one never silently drops the
+    // Down portion.
+    const combinedTransport = round2((Number(invoice.up_transportation_amount) || 0) + (Number(invoice.down_transportation_amount) || 0));
+    setUpEnabled(invoice.up_transportation_enabled || invoice.down_transportation_enabled);
+    setUpAmount(combinedTransport ? String(combinedTransport) : '');
     setOperatorBathaEnabled(invoice.operator_batha_enabled ?? false);
     setOperatorBathaRate(invoice.operator_batha_rate ? String(invoice.operator_batha_rate) : '');
     setOperatorBathaQuantity(invoice.operator_batha_quantity ? String(invoice.operator_batha_quantity) : '');
     setAdditionalEnabled(invoice.additional_charges_enabled ?? false);
     setAdditionalAmount(invoice.additional_charges_amount ? String(invoice.additional_charges_amount) : '');
     setAdditionalDescription(invoice.additional_charges_description ?? '');
+    setPreTaxDiscountEnabled(invoice.pretax_discount_enabled ?? false);
+    setPreTaxDiscountAmount(invoice.pretax_discount_amount ? String(invoice.pretax_discount_amount) : '');
     setStep('entries');
     await fetchLines(id);
   }
@@ -293,18 +304,20 @@ export default function GstBillingEntry({ invoiceId, onDone }: { invoiceId?: str
     const totalHours = round2(lines.reduce((s, l) => s + l.hours + l.minutes / 60, 0));
     const rentalSubtotal = round2(lines.reduce((s, l) => s + l.total_amount, 0));
     const up = upEnabled ? Number(upAmount) || 0 : 0;
-    const down = downEnabled ? Number(downAmount) || 0 : 0;
     const operatorBatha = operatorBathaEnabled ? round2((Number(operatorBathaRate) || 0) * (Number(operatorBathaQuantity) || 0)) : 0;
     const additional = additionalEnabled ? Number(additionalAmount) || 0 : 0;
-    const taxable = round2(rentalSubtotal + up + down + operatorBatha + additional);
+    const preDiscountTaxable = round2(rentalSubtotal + up + operatorBatha + additional);
+    // Discount is deducted before GST, and can never take the taxable amount below 0.
+    const discount = preTaxDiscountEnabled ? Math.min(Math.max(Number(preTaxDiscountAmount) || 0, 0), preDiscountTaxable) : 0;
+    const taxable = round2(preDiscountTaxable - discount);
     const cgstAmt = gstType === 'cgst_sgst' ? round2(taxable * CGST_PERCENT / 100) : 0;
     const sgstAmt = gstType === 'cgst_sgst' ? round2(taxable * SGST_PERCENT / 100) : 0;
     const igstAmt = gstType === 'igst' ? round2(taxable * IGST_PERCENT / 100) : 0;
     const totalGst = round2(cgstAmt + sgstAmt + igstAmt);
     const grandTotal = round2(taxable + totalGst);
     const gstLabel = gstType === 'cgst_sgst' ? `GST (CGST ${CGST_PERCENT}% + SGST ${SGST_PERCENT}%)` : gstType === 'igst' ? `GST (IGST ${IGST_PERCENT}%)` : 'No Tax';
-    return { totalHours, rentalSubtotal, up, down, operatorBatha, additional, taxable, cgstAmt, sgstAmt, igstAmt, totalGst, grandTotal, gstLabel };
-  }, [lines, upEnabled, upAmount, downEnabled, downAmount, operatorBathaEnabled, operatorBathaRate, operatorBathaQuantity, additionalEnabled, additionalAmount, gstType]);
+    return { totalHours, rentalSubtotal, up, operatorBatha, additional, discount, taxable, cgstAmt, sgstAmt, igstAmt, totalGst, grandTotal, gstLabel };
+  }, [lines, upEnabled, upAmount, operatorBathaEnabled, operatorBathaRate, operatorBathaQuantity, additionalEnabled, additionalAmount, preTaxDiscountEnabled, preTaxDiscountAmount, gstType]);
 
   /** Recomputes and persists totals + rebuilds invoice_items - called after every line add/edit/delete and from Save Invoice. Returns whether the invoice row itself was saved successfully. */
   async function syncInvoiceTotals(currentLines: InvoiceBillingLine[], opts?: { billDate?: string | null; finalize?: boolean }, invoiceOverride?: Invoice): Promise<boolean> {
@@ -313,12 +326,13 @@ export default function GstBillingEntry({ invoiceId, onDone }: { invoiceId?: str
     const totalHours = round2(currentLines.reduce((s, l) => s + l.hours + l.minutes / 60, 0));
     const rentalSubtotal = round2(currentLines.reduce((s, l) => s + l.total_amount, 0));
     const up = upEnabled ? Number(upAmount) || 0 : 0;
-    const down = downEnabled ? Number(downAmount) || 0 : 0;
     const operatorBathaRateNum = operatorBathaEnabled ? Number(operatorBathaRate) || 0 : 0;
     const operatorBathaQuantityNum = operatorBathaEnabled ? Number(operatorBathaQuantity) || 0 : 0;
     const operatorBatha = round2(operatorBathaRateNum * operatorBathaQuantityNum);
     const additional = additionalEnabled ? Number(additionalAmount) || 0 : 0;
-    const taxable = round2(rentalSubtotal + up + down + operatorBatha + additional);
+    const preDiscountTaxable = round2(rentalSubtotal + up + operatorBatha + additional);
+    const discount = preTaxDiscountEnabled ? Math.min(Math.max(Number(preTaxDiscountAmount) || 0, 0), preDiscountTaxable) : 0;
+    const taxable = round2(preDiscountTaxable - discount);
     const cgstAmt = gstType === 'cgst_sgst' ? round2(taxable * CGST_PERCENT / 100) : 0;
     const sgstAmt = gstType === 'cgst_sgst' ? round2(taxable * SGST_PERCENT / 100) : 0;
     const igstAmt = gstType === 'igst' ? round2(taxable * IGST_PERCENT / 100) : 0;
@@ -343,11 +357,14 @@ export default function GstBillingEntry({ invoiceId, onDone }: { invoiceId?: str
       balance_amount: grandTotal, final_payable_amount: grandTotal,
       amount_in_words: amountInWords(grandTotal),
       up_transportation_enabled: up > 0, up_transportation_amount: up,
-      down_transportation_enabled: down > 0, down_transportation_amount: down,
+      // Down Transportation is retired (merged into Up & Down Transportation Charges
+      // above) - always cleared going forward, never written to separately.
+      down_transportation_enabled: false, down_transportation_amount: 0,
       operator_batha_enabled: operatorBatha > 0, operator_batha_rate: operatorBathaRateNum, operator_batha_quantity: operatorBathaQuantityNum,
       batha: operatorBatha,
       additional_charges_enabled: additional > 0, additional_charges_amount: additional,
       additional_charges_description: additionalDescription.trim() || null,
+      pretax_discount_enabled: discount > 0, pretax_discount_amount: discount,
       invoice_status: (opts?.finalize && billDate) ? 'Generated' as const : invoice.invoice_status,
     };
     const { error: updErr } = await supabase.from('invoices').update(updatePayload).eq('id', invoice.id);
@@ -417,10 +434,7 @@ export default function GstBillingEntry({ invoiceId, onDone }: { invoiceId?: str
       });
     });
     if (up > 0) {
-      items.push({ invoice_id: invoice.id, sl_no: items.length + 1, description: 'UP TRANSPORTATION CHARGES', hsn_sac: invoiceSettings?.hsn_sac || '997319', quantity: 1, rate: up, unit: 'nos', amount: up, batha: 0, calculation_details: `UP Transportation: ${formatCurrency(up)}` });
-    }
-    if (down > 0) {
-      items.push({ invoice_id: invoice.id, sl_no: items.length + 1, description: 'DOWN TRANSPORTATION CHARGES', hsn_sac: invoiceSettings?.hsn_sac || '997319', quantity: 1, rate: down, unit: 'nos', amount: down, batha: 0, calculation_details: `DOWN Transportation: ${formatCurrency(down)}` });
+      items.push({ invoice_id: invoice.id, sl_no: items.length + 1, description: 'UP & DOWN TRANSPORTATION CHARGES', hsn_sac: invoiceSettings?.hsn_sac || '997319', quantity: 1, rate: up, unit: 'nos', amount: up, batha: 0, calculation_details: `Up & Down Transportation: ${formatCurrency(up)}` });
     }
     if (operatorBatha > 0) {
       items.push({
@@ -432,6 +446,12 @@ export default function GstBillingEntry({ invoiceId, onDone }: { invoiceId?: str
     }
     if (additional > 0) {
       items.push({ invoice_id: invoice.id, sl_no: items.length + 1, description: additionalDescription.trim() || 'ADDITIONAL CHARGES', hsn_sac: invoiceSettings?.hsn_sac || '997319', quantity: 1, rate: additional, unit: 'nos', amount: additional, batha: 0, calculation_details: `Additional Charges: ${formatCurrency(additional)}` });
+    }
+    if (discount > 0) {
+      // Shown as its own negative line so the printed invoice explains why the Total
+      // (already net of this discount via taxable_amount) is lower than the sum of
+      // the positive lines above it.
+      items.push({ invoice_id: invoice.id, sl_no: items.length + 1, description: 'DISCOUNT', hsn_sac: invoiceSettings?.hsn_sac || '997319', quantity: 1, rate: -discount, unit: 'nos', amount: -discount, batha: 0, calculation_details: `Discount: -${formatCurrency(discount)}` });
     }
     if (items.length > 0) {
       const { error: itemsErr } = await supabase.from('invoice_items').insert(items);
@@ -709,16 +729,10 @@ export default function GstBillingEntry({ invoiceId, onDone }: { invoiceId?: str
                   <div>
                     <p className="text-xs font-bold uppercase tracking-wide text-slate-500 mb-1">Charges</p>
                     <div className="grid grid-cols-1 gap-3">
-                      <Field label="Up Transportation">
+                      <Field label="Up & Down Transportation Charges">
                         <div className="flex items-center gap-2">
                           <input type="checkbox" checked={upEnabled} onChange={e => setUpEnabled(e.target.checked)} />
                           <input type="number" className={inputClass()} value={upAmount} onChange={e => setUpAmount(e.target.value)} disabled={!upEnabled} placeholder="Amount" />
-                        </div>
-                      </Field>
-                      <Field label="Down Transportation">
-                        <div className="flex items-center gap-2">
-                          <input type="checkbox" checked={downEnabled} onChange={e => setDownEnabled(e.target.checked)} />
-                          <input type="number" className={inputClass()} value={downAmount} onChange={e => setDownAmount(e.target.value)} disabled={!downEnabled} placeholder="Amount" />
                         </div>
                       </Field>
                       <Field label="Additional Charges">
@@ -730,16 +744,27 @@ export default function GstBillingEntry({ invoiceId, onDone }: { invoiceId?: str
                       </Field>
                     </div>
                   </div>
+                  <div>
+                    <p className="text-xs font-bold uppercase tracking-wide text-slate-500 mb-1">Discount</p>
+                    <div className="grid grid-cols-1 gap-3">
+                      <Field label="Apply Discount">
+                        <div className="flex items-center gap-2">
+                          <input type="checkbox" checked={preTaxDiscountEnabled} onChange={e => setPreTaxDiscountEnabled(e.target.checked)} />
+                          <input type="number" min="0" step="0.01" className={inputClass()} value={preTaxDiscountAmount} onChange={e => setPreTaxDiscountAmount(e.target.value)} disabled={!preTaxDiscountEnabled} placeholder="Discount Amount" />
+                        </div>
+                      </Field>
+                    </div>
+                  </div>
                 </div>
 
                 <div className="bg-white border border-slate-200 rounded-xl p-4 space-y-3">
                   <p className="text-xs font-bold uppercase tracking-wide text-slate-500">Bill Summary</p>
                   <div className="space-y-1.5 text-sm">
                     <div className="flex justify-between text-slate-500"><span>Total of Billing Entries</span><b className="text-slate-800 tabular-nums">{formatCurrency(totals.rentalSubtotal)}</b></div>
-                    {totals.up > 0 && <div className="flex justify-between text-slate-500"><span>Up Transportation</span><b className="text-slate-800 tabular-nums">{formatCurrency(totals.up)}</b></div>}
-                    {totals.down > 0 && <div className="flex justify-between text-slate-500"><span>Down Transportation</span><b className="text-slate-800 tabular-nums">{formatCurrency(totals.down)}</b></div>}
                     {totals.operatorBatha > 0 && <div className="flex justify-between text-slate-500"><span>Operator Batha</span><b className="text-slate-800 tabular-nums">{formatCurrency(totals.operatorBatha)}</b></div>}
+                    {totals.up > 0 && <div className="flex justify-between text-slate-500"><span>Up &amp; Down Transportation Charges</span><b className="text-slate-800 tabular-nums">{formatCurrency(totals.up)}</b></div>}
                     {totals.additional > 0 && <div className="flex justify-between text-slate-500"><span>Additional Charges</span><b className="text-slate-800 tabular-nums">{formatCurrency(totals.additional)}</b></div>}
+                    {totals.discount > 0 && <div className="flex justify-between text-red-600"><span>Discount</span><b className="tabular-nums">− {formatCurrency(totals.discount)}</b></div>}
                     <div className="flex justify-between pt-1.5 border-t border-dashed border-slate-200 text-slate-700"><span className="font-semibold">Taxable Amount</span><b className="tabular-nums">{formatCurrency(totals.taxable)}</b></div>
                     {gstType === 'cgst_sgst' && (
                       <>

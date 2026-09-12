@@ -5,14 +5,14 @@ import { useSettings } from '@/context/SettingsContext';
 import { Field, Button, inputClass, LoadingSpinner, ConfirmDialog, StatusBadge } from '@/components/ui/common';
 import { SearchableSelect } from '@/components/ui/SearchableSelect';
 import { DatePicker } from '@/components/ui/DatePicker';
-import { formatCurrency, formatDate, todayISO, classNames } from '@/lib/utils';
-import { findRateMasterForVehicle } from '@/lib/rateLookup';
+import { formatCurrency, formatDate, todayISO, classNames, vehicleTypeLabel } from '@/lib/utils';
+import { findRateMasterForVehicle, normalizeCapacity } from '@/lib/rateLookup';
 import { computePoLineAmounts, round2 } from '@/lib/poOrdersCalc';
 import { printPoWorkingData, exportPoWorkingDataToExcel } from '@/lib/poOrdersExport';
 import { Plus, Trash2, AlertTriangle, FileSpreadsheet, ArrowLeft, Printer, Download, Save } from 'lucide-react';
 import type { Customer, RateMaster, PoOrder, PoWorkingRecord, PoRateType, Vehicle } from '@/types';
 
-type VehicleLite = Pick<Vehicle, 'id' | 'registration_number' | 'tons' | 'type' | 'capacity'>;
+type VehicleLite = Pick<Vehicle, 'id' | 'registration_number' | 'tons' | 'type' | 'capacity' | 'model'>;
 
 const RATE_TYPE_LABEL: Record<PoRateType, string> = { Daily: 'Full Day', Hourly: 'Hourly' };
 
@@ -38,14 +38,11 @@ export default function PoOrders() {
 
   const [records, setRecords] = useState<PoWorkingRecord[]>([]);
 
-  // PO-level Invoice Number / Bill Date - applied to every working record. The invoice
-  // number is never typed by hand: it's issued once, atomically, from the SAME global
-  // PCS sequence (next_pcs_invoice_number) that GST Billing, Cash/UPI, and Monthly
-  // Contracts all draw from, so a PO's bill number can never collide with theirs.
+  // PO-level Invoice Number / Bill Date - applied to every working record. Manually
+  // entered by the user (no auto-generation) before the PO can be marked Completed.
   const [invoiceNumberDraft, setInvoiceNumberDraft] = useState('');
   const [billDateDraft, setBillDateDraft] = useState('');
   const [savingInvoiceDetails, setSavingInvoiceDetails] = useState(false);
-  const [generatingInvoiceNo, setGeneratingInvoiceNo] = useState(false);
 
   // Working Day Entry form (single step)
   const [entDate, setEntDate] = useState('');
@@ -78,7 +75,12 @@ export default function PoOrders() {
   }
 
   async function fetchVehicles() {
-    const { data, error } = await supabase.from('vehicles').select('id,registration_number,tons,type,capacity').eq('active', true).not('tons', 'is', null).order('registration_number');
+    // Every active vehicle, regardless of whether Ton is set on the Vehicle Master
+    // record - findRateMasterForVehicle (rateLookup.ts) matches by vehicle type
+    // (JCB) or the `capacity` text field (Crane), never by `tons`, so requiring
+    // `tons` to be non-null here was hiding vehicles - JCBs especially, which
+    // typically have no Ton value at all - that would otherwise get a valid rate.
+    const { data, error } = await supabase.from('vehicles').select('id,registration_number,tons,type,capacity,model').eq('active', true).order('registration_number');
     if (error) { show(error.message, 'error'); return; }
     setVehicles((data ?? []) as VehicleLite[]);
   }
@@ -169,11 +171,37 @@ export default function PoOrders() {
 
   async function togglePoStatus() {
     if (!activePoOrder) return;
-    const next = activePoOrder.status === 'Active' ? 'Closed' : 'Active';
-    const { error } = await supabase.from('po_orders').update({ status: next }).eq('id', activePoOrder.id);
+    if (activePoOrder.status === 'Active') {
+      // Completing a PO requires at least one Working Day, an Invoice Number and a
+      // Bill Date - all validated up front (friendly messages) before any status
+      // change or database write, and saved atomically with it so the PO is never
+      // marked Completed without them.
+      if (records.length === 0) {
+        show('Please add at least one Working Day.', 'error');
+        return;
+      }
+      if (!invoiceNumberDraft.trim()) {
+        show('Please enter the Invoice Number before completing this PO.', 'error');
+        return;
+      }
+      if (!billDateDraft) {
+        show('Please select the Bill Date.', 'error');
+        return;
+      }
+      setSavingInvoiceDetails(true);
+      const payload = { invoice_number: invoiceNumberDraft.trim(), bill_date: billDateDraft || null, status: 'Completed' as const };
+      const { error } = await supabase.from('po_orders').update(payload).eq('id', activePoOrder.id);
+      setSavingInvoiceDetails(false);
+      if (error) { show(error.message, 'error'); return; }
+      setActivePoOrder({ ...activePoOrder, ...payload });
+      show('PO marked Completed.', 'success');
+      fetchPoOrders();
+      return;
+    }
+    const { error } = await supabase.from('po_orders').update({ status: 'Active' }).eq('id', activePoOrder.id);
     if (error) { show(error.message, 'error'); return; }
-    setActivePoOrder({ ...activePoOrder, status: next });
-    show(`PO marked ${next}.`, 'success');
+    setActivePoOrder({ ...activePoOrder, status: 'Active' });
+    show('PO marked Active.', 'success');
     fetchPoOrders();
   }
 
@@ -212,7 +240,10 @@ export default function PoOrders() {
       working_date: entDate,
       vehicle_id: selectedEntVehicle.id,
       vehicle_number: selectedEntVehicle.registration_number,
-      ton: selectedEntVehicle.tons,
+      // po_working_records.ton is NOT NULL - vehicles without a numeric Ton set (e.g.
+      // most JCBs, which don't need one for rate lookup at all) fall back to whatever
+      // number is in their capacity text, then to 0, rather than failing to save.
+      ton: selectedEntVehicle.tons ?? (Number(normalizeCapacity(selectedEntVehicle.capacity)) || 0),
       vl_no: entVlNo.trim(),
       rate_type: entRateType,
       hours: entRateType === 'Daily' ? 0 : Number(entHours) || 0,
@@ -265,23 +296,6 @@ export default function PoOrders() {
       show('Invoice details saved.', 'success');
     }
     setSavingInvoiceDetails(false);
-  }
-
-  // Issues the next global PCS number atomically (same RPC as GST Billing/Cash-UPI/
-  // Monthly Contracts) and saves it immediately - never typed by hand, so it can
-  // never collide with a number already used anywhere else in the ERP.
-  async function generateInvoiceNumber() {
-    if (!activePoOrder || invoiceNumberDraft.trim()) return;
-    setGeneratingInvoiceNo(true);
-    const { data: invNum, error: numErr } = await supabase.rpc('next_pcs_invoice_number', { p_invoice_date: billDateDraft || todayISO() });
-    if (numErr || !invNum) { show(numErr?.message ?? 'Could not generate invoice number.', 'error'); setGeneratingInvoiceNo(false); return; }
-    const payload = { invoice_number: invNum, bill_date: billDateDraft || null };
-    const { error } = await supabase.from('po_orders').update(payload).eq('id', activePoOrder.id);
-    if (error) { show(error.message, 'error'); setGeneratingInvoiceNo(false); return; }
-    setInvoiceNumberDraft(invNum);
-    setActivePoOrder({ ...activePoOrder, ...payload });
-    show(`Invoice number ${invNum} generated.`, 'success');
-    setGeneratingInvoiceNo(false);
   }
 
   // ---------------- Totals ----------------
@@ -350,7 +364,7 @@ export default function PoOrders() {
                         <td className="py-2 px-4 font-semibold text-slate-800">{po.po_number}</td>
                         <td className="py-2 px-4">{formatDate(po.po_date)}</td>
                         <td className="py-2 px-4 text-center tabular-nums">{workingCounts.get(po.id) ?? 0}</td>
-                        <td className="py-2 px-4"><StatusBadge status={po.status} variant={po.status === 'Active' ? 'green' : 'gray'} /></td>
+                        <td className="py-2 px-4"><StatusBadge status={po.status} variant={po.status === 'Active' ? 'green' : 'blue'} /></td>
                         <td className="py-2 px-4 text-right">
                           <div className="flex justify-end items-center gap-1.5">
                             <Button size="sm" variant="outline" onClick={() => openExistingPO(po)}>Open PO</Button>
@@ -380,8 +394,8 @@ export default function PoOrders() {
                 <div><p className="text-[10px] font-bold uppercase tracking-wide text-slate-400">PO Order</p><p className="text-sm font-semibold text-slate-800">{activePoOrder.po_number}</p></div>
                 <div><p className="text-[10px] font-bold uppercase tracking-wide text-slate-400">PO Date</p><p className="text-sm text-slate-700">{formatDate(activePoOrder.po_date)}</p></div>
                 <div className="ml-auto flex items-center gap-3">
-                  <StatusBadge status={activePoOrder.status} variant={activePoOrder.status === 'Active' ? 'green' : 'gray'} />
-                  <Button size="sm" variant="secondary" onClick={togglePoStatus}>{activePoOrder.status === 'Active' ? 'Close PO' : 'Reopen PO'}</Button>
+                  <StatusBadge status={activePoOrder.status} variant={activePoOrder.status === 'Active' ? 'green' : 'blue'} />
+                  <Button size="sm" variant="secondary" onClick={togglePoStatus} disabled={savingInvoiceDetails}>{activePoOrder.status === 'Active' ? 'Complete PO' : 'Reopen PO'}</Button>
                 </div>
               </div>
             ) : (
@@ -411,10 +425,27 @@ export default function PoOrders() {
                     <DatePicker value={entDate} onChange={setEntDate} />
                   </Field>
                   <Field label="Vehicle" required>
-                    <SearchableSelect value={entVehicleId} onChange={setEntVehicleId} options={vehicles.map(v => ({ value: v.id, label: `${v.registration_number} - ${v.tons} Ton` }))} placeholder="Select vehicle" emptyText="No vehicles with a Ton set" />
+                    {/* Options panel widened beyond the (narrow, 1-of-6-column) field
+                        itself so "REG.NO - N Ton"/"REG.NO - JCB" never gets truncated —
+                        the field/trigger's own width, styling and search behavior are
+                        unchanged. searchText lets the search box match on type/model/
+                        capacity too (e.g. "JCB", "Hydra", "14"), not just what's shown
+                        in the label. */}
+                    <SearchableSelect
+                      value={entVehicleId}
+                      onChange={setEntVehicleId}
+                      options={vehicles.map(v => ({
+                        value: v.id,
+                        label: `${v.registration_number} - ${vehicleTypeLabel(v.type, v.tons ?? v.capacity)}`,
+                        searchText: [v.registration_number, v.type, v.model, v.capacity, v.tons].filter(Boolean).join(' '),
+                      }))}
+                      placeholder="Select vehicle"
+                      emptyText="No active vehicles found"
+                      dropdownClassName="min-w-full w-max max-w-xs"
+                    />
                   </Field>
                   <Field label="Ton">
-                    <div className={classNames(inputClass(), 'bg-slate-100 text-slate-500 tabular-nums')}>{selectedEntVehicle ? `${selectedEntVehicle.tons} Ton` : '-'}</div>
+                    <div className={classNames(inputClass(), 'bg-slate-100 text-slate-500 tabular-nums')}>{selectedEntVehicle ? (selectedEntVehicle.tons != null ? `${selectedEntVehicle.tons} Ton` : (selectedEntVehicle.capacity || '-')) : '-'}</div>
                   </Field>
                   <Field label="VL No" required>
                     <input type="text" className={inputClass()} value={entVlNo} onChange={e => setEntVlNo(e.target.value)} placeholder="Type VL No" />
@@ -448,7 +479,7 @@ export default function PoOrders() {
                         </>
                       )
                     ) : (
-                      <span className="text-red-600 font-semibold flex items-center gap-1.5"><AlertTriangle className="w-4 h-4" />RATE NOT FOUND - no Rate Master entry for this vehicle's type/ton{entRateType === 'Daily' ? ' (Daily Rate)' : ''}. Add it to Rate Master before adding this working day.</span>
+                      <span className="text-red-600 font-semibold flex items-center gap-1.5"><AlertTriangle className="w-4 h-4" />Rate not found in Rate Master for this customer and vehicle{entRateType === 'Daily' ? ' (Daily Rate)' : ''}. Add it to Rate Master before adding this working day.</span>
                     )}
                   </div>
                 )}
@@ -512,16 +543,16 @@ export default function PoOrders() {
               <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
                 <div className="bg-slate-50 border border-slate-200 rounded-xl p-4">
                   <p className="text-xs font-bold uppercase tracking-wide text-slate-500 mb-1">Invoice Details</p>
-                  <p className="text-xs text-slate-400 mb-3">Generate the invoice number once you're ready to bill. Applies to every working-day row above.</p>
+                  <p className="text-xs text-slate-400 mb-3">Enter the invoice number once you're ready to bill. Applies to every working-day row above. Required before this PO can be marked Completed.</p>
                   <div className="grid grid-cols-2 gap-3">
-                    <Field label="Invoice Number">
-                      {invoiceNumberDraft.trim() ? (
-                        <div className={classNames(inputClass(), 'bg-slate-100 font-semibold text-slate-700')}>{invoiceNumberDraft}</div>
-                      ) : (
-                        <Button variant="secondary" onClick={generateInvoiceNumber} disabled={generatingInvoiceNo} className="w-full justify-center">
-                          {generatingInvoiceNo ? 'Generating...' : 'Generate Invoice Number'}
-                        </Button>
-                      )}
+                    <Field label="Invoice Number" required>
+                      <input
+                        type="text"
+                        className={inputClass()}
+                        value={invoiceNumberDraft}
+                        onChange={e => setInvoiceNumberDraft(e.target.value)}
+                        placeholder="Enter Invoice Number"
+                      />
                     </Field>
                     <Field label="Bill Date">
                       <DatePicker value={billDateDraft} onChange={setBillDateDraft} />
