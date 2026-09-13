@@ -7,7 +7,7 @@ export type RateMasterRateType = 'Hourly' | 'Daily' | 'Both' | 'Weekly' | 'Month
 export type RateMasterStatus = 'Active' | 'Inactive' | 'Closed';
 export type BillStatus = 'Paid' | 'Pending' | 'Partially Paid';
 export type InvoiceStatus = 'Draft' | 'Generated' | 'Paid' | 'Partially Paid' | 'Pending' | 'Cancelled';
-export type PaymentMode = 'Cash' | 'UPI' | 'Bank Transfer' | 'Cheque' | 'Other';
+export type PaymentMode = 'Cash' | 'UPI' | 'Bank Transfer' | 'Cheque' | 'NEFT' | 'RTGS' | 'Other';
 export type AttendanceStatus = 'Present' | 'Absent' | 'Holiday';
 export type MaintenanceType = string;
 
@@ -38,6 +38,7 @@ export interface Vehicle {
   hourly_rate: number | null;
   daily_rate: number | null;
   fitness_expiry_date: string | null;
+  insurance_expiry_date: string | null;
   status: VehicleStatus;
   active: boolean;
   created_at: string;
@@ -110,6 +111,9 @@ export interface Customer {
   address: string | null;
   phone: string | null;
   email: string | null;
+  // Comma/semicolon-separated CC email addresses that receive a copy whenever
+  // an invoice is emailed to this customer - see parseCcEmails in lib/utils.
+  cc_emails: string | null;
   gstin: string | null;
   billing_details: string | null;
   state: string | null;
@@ -329,6 +333,7 @@ export interface Invoice {
   email_status: string | null;
   email_sent_at: string | null;
   email_sent_to: string | null;
+  email_sent_cc: string | null;
   email_error: string | null;
   discount_enabled: boolean;
   discount_percent: number;
@@ -374,6 +379,28 @@ export interface InvoicePayment {
   reference: string | null;
   remarks: string | null;
   recorded_by: string | null;
+  /** Set when this allocation came from a customer-wise "Record Company Payment"
+   *  (see CustomerPayment) rather than being recorded directly against this one
+   *  invoice. Null for every payment recorded per-invoice (e.g. Settlement
+   *  Report's own Record Payment action, unchanged). */
+  customer_payment_id: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+/** A single "Record Company Payment" action against a customer's overall
+ *  outstanding balance — auto-allocated (FIFO, oldest invoice first) across
+ *  their unpaid invoices as one or more InvoicePayment rows tagged with this
+ *  row's id. */
+export interface CustomerPayment {
+  id: string;
+  customer_id: string;
+  payment_date: string;
+  payment_mode: PaymentMode;
+  amount: number;
+  reference: string | null;
+  notes: string | null;
+  created_by: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -391,6 +418,58 @@ export interface InvoiceSettings {
   add_gst_by_default: boolean;
   created_at: string;
   updated_at: string;
+}
+
+// PO Order Management - a customer Purchase Order used as a spending ceiling
+// against GST invoices. Fully separate from PoRateType/PoOrderStatus above,
+// which belong to the unrelated "Log Book Entries" page (formerly labelled
+// "PO Orders" in the nav).
+export type PurchaseOrderStatus = 'Active' | 'Completed' | 'Expired';
+
+export interface PurchaseOrder {
+  id: string;
+  customer_id: string;
+  po_number: string;
+  po_date: string;
+  valid_from: string | null;
+  valid_to: string | null;
+  taxable_total: number;
+  cgst_total: number;
+  sgst_total: number;
+  grand_total: number;
+  utilized_amount: number;
+  remaining_amount: number;
+  status: PurchaseOrderStatus;
+  low_balance_threshold: number;
+  notes: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface PurchaseOrderItem {
+  id: string;
+  purchase_order_id: string;
+  sl_no: number;
+  vehicle_type: string;
+  remarks: string | null;
+  quantity: number;
+  unit_rate: number;
+  taxable_amount: number;
+  cgst_amount: number;
+  sgst_amount: number;
+  total_amount: number;
+  created_at: string;
+}
+
+export interface PurchaseOrderUtilization {
+  id: string;
+  purchase_order_id: string;
+  invoice_id: string | null;
+  invoice_number: string | null;
+  invoice_date: string | null;
+  utilized_amount: number;
+  balance_after: number;
+  created_at: string;
 }
 
 export interface CompanySettings {
@@ -524,7 +603,7 @@ export interface EmiWithRelations extends EmiRecord {
 }
 
 export interface InvoiceWithRelations extends Invoice {
-  customer?: Pick<Customer, 'id' | 'name' | 'address' | 'gstin' | 'state' | 'state_code' | 'phone' | 'email' | 'shipping_address'> | null;
+  customer?: Pick<Customer, 'id' | 'name' | 'address' | 'gstin' | 'state' | 'state_code' | 'phone' | 'email' | 'cc_emails' | 'shipping_address'> | null;
   trip?: Pick<Trip, 'id' | 'trip_number' | 'place_of_work'> | null;
   vehicle?: Pick<Vehicle, 'id' | 'registration_number' | 'type'> | null;
   items?: InvoiceItem[] | null;
@@ -771,7 +850,10 @@ export interface QuotationEmailHistory {
   sent_at: string;
 }
 
-export type PoRateType = 'Hourly' | 'Daily';
+/** 'Monthly' is only offered by GST/Company Billing and Cash/UPI Billing's own Rate
+ *  Type dropdowns - PO Orders (Log Book Entries) never renders that option, even
+ *  though it shares this type. */
+export type PoRateType = 'Hourly' | 'Daily' | 'Monthly';
 export type PoOrderStatus = 'Active' | 'Completed';
 
 /** The PO header: a customer's Purchase Order, under which working-day billing records are maintained. */

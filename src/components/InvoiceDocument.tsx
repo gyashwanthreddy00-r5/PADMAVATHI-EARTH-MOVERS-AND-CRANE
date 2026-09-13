@@ -53,20 +53,20 @@ export function invoiceDocHTML(
   // hour-by-hour rate/amount breakdown (that stays available on row.calcLines
   // for callers that want it, e.g. the app's own invoice edit view).
   const itemsRows = itemRows.map(row => isProforma ? `<tr>
-      <td style="text-align:center">${row.slNo}</td>
+      <td class="nowrap-cell" style="text-align:center">${row.slNo}</td>
       <td>${row.description}</td>
-      <td style="text-align:center">${row.hsnSac}</td>
-      <td style="text-align:center">${row.quantityLabel}</td>
-      <td style="text-align:center">${row.unit}</td>
-      <td style="text-align:right;font-weight:bold">${formatNumber(row.amount)}</td>
+      <td class="nowrap-cell" style="text-align:center">${row.hsnSac}</td>
+      <td class="nowrap-cell" style="text-align:center">${row.quantityLabel}</td>
+      <td class="nowrap-cell" style="text-align:center">${row.unit}</td>
+      <td class="nowrap-cell" style="text-align:right;font-weight:bold">${formatNumber(row.amount)}</td>
     </tr>` : `<tr>
-      <td style="text-align:center">${row.slNo}</td>
+      <td class="nowrap-cell" style="text-align:center">${row.slNo}</td>
       <td>${row.description}</td>
-      <td style="text-align:center">${row.hsnSac}</td>
-      <td style="text-align:center">${row.quantityLabel}</td>
-      <td style="text-align:right">${row.rateLabel}</td>
-      <td style="text-align:center">${row.unit}</td>
-      <td style="text-align:right;font-weight:bold">${formatNumber(row.amount)}</td>
+      <td class="nowrap-cell" style="text-align:center">${row.hsnSac}</td>
+      <td class="nowrap-cell" style="text-align:center">${row.quantityLabel}</td>
+      <td class="nowrap-cell" style="text-align:right">${row.rateLabel}</td>
+      <td class="nowrap-cell" style="text-align:center">${row.unit}</td>
+      <td class="nowrap-cell" style="text-align:right;font-weight:bold">${formatNumber(row.amount)}</td>
     </tr>`).join('');
 
   const totalQty = itemRows.reduce((s, r) => s + (Number(r.quantity) || 0), 0);
@@ -244,8 +244,13 @@ export function invoiceDocHTML(
      or CGST/SGST (Tally's open/clean look). Only the header row and the final
      Total row set their own border-top/border-bottom where a horizontal line
      is actually wanted. */
-  table.it td { padding: 4px 4px; border-left: 1px solid #999; border-right: 1px solid #999; border-top: none; border-bottom: none; font-size: 10px; font-variant-numeric: tabular-nums; color: #000; word-wrap: break-word; overflow-wrap: break-word; }
+  table.it td { padding: 4px 4px; border-left: 1px solid #999; border-right: 1px solid #999; border-top: none; border-bottom: none; font-size: 10px; font-variant-numeric: tabular-nums; color: #000; vertical-align: top; word-wrap: break-word; overflow-wrap: break-word; }
   table.it td:nth-child(2) { line-height: 1.4; }
+  /* Unit (Per) and Sl No. must never wrap - a 3-letter unit like NOS/DAY or the row
+     number breaking mid-word looks broken even though the column has room once
+     white-space is respected; vertical-align: top above keeps Sl No. pinned to the
+     top of the row instead of drifting to center when Description wraps to 2+ lines. */
+  table.it td.nowrap-cell { white-space: nowrap; }
   table.gst-sum { width: 100%; border-collapse: collapse; font-size: 9px; margin-top: 4px; }
   table.gst-sum th, table.gst-sum td { border: 1px solid #999; padding: 2px 4px; text-align: center; color: #000; }
   table.gst-sum th { background: #f0f0f0 !important; font-weight: bold; }
@@ -306,7 +311,7 @@ export function invoiceDocHTML(
       ${metaRowPair('Reference No. &amp; Date', referenceNoAndDate, 'Other References', null)}
       ${metaRowPair("Buyer's Order No.", inv.buyer_order_no, 'Dated', inv.buyer_order_date ? formatDate(inv.buyer_order_date) : null)}
       ${metaRowPair('Dispatch Doc No.', inv.dispatch_doc_no, 'Delivery Note Date', inv.delivery_note_date ? formatDate(inv.delivery_note_date) : null)}
-      ${metaRowPair('Dispatched through', inv.dispatched_through, 'Destination', inv.destination)}
+      ${metaRowPair('Dispatched through', inv.dispatched_through, 'Destination', inv.destination || inv.place_of_work)}
       ${metaRowPair('Bill of Lading/LR-RR No.', inv.bill_of_lading_no, 'Motor Vehicle No.', inv.motor_vehicle_numbers || vehicleNumbersJoined)}
       ${metaRow('Terms of Delivery', termsOfDelivery)}
     </div>
@@ -315,13 +320,13 @@ export function invoiceDocHTML(
   <table class="it">
     <colgroup>
       ${isProforma
-        ? '<col style="width:4%"/><col style="width:50%"/><col style="width:9%"/><col style="width:12%"/><col style="width:7%"/><col style="width:18%"/>'
-        : '<col style="width:3%"/><col style="width:50%"/><col style="width:7%"/><col style="width:11%"/><col style="width:11%"/><col style="width:4%"/><col style="width:14%"/>'}
+        ? '<col style="width:4%"/><col style="width:48%"/><col style="width:9%"/><col style="width:11%"/><col style="width:8%"/><col style="width:20%"/>'
+        : '<col style="width:3%"/><col style="width:46%"/><col style="width:7%"/><col style="width:11%"/><col style="width:11%"/><col style="width:7%"/><col style="width:15%"/>'}
     </colgroup>
     <thead>
       <tr>
         <th>Sl No.</th><th>Description of Services</th><th>HSN/SAC</th>
-        <th>Quantity</th>${isProforma ? '' : '<th>Rate</th>'}<th>per</th><th>Amount</th>
+        <th>Quantity</th>${isProforma ? '' : '<th>Rate</th>'}<th>PER</th><th>Amount</th>
       </tr>
     </thead>
     <tbody>${itemsRows}${totalRowHtml}</tbody>
@@ -343,6 +348,12 @@ export function invoiceDocHTML(
       ${bankName ? `<p>Bank Name: ${bankName}</p>` : ''}
       ${bankAcctNo ? `<p>A/c No.: ${bankAcctNo}</p>` : ''}
       ${bankBranch || bankIfsc ? `<p>Branch &amp; IFS Code: ${[bankBranch, bankIfsc].filter(Boolean).join(' - ')}</p>` : ''}` : ''}
+      <div class="sign" style="margin-top:16px;text-align:right">
+        <p style="font-weight:bold;margin:0 0 4px">FOR ${compName.toUpperCase()}</p>
+        ${compSign ? `<img src="${compSign}" alt="Signature" style="max-height:36px;margin:2px 0"/>` : '<div style="height:36px"></div>'}
+        ${compAuth ? `<p style="margin:2px 0">${compAuth}</p>` : ''}
+        <p style="font-weight:bold;margin:4px 0 0">AUTHORISED SIGNATORY</p>
+      </div>
     </td>
   </tr></table>
 

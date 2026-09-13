@@ -38,6 +38,8 @@ const MODE_ICONS: Record<PaymentMode, typeof IndianRupee> = {
   UPI: Smartphone,
   'Bank Transfer': IndianRupee,
   Cheque: CreditCard,
+  NEFT: IndianRupee,
+  RTGS: IndianRupee,
   Other: FileText,
 };
 

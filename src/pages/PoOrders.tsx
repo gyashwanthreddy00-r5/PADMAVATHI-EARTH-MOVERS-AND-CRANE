@@ -148,7 +148,7 @@ export default function PoOrders() {
   }
 
   async function createPO() {
-    if (!draftPoNumber.trim() || !draftPoDate) { show('PO Number and PO Date are required.', 'error'); return; }
+    if (!draftPoNumber.trim() || !draftPoDate) { show('Log Book Entry Number and Log Book Date are required.', 'error'); return; }
     setSavingPO(true);
     const { data: { user } } = await supabase.auth.getUser();
     const { data, error } = await supabase.from('po_orders').insert({
@@ -158,12 +158,12 @@ export default function PoOrders() {
       created_by: user?.id ?? null,
     }).select().single();
     if (error) {
-      show(error.code === '23505' ? 'A PO with this number already exists for this customer.' : error.message, 'error');
+      show(error.code === '23505' ? 'A Log Book Entry with this number already exists for this customer.' : error.message, 'error');
     } else {
       const po = data as PoOrder;
       setActivePoOrder(po);
       fetchRecords(po.id);
-      show('PO Order created.', 'success');
+      show('Log Book Entry created.', 'success');
       fetchPoOrders();
     }
     setSavingPO(false);
@@ -181,7 +181,7 @@ export default function PoOrders() {
         return;
       }
       if (!invoiceNumberDraft.trim()) {
-        show('Please enter the Invoice Number before completing this PO.', 'error');
+        show('Please enter the Invoice Number before completing this Log Book Entry.', 'error');
         return;
       }
       if (!billDateDraft) {
@@ -194,14 +194,14 @@ export default function PoOrders() {
       setSavingInvoiceDetails(false);
       if (error) { show(error.message, 'error'); return; }
       setActivePoOrder({ ...activePoOrder, ...payload });
-      show('PO marked Completed.', 'success');
+      show('Log Book Entry marked Completed.', 'success');
       fetchPoOrders();
       return;
     }
     const { error } = await supabase.from('po_orders').update({ status: 'Active' }).eq('id', activePoOrder.id);
     if (error) { show(error.message, 'error'); return; }
     setActivePoOrder({ ...activePoOrder, status: 'Active' });
-    show('PO marked Active.', 'success');
+    show('Log Book Entry marked Active.', 'success');
     fetchPoOrders();
   }
 
@@ -210,7 +210,7 @@ export default function PoOrders() {
     const { error } = await supabase.from('po_orders').delete().eq('id', deletePoOrder.id);
     if (error) show(error.message, 'error');
     else {
-      show(`PO ${deletePoOrder.po_number} deleted.`, 'success');
+      show(`Log Book Entry ${deletePoOrder.po_number} deleted.`, 'success');
       fetchPoOrders();
       fetchWorkingCounts();
     }
@@ -323,9 +323,9 @@ export default function PoOrders() {
     <div className="space-y-4">
       <div className="flex items-start justify-between flex-wrap gap-3">
         <div>
-          <h1 className="text-lg font-bold text-slate-800 flex items-center gap-2"><FileSpreadsheet className="w-5 h-5 text-blue-600" /> PO Orders</h1>
+          <h1 className="text-lg font-bold text-slate-800 flex items-center gap-2"><FileSpreadsheet className="w-5 h-5 text-blue-600" /> Log Book Entries</h1>
           <p className="text-sm text-slate-500 mt-0.5">
-            {view === 'select' ? 'Select a customer to see their PO Orders, or start a new one.' : 'Maintain working-day billing data, then print or export it - this does not create a Customer Invoice.'}
+            {view === 'select' ? 'Select a customer to see their Log Book Entries, or start a new one.' : 'Maintain working-day billing data, then print or export it - this does not create a Customer Invoice.'}
           </p>
         </div>
       </div>
@@ -341,18 +341,18 @@ export default function PoOrders() {
 
           <div className="bg-white border border-slate-200 rounded-xl overflow-hidden">
             <div className="px-4 py-3 border-b border-slate-100 flex items-center justify-between">
-              <p className="text-sm font-bold text-slate-700">Recent PO Orders {customerName && `- ${customerName}`}</p>
-              <Button onClick={startNewPO} disabled={!customerId}><Plus className="w-4 h-4" />New PO Order</Button>
+              <p className="text-sm font-bold text-slate-700">Recent Log Book Entries {customerName && `- ${customerName}`}</p>
+              <Button onClick={startNewPO} disabled={!customerId}><Plus className="w-4 h-4" />New Log Book Entry</Button>
             </div>
             {poOrders.length === 0 ? (
-              <p className="text-sm text-slate-400 italic px-4 py-8 text-center">No PO Orders yet for {customerName || 'this customer'}. Click "New PO Order" to create one.</p>
+              <p className="text-sm text-slate-400 italic px-4 py-8 text-center">No Log Book Entries yet for {customerName || 'this customer'}. Click "New Log Book Entry" to create one.</p>
             ) : (
               <div className="overflow-x-auto scroll-fade">
                 <table className="w-full text-sm">
                   <thead>
                     <tr className="text-left text-slate-500 border-b border-slate-200">
-                      <th className="py-2 px-4">PO / Order No.</th>
-                      <th className="py-2 px-4">PO Date</th>
+                      <th className="py-2 px-4">Log Book Entry No.</th>
+                      <th className="py-2 px-4">Log Book Date</th>
                       <th className="py-2 px-4 text-center">Working Records</th>
                       <th className="py-2 px-4">Status</th>
                       <th className="py-2 px-4"></th>
@@ -367,8 +367,8 @@ export default function PoOrders() {
                         <td className="py-2 px-4"><StatusBadge status={po.status} variant={po.status === 'Active' ? 'green' : 'blue'} /></td>
                         <td className="py-2 px-4 text-right">
                           <div className="flex justify-end items-center gap-1.5">
-                            <Button size="sm" variant="outline" onClick={() => openExistingPO(po)}>Open PO</Button>
-                            <button onClick={() => setDeletePoOrder(po)} className="p-1.5 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-md" title="Delete PO">
+                            <Button size="sm" variant="outline" onClick={() => openExistingPO(po)}>Open Log Book Entry</Button>
+                            <button onClick={() => setDeletePoOrder(po)} className="p-1.5 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-md" title="Delete Log Book Entry">
                               <Trash2 className="w-4 h-4" />
                             </button>
                           </div>
@@ -384,33 +384,33 @@ export default function PoOrders() {
       ) : (
         <>
           <button onClick={goBackToList} className="flex items-center gap-1.5 text-sm font-semibold text-blue-700 hover:text-blue-800">
-            <ArrowLeft className="w-4 h-4" />Back to PO Orders
+            <ArrowLeft className="w-4 h-4" />Back to Log Book Entries
           </button>
 
           <div className="bg-white border border-slate-200 rounded-xl p-4">
             {activePoOrder ? (
               <div className="flex flex-wrap items-center gap-x-8 gap-y-2">
                 <div><p className="text-[10px] font-bold uppercase tracking-wide text-slate-400">Customer</p><p className="text-sm font-semibold text-slate-800">{customerName}</p></div>
-                <div><p className="text-[10px] font-bold uppercase tracking-wide text-slate-400">PO Order</p><p className="text-sm font-semibold text-slate-800">{activePoOrder.po_number}</p></div>
-                <div><p className="text-[10px] font-bold uppercase tracking-wide text-slate-400">PO Date</p><p className="text-sm text-slate-700">{formatDate(activePoOrder.po_date)}</p></div>
+                <div><p className="text-[10px] font-bold uppercase tracking-wide text-slate-400">Log Book Entry</p><p className="text-sm font-semibold text-slate-800">{activePoOrder.po_number}</p></div>
+                <div><p className="text-[10px] font-bold uppercase tracking-wide text-slate-400">Log Book Date</p><p className="text-sm text-slate-700">{formatDate(activePoOrder.po_date)}</p></div>
                 <div className="ml-auto flex items-center gap-3">
                   <StatusBadge status={activePoOrder.status} variant={activePoOrder.status === 'Active' ? 'green' : 'blue'} />
-                  <Button size="sm" variant="secondary" onClick={togglePoStatus} disabled={savingInvoiceDetails}>{activePoOrder.status === 'Active' ? 'Complete PO' : 'Reopen PO'}</Button>
+                  <Button size="sm" variant="secondary" onClick={togglePoStatus} disabled={savingInvoiceDetails}>{activePoOrder.status === 'Active' ? 'Complete Log Book Entry' : 'Reopen Log Book Entry'}</Button>
                 </div>
               </div>
             ) : (
               <>
-                <p className="text-xs font-bold uppercase tracking-wide text-slate-500 mb-3">New PO Order - {customerName}</p>
+                <p className="text-xs font-bold uppercase tracking-wide text-slate-500 mb-3">New Log Book Entry - {customerName}</p>
                 <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 items-end">
-                  <Field label="PO / Order No." required>
-                    <input type="text" className={inputClass()} value={draftPoNumber} onChange={e => setDraftPoNumber(e.target.value)} placeholder="e.g. PO-003" />
+                  <Field label="Log Book Entry No." required>
+                    <input type="text" className={inputClass()} value={draftPoNumber} onChange={e => setDraftPoNumber(e.target.value)} placeholder="e.g. LB-003" />
                   </Field>
-                  <Field label="PO Date" required>
+                  <Field label="Log Book Date" required>
                     <DatePicker value={draftPoDate} onChange={setDraftPoDate} />
                   </Field>
                 </div>
                 <div className="flex justify-end mt-3">
-                  <Button onClick={createPO} disabled={savingPO}>{savingPO ? 'Creating...' : 'Create PO Order'}</Button>
+                  <Button onClick={createPO} disabled={savingPO}>{savingPO ? 'Creating...' : 'Create Log Book Entry'}</Button>
                 </div>
               </>
             )}
@@ -507,7 +507,7 @@ export default function PoOrders() {
                   </thead>
                   <tbody>
                     {records.length === 0 ? (
-                      <tr><td colSpan={18} className="py-10 text-center text-slate-400">No working days added to this PO yet.</td></tr>
+                      <tr><td colSpan={18} className="py-10 text-center text-slate-400">No working days added to this Log Book Entry yet.</td></tr>
                     ) : records.map((r, idx) => {
                       const isFullDay = r.rate_type === 'Daily';
                       const na = <span className="text-slate-300">-</span>;
@@ -543,7 +543,7 @@ export default function PoOrders() {
               <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
                 <div className="bg-slate-50 border border-slate-200 rounded-xl p-4">
                   <p className="text-xs font-bold uppercase tracking-wide text-slate-500 mb-1">Invoice Details</p>
-                  <p className="text-xs text-slate-400 mb-3">Enter the invoice number once you're ready to bill. Applies to every working-day row above. Required before this PO can be marked Completed.</p>
+                  <p className="text-xs text-slate-400 mb-3">Enter the invoice number once you're ready to bill. Applies to every working-day row above. Required before this Log Book Entry can be marked Completed.</p>
                   <div className="grid grid-cols-2 gap-3">
                     <Field label="Invoice Number" required>
                       <input
@@ -598,9 +598,9 @@ export default function PoOrders() {
         open={!!deletePoOrder}
         onClose={() => setDeletePoOrder(null)}
         onConfirm={handleDeletePoOrder}
-        title="Delete PO Order"
-        message={deletePoOrder ? `PO ${deletePoOrder.po_number} and all ${workingCounts.get(deletePoOrder.id) ?? 0} of its working-day record${(workingCounts.get(deletePoOrder.id) ?? 0) === 1 ? '' : 's'} will be deleted permanently. This cannot be undone.` : ''}
-        confirmText="Delete PO"
+        title="Delete Log Book Entry"
+        message={deletePoOrder ? `Log Book Entry ${deletePoOrder.po_number} and all ${workingCounts.get(deletePoOrder.id) ?? 0} of its working-day record${(workingCounts.get(deletePoOrder.id) ?? 0) === 1 ? '' : 's'} will be deleted permanently. This cannot be undone.` : ''}
+        confirmText="Delete Log Book Entry"
         danger
       />
     </div>

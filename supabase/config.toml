@@ -12,3 +12,6 @@ verify_jwt = false
 
 [functions.send-quotation-email]
 verify_jwt = false
+
+[functions.send-po-request-email]
+verify_jwt = false

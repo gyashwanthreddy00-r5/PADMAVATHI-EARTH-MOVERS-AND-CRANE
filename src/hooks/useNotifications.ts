@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import { supabase } from '@/lib/supabase';
 import { formatCurrency } from '@/lib/utils';
+import { isPoLowBalance } from '@/lib/poOrderManagement';
 import type { Employee, Vehicle, EmiRecord } from '@/types';
 
 export type NotificationSeverity = 'expired' | 'due-soon' | 'due-today' | 'overdue';
@@ -8,14 +9,25 @@ export type NotificationSeverity = 'expired' | 'due-soon' | 'due-today' | 'overd
 export interface AppNotification {
   id: string;
   severity: NotificationSeverity;
-  category: 'license' | 'eye_test' | 'fitness' | 'emi';
+  category: 'license' | 'eye_test' | 'fitness' | 'emi' | 'insurance' | 'po_low_balance';
   title: string;
   subtitle: string;
   daysOffset: number;
   navigateTo: string;
 }
 
+interface PoLowBalanceRow {
+  id: string;
+  po_number: string;
+  remaining_amount: number;
+  valid_to: string | null;
+  customer: { name: string } | null;
+}
+
 const SOON_DAYS = 30;
+// Insurance alerts use a tighter 7-day window than the other 30-day expiry checks
+// above, per spec — everything else about how it's computed/counted is identical.
+const INSURANCE_SOON_DAYS = 7;
 
 function daysUntil(dateStr: string): number {
   const today = new Date();
@@ -28,17 +40,20 @@ export function useNotifications() {
   const [employees, setEmployees] = useState<Employee[]>([]);
   const [vehicles, setVehicles] = useState<Vehicle[]>([]);
   const [emiRecords, setEmiRecords] = useState<EmiRecord[]>([]);
+  const [lowBalancePos, setLowBalancePos] = useState<PoLowBalanceRow[]>([]);
   const [loading, setLoading] = useState(true);
 
   const fetch = useCallback(async () => {
-    const [eRes, vRes, emiRes] = await Promise.all([
+    const [eRes, vRes, emiRes, poRes] = await Promise.all([
       supabase.from('employees').select('*').eq('active', true),
       supabase.from('vehicles').select('*').eq('active', true),
       supabase.from('emi_records').select('*'),
+      supabase.from('purchase_orders').select('id, po_number, remaining_amount, valid_to, customer:customers(name)').eq('status', 'Active'),
     ]);
     setEmployees((eRes.data ?? []) as Employee[]);
     setVehicles((vRes.data ?? []) as Vehicle[]);
     setEmiRecords((emiRes.data ?? []) as EmiRecord[]);
+    setLowBalancePos((poRes.data ?? []) as unknown as PoLowBalanceRow[]);
     setLoading(false);
   }, []);
 
@@ -49,6 +64,7 @@ export function useNotifications() {
       .on('postgres_changes', { event: '*', schema: 'public', table: 'employees' }, fetch)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'vehicles' }, fetch)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'emi_records' }, fetch)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'purchase_orders' }, fetch)
       .subscribe();
     return () => { supabase.removeChannel(channel); };
   }, [fetch]);
@@ -133,6 +149,37 @@ export function useNotifications() {
           });
         }
       }
+
+      // Insurance — same expired/expiring-soon pattern as Fitness above, reusing the
+      // same daysUntil()/severity/navigateTo scheme, just with a 7-day window instead
+      // of 30 and its own wording (auto-disappears once the date is pushed past that
+      // window or renewed, since this recomputes fresh from vehicles every time).
+      if (v.insurance_expiry_date) {
+        const d = daysUntil(v.insurance_expiry_date);
+        if (d < 0) {
+          list.push({
+            id: `ins-exp-${v.id}`,
+            severity: 'expired',
+            category: 'insurance',
+            title: `${v.registration_number} - Insurance Expired`,
+            subtitle: `Expired ${Math.abs(d)} day${Math.abs(d) !== 1 ? 's' : ''} ago`,
+            daysOffset: d,
+            navigateTo: '/vehicles',
+          });
+        } else if (d <= INSURANCE_SOON_DAYS) {
+          list.push({
+            id: `ins-soon-${v.id}`,
+            severity: d === 0 ? 'due-today' : 'due-soon',
+            category: 'insurance',
+            title: d === 0 ? `${v.registration_number} - Insurance Expiring Today`
+              : d === 1 ? `${v.registration_number} - Insurance Expiring Tomorrow`
+              : `${v.registration_number} - Insurance Expiring in ${d} days`,
+            subtitle: d === 0 ? 'Expires today' : `${d} day${d !== 1 ? 's' : ''} remaining`,
+            daysOffset: d,
+            navigateTo: '/vehicles',
+          });
+        }
+      }
     }
 
     const vehicleMap = new Map(vehicles.map(v => [v.id, v]));
@@ -175,9 +222,25 @@ export function useNotifications() {
       }
     }
 
+    // PO Balance Low — one alert per Active PO whose remaining amount has dropped
+    // below its own configurable threshold (default ₹20,000). Not date-based, so it
+    // sorts alongside "due-soon" items rather than by daysOffset.
+    for (const po of lowBalancePos) {
+      if (!isPoLowBalance(po)) continue;
+      list.push({
+        id: `po-low-${po.id}`,
+        severity: 'due-soon',
+        category: 'po_low_balance',
+        title: `PO BALANCE LOW - ${po.customer?.name ?? 'Unknown Customer'} - ${po.po_number}`,
+        subtitle: `Remaining ${formatCurrency(po.remaining_amount)}`,
+        daysOffset: 0,
+        navigateTo: '/purchase-orders',
+      });
+    }
+
     list.sort((a, b) => a.daysOffset - b.daysOffset);
     return list;
-  }, [employees, vehicles, emiRecords]);
+  }, [employees, vehicles, emiRecords, lowBalancePos]);
 
   const counts = useMemo(() => {
     const expired = notifications.filter(n => n.severity === 'expired' || n.severity === 'overdue').length;

@@ -17,7 +17,6 @@ const Vehicles = lazy(() => import('@/pages/Vehicles'));
 const Employees = lazy(() => import('@/pages/Employees'));
 const Rates = lazy(() => import('@/pages/Rates'));
 const Customers = lazy(() => import('@/pages/Customers'));
-const Contracts = lazy(() => import('@/pages/Contracts'));
 const Trips = lazy(() => import('@/pages/Trips'));
 const Diesel = lazy(() => import('@/pages/Diesel'));
 const Attendance = lazy(() => import('@/pages/Attendance'));
@@ -37,6 +36,7 @@ const PagesManagement = lazy(() => import('@/pages/PagesManagement'));
 const RolePagesManagement = lazy(() => import('@/pages/RolePagesManagement'));
 const Quotations = lazy(() => import('@/pages/Quotations'));
 const PoOrders = lazy(() => import('@/pages/PoOrders'));
+const PurchaseOrders = lazy(() => import('@/pages/PurchaseOrders'));
 const Purchase = lazy(() => import('@/pages/Purchase'));
 
 function AppContent() {
@@ -94,7 +94,6 @@ function AppContent() {
       case '/employees': return <Employees />;
       case '/rates': return <Rates />;
       case '/customers': return <Customers />;
-      case '/contracts': return <Contracts />;
       case '/trips': return <Trips />;
       case '/diesel': return <Diesel />;
       case '/attendance': return <Attendance />;
@@ -106,6 +105,7 @@ function AppContent() {
       case '/invoices': return <Invoices />;
       case '/quotations': return <Quotations />;
       case '/po-orders': return <PoOrders />;
+      case '/purchase-orders': return <PurchaseOrders />;
       case '/settlement-report': return <SettlementReport />;
       case '/reports/cash-payment': return <CashPaymentReport />;
       case '/settings': return <SettingsPage />;

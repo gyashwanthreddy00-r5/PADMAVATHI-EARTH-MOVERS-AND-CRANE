@@ -5,11 +5,12 @@ import { LoadingSpinner } from '@/components/ui/common';
 import { DatePicker } from '@/components/ui/DatePicker';
 import { formatCurrency, formatDate, todayISO, toISODate, classNames, vehicleTypeLabel } from '@/lib/utils';
 import { useNotifications } from '@/hooks/useNotifications';
+import { getEffectivePoStatus, isPoLowBalance } from '@/lib/poOrderManagement';
 import {
   Truck, Wrench, Fuel, IndianRupee,
   CreditCard, AlertCircle, Calendar, FileText, AlertTriangle, Eye,
   RefreshCw, Download, X, ArrowRight, CalendarClock,
-  ShieldCheck, ClipboardCheck, TrendingUp, Activity, ShoppingCart,
+  ShieldCheck, ClipboardCheck, TrendingUp, Activity, ShoppingCart, ClipboardList,
 } from 'lucide-react';
 import type {
   Vehicle, TripWithRelations, DieselWithRelations, MaintenanceWithRelations,
@@ -137,6 +138,22 @@ export default function Dashboard({ onNavigate }: { onNavigate: (path: string) =
   const { t } = useLang();
   const { notifications } = useNotifications();
   const [data, setData] = useState<DashboardData | null>(null);
+  // PO Orders Summary — a small, independent counter card (spec: Active/Completed/
+  // Expired/Low Balance POs). Deliberately not part of DashboardData/computed below:
+  // it's a simple current-state count, not scoped to the dashboard's date range.
+  const [poOrdersForSummary, setPoOrdersForSummary] = useState<{ id: string; remaining_amount: number; valid_to: string | null }[]>([]);
+  useEffect(() => {
+    supabase.from('purchase_orders').select('id, remaining_amount, valid_to').then(({ data }) => setPoOrdersForSummary(data ?? []));
+  }, []);
+  const poOrdersSummary = useMemo(() => {
+    const withStatus = poOrdersForSummary.map(p => ({ ...p, effectiveStatus: getEffectivePoStatus(p) }));
+    return {
+      active: withStatus.filter(p => p.effectiveStatus === 'Active').length,
+      completed: withStatus.filter(p => p.effectiveStatus === 'Completed').length,
+      expired: withStatus.filter(p => p.effectiveStatus === 'Expired').length,
+      lowBalance: withStatus.filter(isPoLowBalance).length,
+    };
+  }, [poOrdersForSummary]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [dateRange, setDateRange] = useState<DateRangeKey>('month');
@@ -337,31 +354,16 @@ export default function Dashboard({ onNavigate }: { onNavigate: (path: string) =
       fitnessExpiring: data.vehicles.filter(v => v.fitness_expiry_date && daysUntil(v.fitness_expiry_date) >= 0 && daysUntil(v.fitness_expiry_date) <= 30).length,
       licenseExpired: data.employees.filter(e => e.license_expiry && daysUntil(e.license_expiry) < 0).length,
       licenseExpiring: data.employees.filter(e => e.license_expiry && daysUntil(e.license_expiry) >= 0 && daysUntil(e.license_expiry) <= 30).length,
+      insuranceExpired: data.vehicles.filter(v => v.insurance_expiry_date && daysUntil(v.insurance_expiry_date) < 0).length,
+      insuranceExpiring: data.vehicles.filter(v => v.insurance_expiry_date && daysUntil(v.insurance_expiry_date) >= 0 && daysUntil(v.insurance_expiry_date) <= 7).length,
     };
 
     // Today's trips
     const todayTrips = data.periodTrips.filter(tr => tr.trip_date === today);
     const todayRevenue = todayTrips.reduce((s, tr) => s + Number(tr.total_amount), 0);
 
-    // Active contracts (rentals)
-    const activeContracts = data.contracts.filter(c => c.status === 'Active' && c.start_date <= today && (!c.end_date || c.end_date >= today));
-
     // Rental & job activity
     const rentalActivity = [
-      ...activeContracts.map(c => {
-        const vehicle = data.vehicles.find(v => v.id === c.vehicle_id);
-        const daysToEnd = c.end_date ? daysUntil(c.end_date) : null;
-        return {
-          id: c.id,
-          customer: c.company_name,
-          equipment: vehicle ? `${vehicle.registration_number} - ${vehicleTypeLabel(vehicle.type, vehicle.tons ?? vehicle.capacity)}` : 'N/A',
-          location: c.address ?? '-',
-          start: c.start_date,
-          end: c.end_date ?? '-',
-          status: daysToEnd !== null && daysToEnd <= 7 ? 'Ending Soon' : 'Active',
-          amount: c.final_payable_amount ?? c.total_monthly_amount,
-        };
-      }),
       ...todayTrips.map(tr => ({
         id: tr.id,
         customer: tr.customer?.name ?? tr.place_of_work,
@@ -406,7 +408,7 @@ export default function Dashboard({ onNavigate }: { onNavigate: (path: string) =
       fleetUtilization, outstandingAmount, totalInvoiced, totalPaid, totalPending,
       outstandingInvoices, outstandingInvoiceList, revenueByMonth,
       invoiceBreakdown, quotationBreakdown, docExpiry,
-      todayTrips, todayRevenue, activeContracts, rentalActivity,
+      todayTrips, todayRevenue, rentalActivity,
       totalRentals, completedRentals, activeRentals,
       dieselTotal, dieselPaid, dieselPending,
       recentMaintenance, recentMaintenanceTotal,
@@ -483,7 +485,7 @@ export default function Dashboard({ onNavigate }: { onNavigate: (path: string) =
             {visibleNotifications.slice(0, 10).map(n => {
               const isExpired = n.severity === 'expired' || n.severity === 'overdue';
               const isToday = n.severity === 'due-today';
-              const icon = n.category === 'eye_test' ? Eye : n.category === 'emi' ? CreditCard : n.category === 'fitness' ? Truck : AlertCircle;
+              const icon = n.category === 'eye_test' ? Eye : n.category === 'emi' ? CreditCard : n.category === 'fitness' ? Truck : n.category === 'insurance' ? ShieldCheck : n.category === 'po_low_balance' ? IndianRupee : AlertCircle;
               const Icon = icon;
               return (
                 <button key={n.id} type="button" onClick={() => onNavigate(n.navigateTo)} className="w-full flex items-center gap-3 px-4 py-2 hover:bg-slate-50 transition-colors text-left">
@@ -707,81 +709,7 @@ export default function Dashboard({ onNavigate }: { onNavigate: (path: string) =
               />
             </div>
           </div>
-          {computed.activeContracts.length > 0 && (
-            <div className="space-y-1.5">
-              <p className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Active Monthly Contracts</p>
-              {computed.activeContracts.slice(0, 3).map(c => {
-                const vehicle = data.vehicles.find(v => v.id === c.vehicle_id);
-                return (
-                  <button key={c.id} onClick={() => onNavigate('/contracts')} className="w-full flex items-center gap-2 p-2 rounded-lg hover:bg-slate-50 transition-colors text-left min-w-0">
-                    <div className="w-2 h-2 rounded-full bg-blue-500 flex-shrink-0" />
-                    <span className="text-sm font-medium text-slate-700 truncate flex-1 min-w-0">{c.company_name}</span>
-                    <span className="text-xs text-slate-500 whitespace-nowrap flex-shrink-0">{vehicle?.registration_number ?? '-'}</span>
-                    <span className="text-xs font-semibold text-slate-700 whitespace-nowrap flex-shrink-0">{formatCurrency(c.final_payable_amount ?? c.total_monthly_amount)}</span>
-                  </button>
-                );
-              })}
-            </div>
-          )}
-          {computed.activeContracts.length === 0 && (
-            <p className="text-xs text-slate-400 italic">No active monthly contracts</p>
-          )}
         </div>
-      </div>
-
-      {/* Rental & Job Activity Table */}
-      <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden min-w-0">
-        <div className="px-4 py-2.5 border-b border-slate-100 flex items-center justify-between bg-gradient-to-r from-blue-50/60 to-transparent">
-          <div className="flex items-center gap-2">
-            <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-blue-50 to-indigo-50 flex items-center justify-center flex-shrink-0">
-              <Calendar className="w-4 h-4 text-blue-600" />
-            </div>
-            <h3 className="text-sm font-bold text-slate-800">Current Bookings & Active Rentals</h3>
-          </div>
-          <button onClick={() => onNavigate('/trips')} className="text-xs font-semibold text-blue-600 hover:text-blue-700 flex items-center gap-1 flex-shrink-0">
-            View All <ArrowRight className="w-3 h-3" />
-          </button>
-        </div>
-        {computed.rentalActivity.length === 0 ? (
-          <p className="text-sm text-slate-400 italic px-4 py-6 text-center">No active or upcoming rentals</p>
-        ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full">
-              <thead>
-                <tr className="bg-slate-50 border-b border-slate-200">
-                  <th className="px-3 py-2 text-[10px] font-bold text-slate-600 uppercase tracking-wider text-left whitespace-nowrap">Customer</th>
-                  <th className="px-3 py-2 text-[10px] font-bold text-slate-600 uppercase tracking-wider text-left whitespace-nowrap">Equipment</th>
-                  <th className="px-3 py-2 text-[10px] font-bold text-slate-600 uppercase tracking-wider text-left whitespace-nowrap">Location</th>
-                  <th className="px-3 py-2 text-[10px] font-bold text-slate-600 uppercase tracking-wider text-left whitespace-nowrap">Start</th>
-                  <th className="px-3 py-2 text-[10px] font-bold text-slate-600 uppercase tracking-wider text-left whitespace-nowrap">End</th>
-                  <th className="px-3 py-2 text-[10px] font-bold text-slate-600 uppercase tracking-wider text-center whitespace-nowrap">Status</th>
-                  <th className="px-3 py-2 text-[10px] font-bold text-slate-600 uppercase tracking-wider text-right whitespace-nowrap">Amount</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-100">
-                {computed.rentalActivity.map(r => (
-                  <tr key={r.id} onClick={() => onNavigate(r.status === 'Active' && r.end !== r.start ? '/contracts' : '/trips')} className="hover:bg-slate-50 cursor-pointer">
-                    <td className="px-3 py-2 text-sm font-medium text-slate-800 whitespace-nowrap">{r.customer}</td>
-                    <td className="px-3 py-2 text-sm text-slate-600 whitespace-nowrap">{r.equipment}</td>
-                    <td className="px-3 py-2 text-sm text-slate-600 whitespace-nowrap max-w-[120px] truncate">{r.location}</td>
-                    <td className="px-3 py-2 text-sm text-slate-600 whitespace-nowrap">{formatDate(r.start)}</td>
-                    <td className="px-3 py-2 text-sm text-slate-600 whitespace-nowrap">{r.end === '-' ? '-' : formatDate(r.end)}</td>
-                    <td className="px-3 py-2 text-center whitespace-nowrap">
-                      <span className={classNames(
-                        'inline-flex px-2 py-0.5 rounded-full text-[10px] font-bold',
-                        r.status === 'Active' ? 'bg-blue-100 text-blue-700' :
-                        r.status === 'Ending Soon' ? 'bg-amber-100 text-amber-700' :
-                        r.status === 'Completed' ? 'bg-emerald-100 text-emerald-700' :
-                        'bg-slate-100 text-slate-600',
-                      )}>{r.status}</span>
-                    </td>
-                    <td className="px-3 py-2 text-sm font-semibold text-slate-800 text-right tabular-nums whitespace-nowrap">{formatCurrency(r.amount)}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
       </div>
 
       {/* SECTION 4: INVOICES & COLLECTIONS */}
@@ -806,6 +734,35 @@ export default function Dashboard({ onNavigate }: { onNavigate: (path: string) =
           <div className="p-2.5 rounded-lg bg-red-50">
             <p className="text-[10px] font-bold text-red-600 uppercase">Pending</p>
             <p className="text-lg font-bold text-red-700 tabular-nums truncate">{formatCurrency(computed.totalPending)}</p>
+          </div>
+        </div>
+      </button>
+
+      {/* PO Orders Summary card */}
+      <button onClick={() => onNavigate('/purchase-orders')} className="bg-white rounded-xl border border-slate-200 shadow-sm p-4 text-left hover:shadow-lg hover:-translate-y-0.5 transition-all w-full min-w-0 relative overflow-hidden">
+        <div className="absolute top-0 left-0 right-0 h-1 bg-gradient-to-r from-blue-400 to-indigo-400" />
+        <div className="flex items-center gap-2 mb-3">
+          <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-blue-50 to-indigo-50 flex items-center justify-center flex-shrink-0">
+            <ClipboardList className="w-4 h-4 text-blue-600" />
+          </div>
+          <h3 className="text-sm font-bold text-slate-800">PO Orders Summary</h3>
+        </div>
+        <div className="grid grid-cols-4 gap-3">
+          <div className="p-2.5 rounded-lg bg-emerald-50 text-center">
+            <p className="text-lg font-bold text-emerald-700 tabular-nums">{poOrdersSummary.active}</p>
+            <p className="text-[9px] font-semibold text-emerald-600 uppercase">Active</p>
+          </div>
+          <div className="p-2.5 rounded-lg bg-slate-100 text-center">
+            <p className="text-lg font-bold text-slate-600 tabular-nums">{poOrdersSummary.completed}</p>
+            <p className="text-[9px] font-semibold text-slate-500 uppercase">Completed</p>
+          </div>
+          <div className="p-2.5 rounded-lg bg-red-50 text-center">
+            <p className="text-lg font-bold text-red-700 tabular-nums">{poOrdersSummary.expired}</p>
+            <p className="text-[9px] font-semibold text-red-600 uppercase">Expired</p>
+          </div>
+          <div className="p-2.5 rounded-lg bg-amber-50 text-center">
+            <p className="text-lg font-bold text-amber-700 tabular-nums">{poOrdersSummary.lowBalance}</p>
+            <p className="text-[9px] font-semibold text-amber-600 uppercase">Low Balance</p>
           </div>
         </div>
       </button>
@@ -937,6 +894,13 @@ export default function Dashboard({ onNavigate }: { onNavigate: (path: string) =
               <span className="text-sm text-slate-700 flex-1">Fitness Expiring / Expired</span>
               <span className={classNames('text-sm font-bold tabular-nums', computed.docExpiry.fitnessExpired > 0 ? 'text-red-600' : 'text-slate-800')}>{computed.docExpiry.fitnessExpiring + computed.docExpiry.fitnessExpired}</span>
             </button>
+            <button onClick={() => onNavigate('/vehicles')} className="w-full flex items-center gap-3 p-2 rounded-lg hover:bg-slate-50 transition-colors text-left">
+              <div className={classNames('w-7 h-7 rounded-lg flex items-center justify-center flex-shrink-0', computed.docExpiry.insuranceExpired > 0 ? 'bg-red-50' : 'bg-amber-50')}>
+                <ShieldCheck className={classNames('w-3.5 h-3.5', computed.docExpiry.insuranceExpired > 0 ? 'text-red-600' : 'text-amber-600')} />
+              </div>
+              <span className="text-sm text-slate-700 flex-1">Insurance Expiring / Expired</span>
+              <span className={classNames('text-sm font-bold tabular-nums', computed.docExpiry.insuranceExpired > 0 ? 'text-red-600' : 'text-slate-800')}>{computed.docExpiry.insuranceExpiring + computed.docExpiry.insuranceExpired}</span>
+            </button>
             <button onClick={() => onNavigate('/employees')} className="w-full flex items-center gap-3 p-2 rounded-lg hover:bg-slate-50 transition-colors text-left">
               <div className={classNames('w-7 h-7 rounded-lg flex items-center justify-center flex-shrink-0', computed.docExpiry.licenseExpired > 0 ? 'bg-red-50' : 'bg-amber-50')}>
                 <ClipboardCheck className={classNames('w-3.5 h-3.5', computed.docExpiry.licenseExpired > 0 ? 'text-red-600' : 'text-amber-600')} />
@@ -1018,7 +982,7 @@ export default function Dashboard({ onNavigate }: { onNavigate: (path: string) =
             </div>
             <div className="p-2.5 rounded-lg bg-slate-50 text-center">
               <p className="text-[10px] font-semibold text-slate-500 uppercase">Active Rentals</p>
-              <p className="text-lg font-bold text-slate-800 tabular-nums">{computed.activeContracts.length}</p>
+              <p className="text-lg font-bold text-slate-800 tabular-nums">{computed.activeRentals}</p>
             </div>
           </div>
           {computed.todayTrips.length > 0 ? (
@@ -1046,9 +1010,6 @@ export default function Dashboard({ onNavigate }: { onNavigate: (path: string) =
           </div>
           {(() => {
             const upcomingEvents: { label: string; date: string; type: string; navigateTo: string }[] = [];
-            data.contracts.forEach(c => {
-              if (c.end_date) { const d = daysUntil(c.end_date); if (d >= 0 && d <= 7) upcomingEvents.push({ label: `Rental ending - ${c.company_name}`, date: c.end_date, type: 'rental', navigateTo: '/contracts' }); }
-            });
             data.emiRecords.forEach(e => {
               if (e.status !== 'Paid') { const d = daysUntil(e.due_date); if (d >= 0 && d <= 7) upcomingEvents.push({ label: `EMI due - ${e.vehicle?.registration_number ?? 'N/A'}`, date: e.due_date, type: 'emi', navigateTo: '/emi' }); }
             });

@@ -9,7 +9,7 @@ import { findRateMasterForVehicle } from '@/lib/rateLookup';
 import type { Vehicle, RateMaster } from '@/types';
 import type { MultiVehicleTripFormData, VehicleEntryData } from '@/components/TripEntryForm';
 
-type SimpleRateType = 'Daily' | 'Hourly';
+type SimpleRateType = 'Daily' | 'Hourly' | 'Monthly';
 
 function round2(n: number): number {
   return Math.round(n * 100) / 100;
@@ -53,6 +53,9 @@ export function SimpleCashBillForm({ onChange }: Props) {
   // Full Day only — number of full days billed. Whole numbers only (no existing Cash/UPI
   // calculation supports fractional days), minimum 1, default 1. Not used for Hourly.
   const [days, setDays] = useState('1');
+  // Monthly only — decimal quantity of months billed (e.g. 1.5), mirrors GST Billing's
+  // "Quantity (Months)" field. Not used for Hourly/Daily.
+  const [months, setMonths] = useState('1');
   // Operator Batha — manual, transaction-level entry only. Never auto-filled from Rate
   // Master; blank by default (never shows a "0") and treated as ₹0 in every
   // calculation below until the user actually types a value.
@@ -80,19 +83,31 @@ export function SimpleCashBillForm({ onChange }: Props) {
   const r1 = Number(rateMaster?.first_hour_rate) || 0;
   const r2 = Number(rateMaster?.second_hour_rate) || 0;
   const dailyRate = Number(rateMaster?.daily_rate) || 0;
+  const monthlyRate = Number(rateMaster?.monthly_rate) || 0;
   // Full Day only — Hourly's own duration/rate math (calcSessionAmount below) is
   // completely unaffected by Number of Days.
   const daysNum = rateType === 'Daily' ? Math.max(1, Math.floor(Number(days) || 1)) : 1;
+  // Monthly only — decimal quantity of months, e.g. 1.5 or 3.25 (never rounded to a
+  // whole number, unlike Number of Days).
+  const monthsNum = rateType === 'Monthly' ? Math.max(0.01, Number(months) || 1) : 1;
 
   // here — this is the one calculation source, reused as-is.
   // Full Day: Rental = Full Day Rate x Number of Days (at Days = 1 this is identical to
   // the previous flat-rate behavior). Batha scales the same way for Full Day; Hourly's
   // Batha stays the single flat amount it always was.
-  const rentalAmount = !rateMaster ? 0 : rateType === 'Daily' ? round2(dailyRate * daysNum) : calcSessionAmount(totalMinutes, r1, r2, 0);
-  const bathaAmount = rateType === 'Daily' ? round2((Number(batha) || 0) * daysNum) : (Number(batha) || 0);
+  // Monthly: Rental = Monthly Rate x Quantity (Months) — same shape as Full Day, just a
+  // different Rate Master field and a decimal-capable quantity.
+  const rentalAmount = !rateMaster ? 0
+    : rateType === 'Daily' ? round2(dailyRate * daysNum)
+    : rateType === 'Monthly' ? round2(monthlyRate * monthsNum)
+    : calcSessionAmount(totalMinutes, r1, r2, 0);
+  const bathaAmount = rateType === 'Daily' ? round2((Number(batha) || 0) * daysNum)
+    : rateType === 'Monthly' ? round2((Number(batha) || 0) * monthsNum)
+    : (Number(batha) || 0);
   const totalAmount = round2(rentalAmount + bathaAmount);
 
-  const isReady = !!selectedVehicle && !!rateMaster && (rateType === 'Daily' || totalMinutes > 0);
+  const monthlyRateMissing = rateType === 'Monthly' && !!rateMaster && monthlyRate <= 0;
+  const isReady = !!selectedVehicle && !!rateMaster && !monthlyRateMissing && (rateType === 'Hourly' ? totalMinutes > 0 : true);
 
   useEffect(() => {
     if (!isReady || !selectedVehicle || !rateMaster) { onChange(null); return; }
@@ -142,7 +157,7 @@ export function SimpleCashBillForm({ onChange }: Props) {
     };
     onChange(data);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isReady, selectedVehicle, rateMaster, rateType, totalMinutes, daysNum, batha, bathaAmount, workingDate, rentalAmount, totalAmount]);
+  }, [isReady, selectedVehicle, rateMaster, rateType, totalMinutes, daysNum, monthsNum, batha, bathaAmount, workingDate, rentalAmount, totalAmount]);
 
   if (loading) return <LoadingSpinner />;
 
@@ -179,8 +194,8 @@ export function SimpleCashBillForm({ onChange }: Props) {
 
       <div>
         <p className="text-xs font-bold uppercase tracking-wide text-slate-500 mb-2">Billing</p>
-        <div className="grid grid-cols-2 gap-2 mb-3 max-w-xs">
-          {(['Hourly', 'Daily'] as const).map(rt => (
+        <div className="grid grid-cols-3 gap-2 mb-3 max-w-md">
+          {(['Hourly', 'Daily', 'Monthly'] as const).map(rt => (
             <button
               key={rt}
               type="button"
@@ -190,13 +205,16 @@ export function SimpleCashBillForm({ onChange }: Props) {
                 rateType === rt ? 'bg-blue-600 border-blue-600 text-white' : 'border-slate-200 text-slate-600 hover:bg-slate-50'
               )}
             >
-              {rt === 'Daily' ? 'Full Day' : 'Hourly'}
+              {rt === 'Daily' ? 'Full Day' : rt}
             </button>
           ))}
         </div>
 
         {selectedVehicle && !rateMaster && (
           <p className="text-xs text-amber-600 mb-3">Rate not configured for {selectedVehicle.registration_number}. Please configure it in Rate Master.</p>
+        )}
+        {monthlyRateMissing && (
+          <p className="text-xs text-red-600 mb-3">Monthly rate not configured in Rate Master.</p>
         )}
 
         {rateType === 'Hourly' ? (
@@ -214,7 +232,7 @@ export function SimpleCashBillForm({ onChange }: Props) {
               <input type="number" min="0" step="0.01" className={inputClass()} value={batha} onChange={e => setBatha(e.target.value === '' ? '' : Math.max(0, Number(e.target.value)).toString())} placeholder="Enter Operator Batha (Optional)" />
             </Field>
           </div>
-        ) : (
+        ) : rateType === 'Daily' ? (
           <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
             <Field label="Number of Days" required>
               <input type="number" min="1" step="1" className={inputClass()} value={days} onChange={e => setDays(Math.max(1, Math.floor(Number(e.target.value) || 1)).toString())} placeholder="1" />
@@ -226,12 +244,25 @@ export function SimpleCashBillForm({ onChange }: Props) {
               <input type="number" min="0" step="0.01" className={inputClass()} value={batha} onChange={e => setBatha(e.target.value === '' ? '' : Math.max(0, Number(e.target.value)).toString())} placeholder="Enter Operator Batha (Optional)" />
             </Field>
           </div>
+        ) : (
+          <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+            <Field label="Quantity (Months)" required>
+              <input type="number" min="0.01" step="0.01" className={inputClass()} value={months} onChange={e => setMonths(e.target.value)} placeholder="1" />
+            </Field>
+            <Field label="Monthly Rate">
+              <div className={autoFieldClass}>{rateMaster ? formatCurrency(monthlyRate) : '-'}</div>
+            </Field>
+            <Field label="Operator Batha">
+              <input type="number" min="0" step="0.01" className={inputClass()} value={batha} onChange={e => setBatha(e.target.value === '' ? '' : Math.max(0, Number(e.target.value)).toString())} placeholder="Enter Operator Batha (Optional)" />
+            </Field>
+          </div>
         )}
 
         {isReady && (
           <div className="mt-3 flex flex-wrap items-center gap-4 p-3 bg-blue-50 rounded-lg text-sm">
             {rateType === 'Hourly' && <span className="text-slate-500">Duration: <b className="text-slate-800">{formatDuration(totalMinutes / 60)}</b></span>}
             {rateType === 'Daily' && <span className="text-slate-500">Days: <b className="text-slate-800">{daysNum}</b></span>}
+            {rateType === 'Monthly' && <span className="text-slate-500">Quantity: <b className="text-slate-800">{monthsNum} month{monthsNum === 1 ? '' : 's'}</b></span>}
             <span className="text-slate-500">Rental: <b className="text-slate-800">{formatCurrency(rentalAmount)}</b></span>
             <span className="text-slate-500">Operator Batha: <b className="text-slate-800">{formatCurrency(bathaAmount)}</b></span>
             <span className="ml-auto font-bold text-blue-700 text-base">{formatCurrency(totalAmount)}</span>

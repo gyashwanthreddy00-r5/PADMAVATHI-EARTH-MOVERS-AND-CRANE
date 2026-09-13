@@ -264,6 +264,31 @@ export function phoneValidationError(value: string, required = false): string | 
   return null;
 }
 
+const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+export function isValidEmail(value: string): boolean {
+  return EMAIL_REGEX.test(value.trim());
+}
+
+export function emailValidationError(value: string, required = false): string | null {
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return required ? 'Email address is required' : null;
+  }
+  if (!isValidEmail(trimmed)) {
+    return `"${trimmed}" is not a valid email address`;
+  }
+  return null;
+}
+
+// CC email addresses are stored as one comma-separated string per customer
+// (`customers.cc_emails`) - parses it into a clean list of individual
+// addresses, trimming whitespace and dropping empties.
+export function parseCcEmails(raw: string | null | undefined): string[] {
+  if (!raw) return [];
+  return raw.split(/[,;]/).map(e => e.trim()).filter(Boolean);
+}
+
 export function classNames(...classes: (string | false | null | undefined)[]): string {
   return classes.filter(Boolean).join(' ');
 }

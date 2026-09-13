@@ -36,6 +36,7 @@ function normalizeVehicle(row: Record<string, unknown>): Vehicle | null {
     hourly_rate: row.hourly_rate == null || row.hourly_rate === '' ? null : Number(row.hourly_rate),
     daily_rate: row.daily_rate == null || row.daily_rate === '' ? null : Number(row.daily_rate),
     fitness_expiry_date: row.fitness_expiry_date == null ? null : String(row.fitness_expiry_date),
+    insurance_expiry_date: row.insurance_expiry_date == null ? null : String(row.insurance_expiry_date),
     status: vehicleStatuses.includes(status) ? status : 'Available',
     active: Boolean(row.active),
     created_at: String(row.created_at ?? ''),
@@ -62,6 +63,7 @@ export default function Vehicles() {
     serial_number: '', registration_number: '', model: '', type: 'Crane', capacity: '', tons: null,
     emi_status: 'No EMI', emi_amount: null as number | null, emi_due_date: '', emi_end_date: '',
     hourly_rate: null as number | null, daily_rate: null as number | null, fitness_expiry_date: '',
+    insurance_expiry_date: '',
     status: 'Available', active: true,
   });
 
@@ -97,7 +99,7 @@ export default function Vehicles() {
 
   const openAdd = () => {
     setEditing(null);
-    setForm({ serial_number: String(vehicles.length + 1), registration_number: '', model: '', type: 'Crane', capacity: '', tons: null, emi_status: 'No EMI', emi_amount: null as number | null, emi_due_date: '', emi_end_date: '', hourly_rate: null as number | null, daily_rate: null as number | null, fitness_expiry_date: '', status: 'Available', active: true });
+    setForm({ serial_number: String(vehicles.length + 1), registration_number: '', model: '', type: 'Crane', capacity: '', tons: null, emi_status: 'No EMI', emi_amount: null as number | null, emi_due_date: '', emi_end_date: '', hourly_rate: null as number | null, daily_rate: null as number | null, fitness_expiry_date: '', insurance_expiry_date: '', status: 'Available', active: true });
     setModalOpen(true);
   };
 
@@ -130,13 +132,16 @@ export default function Vehicles() {
       capacity: form.type === 'Crane' ? (form.tons != null ? `${form.tons} Ton` : (form.capacity ?? null)) : null,
       tons: form.type === 'Crane' ? (form.tons != null ? Number(form.tons) : null) : null,
       status: form.status ?? 'Available',
-      hourly_rate: Number(form.hourly_rate) || 0,
-      daily_rate: Number(form.daily_rate) || 0,
+      // Hourly Rate / Daily Rate are no longer collected on this form - rates are
+      // managed exclusively in Rate Master. Omitted here (not zeroed) so editing an
+      // existing vehicle never overwrites its historical value; a new vehicle simply
+      // gets the column's own DB default.
       emi_status: form.emi_status ?? 'No EMI',
       emi_amount: isEmi ? Math.max(0, Number(form.emi_amount) || 0) : 0,
       emi_due_date: isEmi ? cleanDate(form.emi_due_date) : null,
       emi_end_date: isEmi ? cleanDate(form.emi_end_date) : null,
       fitness_expiry_date: cleanDate(form.fitness_expiry_date),
+      insurance_expiry_date: cleanDate(form.insurance_expiry_date),
       active: form.active ?? true,
       created_by: editing ? undefined : user.id,
       updated_by: user.id,
@@ -373,14 +378,11 @@ export default function Vehicles() {
               <option value="Inactive">{t('vehicleStatusInactive')}</option>
             </select>
           </Field>
-          <Field label={t('hourlyRate')}>
-            <input type="number" className={inputClass()} value={form.hourly_rate ?? ''} onChange={e => setForm(f => ({ ...f, hourly_rate: e.target.value === '' ? null : Number(e.target.value) }))} />
-          </Field>
-          <Field label={t('dailyRate')}>
-            <input type="number" className={inputClass()} value={form.daily_rate ?? ''} onChange={e => setForm(f => ({ ...f, daily_rate: e.target.value === '' ? null : Number(e.target.value) }))} />
-          </Field>
           <Field label={t('fitnessExpiryDate')}>
             <DatePicker value={form.fitness_expiry_date ?? ''} onChange={v => setForm(f => ({ ...f, fitness_expiry_date: v }))} />
+          </Field>
+          <Field label={t('insuranceExpiryDate')}>
+            <DatePicker value={form.insurance_expiry_date ?? ''} onChange={v => setForm(f => ({ ...f, insurance_expiry_date: v }))} />
           </Field>
           <Field label={t('emiStatus')}>
             <select className={inputClass()} value={form.emi_status} onChange={e => setForm(f => ({ ...f, emi_status: e.target.value as EmiStatus }))}>
@@ -431,6 +433,7 @@ export default function Vehicles() {
               <div><span className="text-slate-500">Hourly Rate:</span> <span className="font-medium">{formatCurrency(viewVehicle.hourly_rate)}</span></div>
               <div><span className="text-slate-500">Daily Rate:</span> <span className="font-medium">{formatCurrency(viewVehicle.daily_rate)}</span></div>
               <div><span className="text-slate-500">Fitness Expiry:</span> <span className="font-medium">{viewVehicle.fitness_expiry_date ? formatDate(viewVehicle.fitness_expiry_date) : '-'}</span></div>
+              <div><span className="text-slate-500">Insurance Expiry:</span> <span className="font-medium">{viewVehicle.insurance_expiry_date ? formatDate(viewVehicle.insurance_expiry_date) : '-'}</span></div>
               <div><span className="text-slate-500">EMI Status:</span> <span className="font-medium">{viewVehicle.emi_status}</span></div>
               <div><span className="text-slate-500">EMI Amount:</span> <span className="font-medium">{viewVehicle.emi_status === 'EMI Applicable' ? formatCurrency(viewVehicle.emi_amount) : '-'}</span></div>
               {viewVehicle.emi_status === 'EMI Applicable' && (

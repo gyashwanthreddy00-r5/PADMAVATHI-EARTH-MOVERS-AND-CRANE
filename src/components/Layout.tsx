@@ -41,7 +41,6 @@ const nav: NavSection[] = [
       { key: 'employees', label: 'employeeMaster', icon: Users, path: '/employees' },
       { key: 'rates', label: 'rateMaster', icon: Tag, path: '/rates' },
       { key: 'customers', label: 'customers', icon: Users, path: '/customers' },
-      { key: 'contracts', label: 'monthlyContracts', icon: FileText, path: '/contracts' },
       { key: 'quotations', label: 'quotations', icon: ClipboardList, path: '/quotations' },
     ],
   },
@@ -63,6 +62,7 @@ const nav: NavSection[] = [
     title: 'billing',
     items: [
       { key: 'invoices', label: 'customerInvoices', icon: FileText, path: '/invoices' },
+      { key: 'purchase-orders', label: 'purchaseOrders', icon: ClipboardList, path: '/purchase-orders' },
       { key: 'po-orders', label: 'poOrders', icon: FileSpreadsheet, path: '/po-orders' },
       { key: 'settlement-report', label: 'settlementReport', icon: Wallet, path: '/settlement-report' },
       { key: 'cash-payment-report', label: 'cashPaymentReport', icon: IndianRupee, path: '/reports/cash-payment' },

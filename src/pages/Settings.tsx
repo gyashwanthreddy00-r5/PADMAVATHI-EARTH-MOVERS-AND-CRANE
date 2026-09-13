@@ -23,6 +23,7 @@ export default function SettingsPage() {
   const [quoEmailSaving, setQuoEmailSaving] = useState(false);
   const [quoFormatSettings, setQuoFormatSettings] = useState<QuotationFormatSettings | null>(null);
   const [quoFormatSaving, setQuoFormatSaving] = useState(false);
+  const [savingAll, setSavingAll] = useState(false);
   const [signatureUrl, setSignatureUrl] = useState<string | null>(null);
   const [stampUrl, setStampUrl] = useState<string | null>(null);
   const [uploadingSignature, setUploadingSignature] = useState(false);
@@ -72,38 +73,53 @@ export default function SettingsPage() {
 
   if (loading || !form) return <LoadingSpinner />;
 
+  // Shared by save(), uploadFile() and removeFile() - company_settings is one row
+  // covering Company Profile/Bank Details/Rental/Diesel/GST/Signature-Stamp, so every
+  // one of those sections' Save buttons (and the two upload actions) persist the exact
+  // same full payload from the current form state - never a partial one that could
+  // silently drop another section's unsaved-elsewhere-on-this-row edits.
+  const buildCompanyPayload = (f: Settings) => ({
+    company_name: f.company_name,
+    phone: f.phone,
+    email: f.email,
+    gstin: f.gstin,
+    state: f.state,
+    state_code: f.state_code,
+    pan: f.pan,
+    address: f.address,
+    logo_url: f.logo_url,
+    authorized_signatory: f.authorized_signatory,
+    signature_path: f.signature_path,
+    stamp_path: f.stamp_path,
+    bank_name: f.bank_name,
+    bank_account_name: f.bank_account_name,
+    bank_account_number: f.bank_account_number,
+    bank_branch: f.bank_branch,
+    bank_ifsc: f.bank_ifsc,
+    diesel_rate: f.diesel_rate,
+    invoice_prefix: f.invoice_prefix,
+    invoice_start_number: f.invoice_start_number,
+    cgst_percent: f.cgst_percent,
+    sgst_percent: f.sgst_percent,
+    igst_percent: f.igst_percent,
+    gst_enabled: f.gst_enabled,
+  });
+
+  // Update if a row already exists (the normal case - one is seeded on initial setup);
+  // insert only when it genuinely doesn't (e.g. that seed row was never created), so a
+  // missing row can never turn every Save button here into a silent no-op.
+  const persistCompanySettings = (f: Settings) =>
+    f.id
+      ? supabase.from('company_settings').update(buildCompanyPayload(f)).eq('id', f.id)
+      : supabase.from('company_settings').insert(buildCompanyPayload(f));
+
   const save = async () => {
     if (!form) return;
     if (!form.company_name?.trim()) { show('Company Name is required.', 'error'); return; }
     const phoneErr = phoneValidationError(form.phone ?? '', false);
     if (phoneErr) { show(phoneErr, 'error'); return; }
     setSaving(true);
-    const { error } = await supabase.from('company_settings').update({
-      company_name: form.company_name,
-      phone: form.phone,
-      email: form.email,
-      gstin: form.gstin,
-      state: form.state,
-      state_code: form.state_code,
-      pan: form.pan,
-      address: form.address,
-      logo_url: form.logo_url,
-      authorized_signatory: form.authorized_signatory,
-      signature_path: form.signature_path,
-      stamp_path: form.stamp_path,
-      bank_name: form.bank_name,
-      bank_account_name: form.bank_account_name,
-      bank_account_number: form.bank_account_number,
-      bank_branch: form.bank_branch,
-      bank_ifsc: form.bank_ifsc,
-      diesel_rate: form.diesel_rate,
-      invoice_prefix: form.invoice_prefix,
-      invoice_start_number: form.invoice_start_number,
-      cgst_percent: form.cgst_percent,
-      sgst_percent: form.sgst_percent,
-      igst_percent: form.igst_percent,
-      gst_enabled: form.gst_enabled,
-    }).eq('id', form.id);
+    const { error } = await persistCompanySettings(form);
     if (error) {
       show(`Failed to save: ${error.message}`, 'error');
     } else {
@@ -114,6 +130,7 @@ export default function SettingsPage() {
   };
 
   const uploadFile = async (file: File, kind: 'signature' | 'stamp'): Promise<void> => {
+    if (!form) return;
     if (kind === 'signature') setUploadingSignature(true);
     else setUploadingStamp(true);
     try {
@@ -121,8 +138,14 @@ export default function SettingsPage() {
       const path = `company/${kind}.${ext}`;
       const { error: upErr } = await supabase.storage.from('quotation-assets').upload(path, file, { upsert: true, contentType: file.type });
       if (upErr) { show(`Upload failed: ${upErr.message}`, 'error'); return; }
-      setForm(f => f ? { ...f, [kind === 'signature' ? 'signature_path' : 'stamp_path']: path } : f);
-      show(`${kind === 'signature' ? 'Signature' : 'Stamp'} uploaded successfully.`, 'success');
+      // Persist the new path immediately - an uploaded file must never be lost just
+      // because the user doesn't also click one of the other Save buttons afterward.
+      const updatedForm = { ...form, [kind === 'signature' ? 'signature_path' : 'stamp_path']: path };
+      const { error: dbErr } = await persistCompanySettings(updatedForm);
+      if (dbErr) { show(`Uploaded, but failed to save: ${dbErr.message}`, 'error'); return; }
+      setForm(updatedForm);
+      await refresh();
+      show(`${kind === 'signature' ? 'Signature' : 'Stamp'} uploaded and saved successfully.`, 'success');
     } catch (err) {
       show(`Upload failed: ${err instanceof Error ? err.message : ''}`, 'error');
     } finally {
@@ -131,16 +154,36 @@ export default function SettingsPage() {
     }
   };
 
-  const removeFile = (kind: 'signature' | 'stamp'): void => {
-    setForm(f => f ? { ...f, [kind === 'signature' ? 'signature_path' : 'stamp_path']: null } : f);
+  const removeFile = async (kind: 'signature' | 'stamp'): Promise<void> => {
+    if (!form) return;
+    const updatedForm = { ...form, [kind === 'signature' ? 'signature_path' : 'stamp_path']: null };
     if (kind === 'signature' && signatureInputRef.current) signatureInputRef.current.value = '';
     if (kind === 'stamp' && stampInputRef.current) stampInputRef.current.value = '';
+    const { error } = await persistCompanySettings(updatedForm);
+    if (error) { show(`Failed to remove: ${error.message}`, 'error'); return; }
+    setForm(updatedForm);
+    await refresh();
+  };
+
+  // "Save All Changes" at the bottom of the page actually saves every section on this
+  // page, not just company_settings - each of these already shows its own success/
+  // error toast and manages its own per-section saving state.
+  const saveAll = async () => {
+    setSavingAll(true);
+    await Promise.all([
+      save(),
+      invSettings ? saveInvSettings() : Promise.resolve(),
+      reminderSettings ? saveReminderSettings() : Promise.resolve(),
+      quoEmailSettings ? saveQuoEmailSettings() : Promise.resolve(),
+      quoFormatSettings ? saveQuoFormatSettings() : Promise.resolve(),
+    ]);
+    setSavingAll(false);
   };
 
   const saveInvSettings = async () => {
     if (!invSettings) return;
     setInvSaving(true);
-    const { error } = await supabase.from('invoice_settings').update({
+    const payload = {
       hsn_sac: invSettings.hsn_sac,
       default_payment_terms: invSettings.default_payment_terms,
       declaration: invSettings.declaration,
@@ -150,7 +193,10 @@ export default function SettingsPage() {
       sgst_percent: invSettings.sgst_percent,
       igst_percent: invSettings.igst_percent,
       add_gst_by_default: invSettings.add_gst_by_default,
-    }).eq('id', invSettings.id);
+    };
+    const { error } = invSettings.id
+      ? await supabase.from('invoice_settings').update(payload).eq('id', invSettings.id)
+      : await supabase.from('invoice_settings').insert(payload);
     if (error) show(t('saveError'), 'error');
     else show(t('saveSuccess'), 'success');
     setInvSaving(false);
@@ -159,7 +205,7 @@ export default function SettingsPage() {
   const saveReminderSettings = async () => {
     if (!reminderSettings) return;
     setReminderSaving(true);
-    const { error } = await supabase.from('reminder_settings').update({
+    const payload = {
       enabled: true,
       day1_enabled: reminderSettings.day1_enabled,
       day10_enabled: reminderSettings.day10_enabled,
@@ -170,7 +216,10 @@ export default function SettingsPage() {
       day10_body: reminderSettings.day10_body,
       day20_subject: reminderSettings.day20_subject,
       day20_body: reminderSettings.day20_body,
-    }).eq('id', reminderSettings.id);
+    };
+    const { error } = reminderSettings.id
+      ? await supabase.from('reminder_settings').update(payload).eq('id', reminderSettings.id)
+      : await supabase.from('reminder_settings').insert(payload);
     if (error) show(`Failed to save: ${error.message}`, 'error');
     else show('Reminder settings saved successfully.', 'success');
     setReminderSaving(false);
@@ -179,14 +228,17 @@ export default function SettingsPage() {
   const saveQuoEmailSettings = async () => {
     if (!quoEmailSettings) return;
     setQuoEmailSaving(true);
-    const { error } = await supabase.from('quotation_email_settings').update({
+    const payload = {
       email_subject: quoEmailSettings.email_subject,
       email_body: quoEmailSettings.email_body,
       cc_email: quoEmailSettings.cc_email,
       bcc_email: quoEmailSettings.bcc_email,
       attach_pdf: quoEmailSettings.attach_pdf,
       email_signature: quoEmailSettings.email_signature,
-    }).eq('id', quoEmailSettings.id);
+    };
+    const { error } = quoEmailSettings.id
+      ? await supabase.from('quotation_email_settings').update(payload).eq('id', quoEmailSettings.id)
+      : await supabase.from('quotation_email_settings').insert(payload);
     if (error) show(`Failed to save: ${error.message}`, 'error');
     else show('Quotation email settings saved successfully.', 'success');
     setQuoEmailSaving(false);
@@ -195,7 +247,7 @@ export default function SettingsPage() {
   const saveQuoFormatSettings = async () => {
     if (!quoFormatSettings) return;
     setQuoFormatSaving(true);
-    const { error } = await supabase.from('quotation_format_settings').update({
+    const payload = {
       quotation_title: quoFormatSettings.quotation_title,
       terms_and_conditions: quoFormatSettings.terms_and_conditions,
       signature_text: quoFormatSettings.signature_text,
@@ -207,7 +259,10 @@ export default function SettingsPage() {
       show_batha: quoFormatSettings.show_batha,
       show_transport: quoFormatSettings.show_transport,
       date_format: quoFormatSettings.date_format,
-    }).eq('id', quoFormatSettings.id);
+    };
+    const { error } = quoFormatSettings.id
+      ? await supabase.from('quotation_format_settings').update(payload).eq('id', quoFormatSettings.id)
+      : await supabase.from('quotation_format_settings').insert(payload);
     if (error) show(`Failed to save: ${error.message}`, 'error');
     else show('Quotation format settings saved successfully.', 'success');
     setQuoFormatSaving(false);
@@ -254,6 +309,11 @@ export default function SettingsPage() {
           <Field label="Authorized Signatory">
             <input className={inputClass()} value={form.authorized_signatory ?? ''} onChange={e => setForm(f => ({ ...f!, authorized_signatory: e.target.value }))} placeholder="Name of authorized person" />
           </Field>
+        </div>
+        <div className="mt-4 flex justify-end">
+          <Button onClick={save} disabled={saving} size="sm">
+            {saving ? <><Save className="w-4 h-4 animate-spin" />{t('saving')}</> : <><Save className="w-4 h-4" />Save Company Profile</>}
+          </Button>
         </div>
       </div>
 
@@ -362,6 +422,11 @@ export default function SettingsPage() {
             <input className={inputClass()} value={form.bank_ifsc ?? ''} onChange={e => setForm(f => ({ ...f!, bank_ifsc: e.target.value.toUpperCase() }))} />
           </Field>
         </div>
+        <div className="mt-4 flex justify-end">
+          <Button onClick={save} disabled={saving} size="sm">
+            {saving ? <><Save className="w-4 h-4 animate-spin" />{t('saving')}</> : <><Save className="w-4 h-4" />Save Bank Details</>}
+          </Button>
+        </div>
       </div>
 
       {/* Rental Settings */}
@@ -377,6 +442,11 @@ export default function SettingsPage() {
           <Field label={t('invoiceStartNumber')}>
             <input type="number" className={inputClass()} value={form.invoice_start_number} onChange={e => setForm(f => ({ ...f!, invoice_start_number: Number(e.target.value) }))} />
           </Field>
+        </div>
+        <div className="mt-4 flex justify-end">
+          <Button onClick={save} disabled={saving} size="sm">
+            {saving ? <><Save className="w-4 h-4 animate-spin" />{t('saving')}</> : <><Save className="w-4 h-4" />Save Rental Settings</>}
+          </Button>
         </div>
       </div>
 
@@ -511,7 +581,7 @@ export default function SettingsPage() {
         </Field>
         <div className="mt-4 flex justify-end">
           <Button onClick={save} disabled={saving} size="sm">
-            {saving ? <><Save className="w-4 h-4 animate-spin" />{t('saving')}</> : <><Save className="w-4 h-4" />{t('save')}</>}
+            {saving ? <><Save className="w-4 h-4 animate-spin" />{t('saving')}</> : <><Save className="w-4 h-4" />Save Diesel Settings</>}
           </Button>
         </div>
       </div>
@@ -653,7 +723,7 @@ export default function SettingsPage() {
         </div>
         <div className="mt-4 flex justify-end">
           <Button onClick={save} disabled={saving} size="sm">
-            {saving ? <><Save className="w-4 h-4 animate-spin" />{t('saving')}</> : <><Save className="w-4 h-4" />{t('save')}</>}
+            {saving ? <><Save className="w-4 h-4 animate-spin" />{t('saving')}</> : <><Save className="w-4 h-4" />Save GST Settings</>}
           </Button>
         </div>
       </div>
@@ -672,10 +742,10 @@ export default function SettingsPage() {
         </Field>
       </div>
 
-      {/* Save Changes - All Settings */}
+      {/* Save Changes - every section on this page, not just Company Profile */}
       <div className="flex justify-end pb-2">
-        <Button onClick={save} disabled={saving} size="lg">
-          {saving ? <><Save className="w-4 h-4 animate-spin" />Saving...</> : <><Save className="w-4 h-4" />Save All Changes</>}
+        <Button onClick={saveAll} disabled={savingAll} size="lg">
+          {savingAll ? <><Save className="w-4 h-4 animate-spin" />Saving...</> : <><Save className="w-4 h-4" />Save All Changes</>}
         </Button>
       </div>
 

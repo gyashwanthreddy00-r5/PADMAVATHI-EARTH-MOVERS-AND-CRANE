@@ -123,7 +123,7 @@ export function printPoWorkingData(ctx: PoExportContext, records: PoWorkingRecor
   ${ctx.companyAddress ? `<div class="addr">${ctx.companyAddress}${ctx.companyGstin ? ' &middot; GSTIN: ' + ctx.companyGstin : ''}</div>` : ''}
   <div class="meta">
     <span><b>Customer:</b> ${ctx.customerName}</span>
-    <span><b>PO No:</b> ${ctx.poNumber}</span>
+    <span><b>Log Book Entry No.:</b> ${ctx.poNumber}</span>
     ${ctx.invoiceNumber ? `<span><b>Invoice No:</b> ${ctx.invoiceNumber}</span>` : ''}
     ${ctx.billDate ? `<span><b>Bill Date:</b> ${formatDate(ctx.billDate)}</span>` : ''}
     <span><b>Generated:</b> ${new Date().toLocaleDateString('en-IN')}</span>
@@ -157,7 +157,7 @@ export function exportPoWorkingDataToExcel(ctx: PoExportContext, records: PoWork
   aoa.push([ctx.companyName]);
   if (ctx.companyAddress) aoa.push([ctx.companyAddress + (ctx.companyGstin ? `   GSTIN: ${ctx.companyGstin}` : '')]);
   aoa.push([]);
-  const metaCells = [`Customer: ${ctx.customerName}`, '', '', '', '', `PO No: ${ctx.poNumber}`];
+  const metaCells = [`Customer: ${ctx.customerName}`, '', '', '', '', `Log Book Entry No.: ${ctx.poNumber}`];
   if (ctx.invoiceNumber) { metaCells[8] = `Invoice No: ${ctx.invoiceNumber}`; }
   if (ctx.billDate) { metaCells[11] = `Bill Date: ${formatDate(ctx.billDate)}`; }
   aoa.push(metaCells);
@@ -224,6 +224,6 @@ export function exportPoWorkingDataToExcel(ctx: PoExportContext, records: PoWork
   ws['!pageSetup'] = { orientation: 'landscape', fitToWidth: 1, fitToHeight: 0 };
 
   const wb = XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(wb, ws, 'PO Working Data');
+  XLSX.utils.book_append_sheet(wb, ws, 'Log Book Working Data');
   XLSX.writeFile(wb, `${ctx.poNumber.replace(/[/\\?%*:|"<>]/g, '-')}-working-data.xlsx`);
 }

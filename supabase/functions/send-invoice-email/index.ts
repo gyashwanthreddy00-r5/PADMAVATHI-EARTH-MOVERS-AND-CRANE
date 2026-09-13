@@ -69,7 +69,7 @@ Deno.serve(async (req: Request) => {
     // Load invoice with customer
     const { data: invoice, error: invError } = await adminClient
       .from("invoices")
-      .select(`*, customer:customers!invoices_customer_id_fkey(id, name, address, email, phone, gstin, state, state_code)`)
+      .select(`*, customer:customers!invoices_customer_id_fkey(id, name, address, email, cc_emails, phone, gstin, state, state_code)`)
       .eq("id", invoiceId)
       .maybeSingle();
 
@@ -131,6 +131,21 @@ Deno.serve(async (req: Request) => {
         { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } },
       );
     }
+
+    // CC recipients saved on the customer (Customer Master) — validated up front so a
+    // bad address never silently drops out; deduped against the primary "to" address
+    // (case-insensitive) so the same person is never billed twice.
+    const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    const rawCcList: string[] = (invoice.customer?.cc_emails ?? "")
+      .split(/[,;]/).map((e: string) => e.trim()).filter(Boolean);
+    const invalidCc = rawCcList.filter((e: string) => !emailPattern.test(e));
+    if (invalidCc.length > 0) {
+      return new Response(
+        JSON.stringify({ error: `This customer has an invalid CC email address configured: "${invalidCc[0]}". Please fix it in Customer Master before sending.` }),
+        { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } },
+      );
+    }
+    const ccList = Array.from(new Set(rawCcList.filter((e: string) => e.toLowerCase() !== customerEmail.toLowerCase())));
 
     // Update the invoice's amount_received/balance if they were stale
     if (totalReceived !== Number(invoice.amount_received)) {
@@ -216,6 +231,7 @@ GSTIN: ${companyGstin}`;
         },
       ],
     };
+    if (ccList.length > 0) resendBody.cc = ccList;
 
     const resendResponse = await fetch("https://api.resend.com/emails", {
       method: "POST",
@@ -253,6 +269,7 @@ GSTIN: ${companyGstin}`;
       email_status: "SENT",
       email_sent_at: new Date().toISOString(),
       email_sent_to: customerEmail,
+      email_sent_cc: ccList.length > 0 ? ccList.join(", ") : null,
       email_error: null,
     }).eq("id", invoiceId);
 
@@ -260,6 +277,7 @@ GSTIN: ${companyGstin}`;
       JSON.stringify({
         success: true,
         sentTo: customerEmail,
+        sentCc: ccList,
       }),
       { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } },
     );

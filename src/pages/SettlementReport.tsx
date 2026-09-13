@@ -882,22 +882,7 @@ export default function SettlementReport() {
             <div className="flex flex-wrap gap-2">
               <Button variant="outline" onClick={printCustomerStatement} disabled={filteredRows.length === 0}><Printer className="w-4 h-4" />Print Statement</Button>
               <Button variant="outline" onClick={exportSettlementExcel} disabled={filteredRows.length === 0}><FileSpreadsheet className="w-4 h-4" />Export Statement</Button>
-              <Button variant="outline" onClick={sendBalanceStatement} disabled={sendingBalanceStatement || balanceStatementRows.length === 0}><Send className="w-4 h-4" />{sendingBalanceStatement ? 'Sending...' : 'Send Balance Statement'}</Button>
-              <Button onClick={sendCustomerStatement} disabled={sendingStatement || filteredRows.length === 0}><Send className="w-4 h-4" />{sendingStatement ? 'Sending...' : 'Send Full Statement'}</Button>
             </div>
-          </div>
-
-          <div className="flex flex-wrap items-center justify-between gap-3 p-3 bg-slate-50 rounded-lg border border-slate-200">
-            <div className="text-sm text-slate-600">
-              <span className="font-semibold text-slate-700">Balance Statement</span> (outstanding only, all-time):{' '}
-              {balanceStatementRows.length === 0
-                ? <span className="text-slate-400">no outstanding invoices</span>
-                : <>{balanceStatementRows.length} invoice{balanceStatementRows.length === 1 ? '' : 's'}, <b className="text-red-600">{formatCurrency(balanceStatementTotals.totalBalance)}</b> due</>}
-            </div>
-            <label className="flex items-center gap-1.5 text-sm text-slate-600">
-              <input type="checkbox" checked={alsoSendInvoices} onChange={e => setAlsoSendInvoices(e.target.checked)} className="w-4 h-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500" />
-              Also Send Invoices
-            </label>
           </div>
 
           <div className="overflow-x-auto scroll-fade border border-slate-200 rounded-lg">

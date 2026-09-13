@@ -93,7 +93,8 @@ export const translations = {
     invoices: 'Invoices',
     invoiceModule: 'Customer Invoices',
     customerInvoices: 'Customer Invoices',
-    poOrders: 'PO Orders',
+    poOrders: 'Log Book Entries',
+    purchaseOrders: 'PO Orders',
     reports: 'Reports',
     tripReport: 'Trip Entries Report',
     dieselReport: 'Diesel Report',
@@ -329,6 +330,7 @@ export const translations = {
 
     // Customer
     email2: 'Email',
+    ccEmails: 'CC Email Addresses',
     gstin: 'GSTIN',
 
     // Invoice
@@ -420,6 +422,7 @@ export const translations = {
     eyeTestDate: 'Eye Test Date',
     eyeTestExpiryDate: 'Eye Test Expiry Date',
     fitnessExpiryDate: 'Fitness Expiry Date',
+    insuranceExpiryDate: 'Insurance Expiry Date',
     importantAlerts: 'Important Alerts',
     importantNotifications: 'Important Notifications',
     expired: 'Expired',
@@ -712,6 +715,7 @@ export const translations = {
     noMaintenanceThisMonth: 'No maintenance records this month',
     complianceExpiry: 'Compliance & Expiry',
     fitnessExpiringExpired: 'Fitness Expiring / Expired',
+    insuranceExpiringExpired: 'Insurance Expiring / Expired',
     licenseExpiringExpired: 'License Expiring / Expired',
     emiDueOverdue: 'EMI Due / Overdue',
     maintenanceThisMonth: 'Maintenance This Month',
@@ -822,7 +826,8 @@ export const translations = {
     invoices: 'ఇన్వాయిస్‌లు',
     invoiceModule: 'కస్టమర్ ఇన్వాయిస్‌లు',
     customerInvoices: 'కస్టమర్ ఇన్వాయిస్‌లు',
-    poOrders: 'PO Orders',
+    poOrders: 'Log Book Entries',
+    purchaseOrders: 'PO Orders',
     reports: 'నివేదికలు',
     tripReport: 'ట్రిప్ ఎంట్రీల నివేదిక',
     dieselReport: 'డీజిల్ నివేదిక',
@@ -1047,6 +1052,7 @@ export const translations = {
     contractStatusCancelled: 'రద్దు',
 
     email2: 'ఇమెయిల్',
+    ccEmails: 'CC ఇమెయిల్ చిరునామాలు',
     gstin: 'GSTIN',
 
     invoiceNumber: 'ఇన్వాయిస్ నంబర్',
@@ -1118,6 +1124,7 @@ export const translations = {
     eyeTestDate: 'ఐ టెస్ట్ తేదీ',
     eyeTestExpiryDate: 'ఐ టెస్ట్ గడువు తేదీ',
     fitnessExpiryDate: 'ఫిట్‌నెస్ గడువు తేదీ',
+    insuranceExpiryDate: 'బీమా గడువు తేదీ',
     importantAlerts: 'ముఖ్యమైన హెచ్చరికలు',
     importantNotifications: 'ముఖ్యమైన నోటిఫికేషన్లు',
     expired: 'గడువు దాటింది',
@@ -1402,6 +1409,7 @@ export const translations = {
     noMaintenanceThisMonth: 'ఈ నెలలో నిర్వహణ రికార్డులు లేవు',
     complianceExpiry: 'అనుబంధం & గడువు',
     fitnessExpiringExpired: 'ఫిట్‌నెస్ గడువు సమీపిస్తోంది / దాటింది',
+    insuranceExpiringExpired: 'బీమా గడువు సమీపిస్తోంది / దాటింది',
     licenseExpiringExpired: 'లైసెన్స్ గడువు సమీపిస్తోంది / దాటింది',
     emiDueOverdue: 'EMI గడువు / దాటింది',
     maintenanceThisMonth: 'ఈ నెల నిర్వహణ',

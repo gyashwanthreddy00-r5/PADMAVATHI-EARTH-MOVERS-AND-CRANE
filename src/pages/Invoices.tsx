@@ -14,7 +14,7 @@ import {
   formatCurrency, formatDate, amountInWords, todayISO, buildInvoiceLineDescription, classNames, addDays,
 } from '@/lib/utils';
 import { invoiceDocHTML, type PrintCopyType, type InvoiceDocType } from '@/components/InvoiceDocument';
-import { calculateDiscount, validateDiscountPercentage } from '@/lib/discountCalc';
+import { calculateDiscount, validateDiscountPercentage, round2 } from '@/lib/discountCalc';
 import { findRateMasterForVehicle } from '@/lib/rateLookup';
 import { useAuth } from '@/context/AuthContext';
 import { TripEntryForm, type MultiVehicleTripFormData, type VehicleEntryData } from '@/components/TripEntryForm';
@@ -183,9 +183,13 @@ export default function Invoices({ initialTab = 'list' }: InvoicesProps = {}) {
   const [cancelId, setCancelId] = useState<string | null>(null);
   const [deleteId, setDeleteId] = useState<string | null>(null);
   const [deleting, setDeleting] = useState(false);
-  const [paymentModal, setPaymentModal] = useState<InvoiceWithRelations | null>(null);
-  const [recordingPayment, setRecordingPayment] = useState(false);
-  const [paymentForm, setPaymentForm] = useState({ amount: null as number | null, payment_date: todayISO(), payment_mode: 'Cash' as PaymentMode, reference: '', remarks: '' });
+  // Record Company Payment — customer-wise, not invoice-wise. Clicking the ₹ button on
+  // any of a customer's invoices opens this with that customer's full outstanding
+  // invoice list (oldest first); saving auto-allocates the amount across them FIFO
+  // (see recordCompanyPayment) instead of asking which invoice to pay.
+  const [companyPaymentModal, setCompanyPaymentModal] = useState<{ customerId: string; customerName: string; outstandingInvoices: StatementRow[]; totalOutstanding: number } | null>(null);
+  const [recordingCompanyPayment, setRecordingCompanyPayment] = useState(false);
+  const [companyPaymentForm, setCompanyPaymentForm] = useState({ amount: null as number | null, payment_date: todayISO(), payment_mode: 'Cash' as PaymentMode, reference: '', remarks: '' });
   const [invoiceSearch, setInvoiceSearch] = useState('');
   // Click-to-open list of vehicles for a multi-vehicle invoice row - stores that
   // row's invoice id, or null when no popup is open. Closed by any outside click.
@@ -246,10 +250,11 @@ export default function Invoices({ initialTab = 'list' }: InvoicesProps = {}) {
 
   // Customer Statement - bank-statement-style view of one customer's invoices, built
   // entirely from the invoices already loaded via FULL_INVOICE_SELECT (amount_received
-  // is kept in sync by recordPayment, see openPayment/recordPayment below - the same
-  // source the payment modal itself already trusts, so no separate payments re-summing
-  // is needed here). Empty statementCustomerId means "not in statement mode" - the
-  // existing flat invoice list/search below is shown unchanged in that case.
+  // is kept in sync by recordCompanyPayment, see openCompanyPayment/recordCompanyPayment
+  // below - the same source the payment modal itself already trusts, so no separate
+  // payments re-summing is needed here). Empty statementCustomerId means "not in
+  // statement mode" - the existing flat invoice list/search below is shown unchanged
+  // in that case.
   const [statementCustomerId, setStatementCustomerId] = useState('');
   const [statementFrom, setStatementFrom] = useState('');
   const [statementTo, setStatementTo] = useState('');
@@ -847,71 +852,101 @@ export default function Invoices({ initialTab = 'list' }: InvoicesProps = {}) {
     setDeleteId(null);
   };
 
-  const currentBalance = useMemo(() => {
-    if (!paymentModal) return 0;
-    const payable = paymentModal.discount_enabled ? Number(paymentModal.final_payable_amount ?? paymentModal.grand_total) : Number(paymentModal.grand_total);
-    return Math.round((payable - Number(paymentModal.amount_received)) * 100) / 100;
-  }, [paymentModal]);
+  const newBalanceAfterCompanyPayment = useMemo(() => {
+    if (!companyPaymentModal) return 0;
+    const amt = companyPaymentForm.amount ?? 0;
+    return round2(companyPaymentModal.totalOutstanding - amt);
+  }, [companyPaymentModal, companyPaymentForm.amount]);
 
-  const newBalanceAfterPayment = useMemo(() => {
-    const amt = paymentForm.amount ?? 0;
-    return Math.round((currentBalance - amt) * 100) / 100;
-  }, [currentBalance, paymentForm.amount]);
-
-  const recordPayment = async () => {
-    if (!paymentModal || recordingPayment) return;
-    if (paymentForm.amount == null || paymentForm.amount <= 0) {
-      show('Enter a valid amount greater than 0', 'error'); return;
-    }
-    const payable = paymentModal.discount_enabled ? Number(paymentModal.final_payable_amount ?? paymentModal.grand_total) : Number(paymentModal.grand_total);
-    const balance = Math.round((payable - Number(paymentModal.amount_received)) * 100) / 100;
-    if (paymentForm.amount > balance) {
-      show(`Payment cannot exceed the outstanding balance of ${formatCurrency(balance)}.`, 'error');
-      return;
-    }
-    setRecordingPayment(true);
-    const { error: payErr } = await supabase.from('invoice_payments').insert({
-      invoice_id: paymentModal.id,
-      amount: paymentForm.amount ?? 0,
-      payment_date: paymentForm.payment_date,
-      payment_mode: paymentForm.payment_mode,
-      reference: paymentForm.reference || null,
-      remarks: paymentForm.remarks || null,
-    });
-    if (payErr) { show(t('saveError'), 'error'); setRecordingPayment(false); return; }
-
-    const newReceived = Math.round((Number(paymentModal.amount_received) + (paymentForm.amount ?? 0)) * 100) / 100;
-    const newBalance = Math.round((payable - newReceived) * 100) / 100;
-    const newStatus: InvoiceStatus = newBalance <= 0 ? 'Paid' : 'Partially Paid';
-    const { error: invErr } = await supabase.from('invoices').update({
-      amount_received: newReceived,
-      balance_amount: Math.max(0, newBalance),
-      invoice_status: newStatus,
-      // payment_status shares the same allowed values as invoice_status (see
-      // supabase/migrations/20260911200000_fix_invoices_payment_status_constraint.sql) -
-      // keep it in sync with the real status instead of collapsing "Partially Paid"
-      // down to "Pending", which used to hide partial payments from anything that
-      // filters on payment_status (e.g. the Balance Statement status filter).
-      payment_status: newStatus,
-    }).eq('id', paymentModal.id);
-    if (invErr) { show(t('saveError'), 'error'); setRecordingPayment(false); return; }
-    show('Payment recorded successfully', 'success');
-    setPaymentModal(null);
-    setRecordingPayment(false);
-    setPaymentForm({ amount: null as number | null, payment_date: todayISO(), payment_mode: 'Cash', reference: '', remarks: '' });
-    fetchAll();
+  // Clicking ₹ on any of a customer's invoices opens this against their FULL
+  // outstanding balance (every unpaid/partially-paid invoice, oldest first) - never a
+  // single invoice - matching Customer Statement's own balanceStatementRows filter
+  // exactly, just parameterized by customer instead of hardcoded to the one currently
+  // selected in statement mode.
+  const openCompanyPayment = (customerId: string) => {
+    const cust = customers.find(c => c.id === customerId);
+    const outstandingInvoices = invoices
+      .filter(inv => inv.customer_id === customerId && !inv.is_cancelled && !!inv.invoice_number)
+      .map(toStatementRow)
+      .filter(row => row.balance > 0)
+      .sort((a, b) => a.inv.invoice_date.localeCompare(b.inv.invoice_date));
+    const totalOutstanding = round2(outstandingInvoices.reduce((s, r) => s + r.balance, 0));
+    setCompanyPaymentModal({ customerId, customerName: cust?.name ?? '-', outstandingInvoices, totalOutstanding });
+    // Amount Received is always manual entry - never pre-filled with the outstanding
+    // balance (that figure is shown above purely as information).
+    setCompanyPaymentForm({ amount: null, payment_date: todayISO(), payment_mode: 'Cash', reference: '', remarks: '' });
   };
 
-  const openPayment = (inv: InvoiceWithRelations) => {
-    setPaymentModal(inv);
-    const payable = inv.discount_enabled ? Number(inv.final_payable_amount ?? inv.grand_total) : Number(inv.grand_total);
-    setPaymentForm({
-      amount: Math.max(0, Math.round((payable - Number(inv.amount_received)) * 100) / 100),
-      payment_date: todayISO(),
-      payment_mode: 'Cash',
-      reference: '',
-      remarks: '',
-    });
+  // Records one customer_payments header row, then FIFO-allocates the amount across
+  // that customer's oldest unpaid invoices first as ordinary invoice_payments rows
+  // (tagged with the header's id) - the exact same rows/columns Settlement Report,
+  // Customer Billing Report, statements and reminders already read, so every one of
+  // them reflects this automatically with no changes of their own needed. Each
+  // touched invoice's amount_received/balance/status is updated with the same logic
+  // the old per-invoice Record Payment used, just looped over every invoice touched.
+  const recordCompanyPayment = async () => {
+    if (!companyPaymentModal || recordingCompanyPayment) return;
+    const amt = companyPaymentForm.amount ?? 0;
+    if (amt <= 0) { show('Enter a valid amount greater than 0', 'error'); return; }
+    if (amt > companyPaymentModal.totalOutstanding + 0.01) {
+      show(`Payment cannot exceed the outstanding balance of ${formatCurrency(companyPaymentModal.totalOutstanding)}.`, 'error');
+      return;
+    }
+    setRecordingCompanyPayment(true);
+
+    const { data: header, error: headerErr } = await supabase.from('customer_payments').insert({
+      customer_id: companyPaymentModal.customerId,
+      payment_date: companyPaymentForm.payment_date,
+      payment_mode: companyPaymentForm.payment_mode,
+      amount: amt,
+      reference: companyPaymentForm.reference || null,
+      notes: companyPaymentForm.remarks || null,
+    }).select().single();
+    if (headerErr || !header) { show(headerErr?.message ?? t('saveError'), 'error'); setRecordingCompanyPayment(false); return; }
+
+    let remaining = amt;
+    const allocations: { invoice_id: string; amount: number; row: StatementRow }[] = [];
+    for (const row of companyPaymentModal.outstandingInvoices) {
+      if (remaining <= 0) break;
+      const alloc = round2(Math.min(remaining, row.balance));
+      if (alloc <= 0) continue;
+      allocations.push({ invoice_id: row.inv.id, amount: alloc, row });
+      remaining = round2(remaining - alloc);
+    }
+
+    const { error: payErr } = await supabase.from('invoice_payments').insert(
+      allocations.map(a => ({
+        invoice_id: a.invoice_id,
+        amount: a.amount,
+        payment_date: companyPaymentForm.payment_date,
+        payment_mode: companyPaymentForm.payment_mode,
+        reference: companyPaymentForm.reference || null,
+        remarks: companyPaymentForm.remarks || null,
+        customer_payment_id: header.id,
+      })),
+    );
+    if (payErr) { show(payErr.message, 'error'); setRecordingCompanyPayment(false); return; }
+
+    for (const a of allocations) {
+      const inv = a.row.inv;
+      const payable = inv.discount_enabled ? Number(inv.final_payable_amount ?? inv.grand_total) : Number(inv.grand_total);
+      const newReceived = round2(Number(inv.amount_received) + a.amount);
+      const newBalance = round2(payable - newReceived);
+      const newStatus: InvoiceStatus = newBalance <= 0 ? 'Paid' : 'Partially Paid';
+      const { error: invErr } = await supabase.from('invoices').update({
+        amount_received: newReceived,
+        balance_amount: Math.max(0, newBalance),
+        invoice_status: newStatus,
+        payment_status: newStatus,
+      }).eq('id', inv.id);
+      if (invErr) show(invErr.message, 'error');
+    }
+
+    show(`Payment of ${formatCurrency(amt)} recorded and allocated across ${allocations.length} invoice${allocations.length === 1 ? '' : 's'}.`, 'success');
+    setCompanyPaymentModal(null);
+    setRecordingCompanyPayment(false);
+    setCompanyPaymentForm({ amount: null, payment_date: todayISO(), payment_mode: 'Cash', reference: '', remarks: '' });
+    fetchAll();
   };
 
   const computeVehicleNumbersJoined = (inv: InvoiceWithRelations): string =>
@@ -1373,7 +1408,7 @@ export default function Invoices({ initialTab = 'list' }: InvoicesProps = {}) {
                 <button onClick={() => openEditDetails(i)} className="p-1.5 text-slate-500 hover:text-indigo-600 hover:bg-indigo-50 rounded-md" title="Edit Invoice Details"><FileEdit className="w-4 h-4" /></button>
                 <button onClick={() => sendEmail(i)} className="p-1.5 text-slate-500 hover:text-purple-600 hover:bg-purple-50 rounded-md" title="Email"><Mail className="w-4 h-4" /></button>
                 {i.invoice_status !== 'Cancelled' && i.invoice_status !== 'Paid' && (
-                  <button onClick={() => openPayment(i)} className="p-1.5 text-slate-500 hover:text-emerald-600 hover:bg-emerald-50 rounded-md" title="Record Payment"><IndianRupee className="w-4 h-4" /></button>
+                  <button onClick={() => i.customer_id && openCompanyPayment(i.customer_id)} className="p-1.5 text-slate-500 hover:text-emerald-600 hover:bg-emerald-50 rounded-md" title="Record payment received from this customer/company and automatically adjust outstanding invoices."><IndianRupee className="w-4 h-4" /></button>
                 )}
               </>
             )}
@@ -1912,8 +1947,8 @@ export default function Invoices({ initialTab = 'list' }: InvoicesProps = {}) {
                       <Mail className="w-4 h-4" />{emailSending ? 'Sending...' : 'Email'}
                     </Button>
                     {viewInvoiceData.invoice.invoice_status !== 'Cancelled' && viewInvoiceData.invoice.invoice_status !== 'Paid' && (
-                      <Button onClick={() => { openPayment(viewInvoiceData.invoice); setViewInvoice(null); }}>
-                        <IndianRupee className="w-4 h-4" />Record Payment
+                      <Button onClick={() => { if (viewInvoiceData.invoice.customer_id) openCompanyPayment(viewInvoiceData.invoice.customer_id); setViewInvoice(null); }} title="Record payment received from this customer/company and automatically adjust outstanding invoices.">
+                        <IndianRupee className="w-4 h-4" />Record Company Payment
                       </Button>
                     )}
                   </>
@@ -2115,60 +2150,77 @@ export default function Invoices({ initialTab = 'list' }: InvoicesProps = {}) {
         )}
       </Modal>
 
-      {/* Payment Modal */}
+      {/* Record Company Payment — customer-wise, auto-allocated FIFO across every
+          outstanding invoice (oldest first), not a single selected invoice. */}
       <Modal
-        open={!!paymentModal}
-        onClose={() => setPaymentModal(null)}
-        title="Record Payment"
+        open={!!companyPaymentModal}
+        onClose={() => setCompanyPaymentModal(null)}
+        title="Record Company Payment"
         size="sm"
         closeOnBackdropClick={false}
         footer={
           <>
-            <Button variant="secondary" onClick={() => setPaymentModal(null)}>{t('cancel')}</Button>
-            <Button onClick={recordPayment} disabled={recordingPayment}><CheckCircle2 className="w-4 h-4" />{recordingPayment ? 'Saving...' : 'Save Payment'}</Button>
+            <Button variant="secondary" onClick={() => setCompanyPaymentModal(null)}>{t('cancel')}</Button>
+            <Button onClick={recordCompanyPayment} disabled={recordingCompanyPayment}><CheckCircle2 className="w-4 h-4" />{recordingCompanyPayment ? 'Saving...' : 'Save Payment'}</Button>
           </>
         }
       >
-        {paymentModal && (
+        {companyPaymentModal && (
           <div className="space-y-4">
             <div className="p-3 bg-slate-50 rounded-lg text-sm space-y-1">
-              <div className="flex justify-between"><span className="text-slate-500">Invoice:</span><span className="font-medium">{paymentModal.invoice_number}</span></div>
-              <div className="flex justify-between"><span className="text-slate-500">{paymentModal.discount_enabled ? 'Net Payable:' : 'Grand Total:'}</span><span>{formatCurrency(paymentModal.discount_enabled ? Number(paymentModal.final_payable_amount ?? paymentModal.grand_total) : Number(paymentModal.grand_total))}</span></div>
-              <div className="flex justify-between"><span className="text-slate-500">Received:</span><span className="text-emerald-600">{formatCurrency(paymentModal.amount_received)}</span></div>
-              <div className="flex justify-between"><span className="text-slate-500">Current Balance:</span><span className="text-red-600 font-medium">{formatCurrency(currentBalance)}</span></div>
+              <div className="flex justify-between"><span className="text-slate-500">Customer / Company:</span><span className="font-medium">{companyPaymentModal.customerName}</span></div>
+              <div className="flex justify-between"><span className="text-slate-500">Outstanding Invoices:</span><span className="font-medium">{companyPaymentModal.outstandingInvoices.length}</span></div>
+              <div className="flex justify-between"><span className="text-slate-500">Total Outstanding Balance:</span><span className="text-red-600 font-medium">{formatCurrency(companyPaymentModal.totalOutstanding)}</span></div>
             </div>
             <div className="grid grid-cols-2 gap-3">
-              <Field label="Amount" required>
-                <input type="number" step="0.01" className={inputClass()} value={paymentForm.amount ?? ''} onChange={e => setPaymentForm(f => ({ ...f, amount: e.target.value === '' ? null : Number(e.target.value) }))} />
+              <Field label="Amount Received" required>
+                <input type="number" step="0.01" min="0" className={inputClass()} value={companyPaymentForm.amount ?? ''} onChange={e => setCompanyPaymentForm(f => ({ ...f, amount: e.target.value === '' ? null : Number(e.target.value) }))} placeholder="Enter Amount Received" />
               </Field>
-              <Field label="Date" required>
-                <DatePicker value={paymentForm.payment_date} onChange={v => setPaymentForm(f => ({ ...f, payment_date: v }))} />
+              <Field label="Payment Date" required>
+                <DatePicker value={companyPaymentForm.payment_date} onChange={v => setCompanyPaymentForm(f => ({ ...f, payment_date: v }))} />
               </Field>
-              <Field label="Mode">
-                <select className={inputClass()} value={paymentForm.payment_mode} onChange={e => setPaymentForm(f => ({ ...f, payment_mode: e.target.value as PaymentMode }))}>
+              <Field label="Payment Mode">
+                <select className={inputClass()} value={companyPaymentForm.payment_mode} onChange={e => setCompanyPaymentForm(f => ({ ...f, payment_mode: e.target.value as PaymentMode }))}>
                   <option value="Cash">Cash</option>
                   <option value="UPI">UPI</option>
                   <option value="Bank Transfer">Bank Transfer</option>
                   <option value="Cheque">Cheque</option>
+                  <option value="NEFT">NEFT</option>
+                  <option value="RTGS">RTGS</option>
                   <option value="Other">Other</option>
                 </select>
               </Field>
-              <Field label="Reference No">
-                <input className={inputClass()} value={paymentForm.reference} onChange={e => setPaymentForm(f => ({ ...f, reference: e.target.value }))} placeholder="UPI Ref / Transaction ID / Cheque No" />
+              <Field label="Reference Number">
+                <input className={inputClass()} value={companyPaymentForm.reference} onChange={e => setCompanyPaymentForm(f => ({ ...f, reference: e.target.value }))} placeholder="UPI Ref / Transaction ID / Cheque No (optional)" />
               </Field>
-              <Field label="Remarks">
-                <input className={inputClass()} value={paymentForm.remarks} onChange={e => setPaymentForm(f => ({ ...f, remarks: e.target.value }))} />
-              </Field>
+              <div className="col-span-2">
+                <Field label="Notes">
+                  <input className={inputClass()} value={companyPaymentForm.remarks} onChange={e => setCompanyPaymentForm(f => ({ ...f, remarks: e.target.value }))} placeholder="Optional" />
+                </Field>
+              </div>
             </div>
-            {paymentForm.amount != null && paymentForm.amount > 0 && (
-              <div className="p-3 bg-blue-50 rounded-lg text-sm space-y-1 border border-blue-100">
-                <div className="flex justify-between"><span className="text-slate-500">Current Balance:</span><span className="font-medium">{formatCurrency(currentBalance)}</span></div>
-                <div className="flex justify-between"><span className="text-slate-500">New Balance:</span><span className={newBalanceAfterPayment <= 0 ? 'text-emerald-600 font-bold' : 'text-red-600 font-medium'}>{formatCurrency(Math.max(0, newBalanceAfterPayment))}</span></div>
-                {newBalanceAfterPayment <= 0 ? (
-                  <div className="text-xs text-emerald-600 font-medium pt-1">Invoice will be marked as PAID.</div>
-                ) : (
-                  <div className="text-xs text-amber-600 font-medium pt-1">Invoice will remain PARTIALLY PAID.</div>
-                )}
+            {companyPaymentForm.amount != null && companyPaymentForm.amount > 0 && (
+              <div className="p-3 bg-blue-50 rounded-lg text-sm space-y-1.5 border border-blue-100">
+                <div className="flex justify-between"><span className="text-slate-500">Total Outstanding:</span><span className="font-medium">{formatCurrency(companyPaymentModal.totalOutstanding)}</span></div>
+                <div className="flex justify-between"><span className="text-slate-500">Remaining Balance After Payment:</span><span className={newBalanceAfterCompanyPayment <= 0 ? 'text-emerald-600 font-bold' : 'text-red-600 font-medium'}>{formatCurrency(Math.max(0, newBalanceAfterCompanyPayment))}</span></div>
+                <div className="pt-1.5 border-t border-blue-100 space-y-1">
+                  <p className="text-xs font-bold uppercase tracking-wide text-slate-500">Auto-Allocation (oldest invoice first)</p>
+                  {(() => {
+                    let remaining = companyPaymentForm.amount ?? 0;
+                    return companyPaymentModal.outstandingInvoices.map(row => {
+                      const alloc = Math.max(0, Math.min(remaining, row.balance));
+                      remaining = Math.round((remaining - alloc) * 100) / 100;
+                      if (alloc <= 0) return null;
+                      const willBePaid = alloc >= row.balance - 0.01;
+                      return (
+                        <div key={row.inv.id} className="flex justify-between text-xs">
+                          <span className="text-slate-600">{row.inv.invoice_number} {willBePaid ? <span className="text-emerald-600 font-semibold">(Fully Paid)</span> : <span className="text-amber-600 font-semibold">(Partially Paid)</span>}</span>
+                          <span className="font-medium text-slate-800 tabular-nums">{formatCurrency(alloc)}</span>
+                        </div>
+                      );
+                    });
+                  })()}
+                </div>
               </div>
             )}
           </div>

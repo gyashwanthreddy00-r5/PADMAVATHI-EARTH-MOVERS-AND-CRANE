@@ -4,8 +4,8 @@ import { useLang } from '@/context/LangContext';
 import { useToast } from '@/components/ui/Toast';
 import { DataTable, type Column } from '@/components/ui/DataTable';
 import { Modal, ConfirmDialog, StatusBadge, Button, Field, inputClass, LoadingSpinner } from '@/components/ui/common';
-import { Plus, Pencil, Trash2, Download } from 'lucide-react';
-import { sanitizePhone, phoneValidationError } from '@/lib/utils';
+import { Plus, Pencil, Trash2, Download, X } from 'lucide-react';
+import { sanitizePhone, phoneValidationError, emailValidationError, parseCcEmails } from '@/lib/utils';
 import { exportToXlsxWithCompany } from '@/lib/exportXlsx';
 import { useSettings } from '@/context/SettingsContext';
 import type { Customer } from '@/types';
@@ -22,9 +22,13 @@ export default function Customers() {
   const [deleteId, setDeleteId] = useState<string | null>(null);
 
   const [form, setForm] = useState<Partial<Customer>>({
-    name: '', address: '', phone: '', email: '', gstin: '', billing_details: '',
+    name: '', address: '', phone: '', email: '', cc_emails: '', gstin: '', billing_details: '',
     state: '', state_code: '', payment_terms: '', shipping_address: '', active: true,
   });
+  // Draft text for the "add one CC email" input - the actual list lives in
+  // form.cc_emails (one comma-separated string, matching the DB column), this
+  // is just the not-yet-added text the user is currently typing.
+  const [ccDraft, setCcDraft] = useState('');
 
   const fetchCustomers = async () => {
     setLoading(true);
@@ -35,13 +39,32 @@ export default function Customers() {
 
   useEffect(() => { fetchCustomers(); }, []);
 
-  const openAdd = () => { setEditing(null); setForm({ name: '', address: '', phone: '', email: '', gstin: '', billing_details: '', state: '', state_code: '', payment_terms: '', shipping_address: '', active: true }); setModalOpen(true); };
-  const openEdit = (c: Customer) => { setEditing(c); setForm(c); setModalOpen(true); };
+  const openAdd = () => { setEditing(null); setForm({ name: '', address: '', phone: '', email: '', cc_emails: '', gstin: '', billing_details: '', state: '', state_code: '', payment_terms: '', shipping_address: '', active: true }); setCcDraft(''); setModalOpen(true); };
+  const openEdit = (c: Customer) => { setEditing(c); setForm(c); setCcDraft(''); setModalOpen(true); };
+
+  const ccEmails = parseCcEmails(form.cc_emails);
+
+  function addCcEmail() {
+    const email = ccDraft.trim();
+    if (!email) return;
+    const err = emailValidationError(email, true);
+    if (err) { show(err, 'error'); return; }
+    if (ccEmails.some(e => e.toLowerCase() === email.toLowerCase())) { setCcDraft(''); return; }
+    setForm(f => ({ ...f, cc_emails: [...ccEmails, email].join(', ') }));
+    setCcDraft('');
+  }
+  function removeCcEmail(email: string) {
+    const updated = ccEmails.filter(e => e !== email);
+    setForm(f => ({ ...f, cc_emails: updated.length ? updated.join(', ') : null }));
+  }
 
   const save = async () => {
     if (!form.name) { show(t('required'), 'error'); return; }
     const phoneErr = phoneValidationError(form.phone ?? '', false);
     if (phoneErr) { show(phoneErr, 'error'); return; }
+    const emailErr = emailValidationError(form.email ?? '', false);
+    if (emailErr) { show(emailErr, 'error'); return; }
+    if (ccDraft.trim()) { show('You have an unadded CC email address — click "Add CC" or clear the field before saving.', 'error'); return; }
     setSaving(true);
     if (editing) {
       const { error } = await supabase.from('customers').update(form).eq('id', editing.id);
@@ -121,8 +144,35 @@ export default function Customers() {
             <input className={inputClass()} type="tel" maxLength={10} value={form.phone ?? ''} onChange={e => setForm(f => ({ ...f, phone: sanitizePhone(e.target.value) }))} placeholder="10-digit mobile number" />
           </Field>
           <Field label={t('email2')}>
-            <input className={inputClass()} value={form.email ?? ''} onChange={e => setForm(f => ({ ...f, email: e.target.value }))} />
+            <input className={inputClass()} type="email" value={form.email ?? ''} onChange={e => setForm(f => ({ ...f, email: e.target.value }))} />
           </Field>
+          <div className="sm:col-span-2">
+            <Field label={t('ccEmails')} hint="Copies of every invoice email are also sent to these addresses.">
+              <div className="flex gap-2">
+                <input
+                  className={inputClass()}
+                  type="email"
+                  value={ccDraft}
+                  onChange={e => setCcDraft(e.target.value)}
+                  onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); addCcEmail(); } }}
+                  placeholder="e.g. accounts@example.com"
+                />
+                <Button type="button" variant="outline" size="sm" onClick={addCcEmail}><Plus className="w-3.5 h-3.5" />Add CC</Button>
+              </div>
+              {ccEmails.length > 0 && (
+                <div className="flex flex-wrap gap-1.5 mt-2">
+                  {ccEmails.map(email => (
+                    <span key={email} className="inline-flex items-center gap-1 pl-2.5 pr-1.5 py-1 rounded-full text-xs font-medium bg-blue-50 text-blue-700 border border-blue-100">
+                      {email}
+                      <button type="button" onClick={() => removeCcEmail(email)} className="p-0.5 hover:bg-blue-100 rounded-full" title="Remove">
+                        <X className="w-3 h-3" />
+                      </button>
+                    </span>
+                  ))}
+                </div>
+              )}
+            </Field>
+          </div>
           <Field label={t('gstin')}>
             <input className={inputClass()} value={form.gstin ?? ''} onChange={e => setForm(f => ({ ...f, gstin: e.target.value.toUpperCase() }))} />
           </Field>

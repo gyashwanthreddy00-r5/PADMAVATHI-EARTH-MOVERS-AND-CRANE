@@ -1,15 +1,17 @@
 import { useState, useEffect, useMemo } from 'react';
 import { supabase } from '@/lib/supabase';
 import { useToast } from '@/components/ui/Toast';
-import { Field, Button, inputClass, LoadingSpinner, ConfirmDialog } from '@/components/ui/common';
+import { Field, Button, inputClass, LoadingSpinner, ConfirmDialog, Modal } from '@/components/ui/common';
 import { SearchableSelect } from '@/components/ui/SearchableSelect';
 import { DatePicker } from '@/components/ui/DatePicker';
-import { formatCurrency, formatDate, todayISO, classNames, amountInWords, buildInvoiceLineDescription } from '@/lib/utils';
+import { formatCurrency, formatDate, todayISO, classNames, amountInWords } from '@/lib/utils';
 import { findRateMasterForVehicle } from '@/lib/rateLookup';
 import { computeBillingLineAmounts, round2 } from '@/lib/gstBillingCalc';
 import { printGstBillingData, exportGstBillingDataToExcel } from '@/lib/gstBillingExport';
-import { Plus, Trash2, Pencil, AlertTriangle, ArrowLeft, Printer, Download, Save, X, ChevronRight } from 'lucide-react';
-import type { Customer, RateMaster, InvoiceSettings, PoRateType, Vehicle, Invoice, InvoiceBillingLine } from '@/types';
+import { getEffectivePoStatus, round2 as poRound2 } from '@/lib/poOrderManagement';
+import { PoRequestModal } from '@/components/PoRequestModal';
+import { Plus, Trash2, Pencil, AlertTriangle, ArrowLeft, Printer, Download, Save, X, ChevronRight, Mail } from 'lucide-react';
+import type { Customer, RateMaster, InvoiceSettings, PoRateType, Vehicle, Invoice, InvoiceBillingLine, PurchaseOrder, PurchaseOrderStatus } from '@/types';
 
 type VehicleLite = Pick<Vehicle, 'id' | 'registration_number' | 'tons' | 'type' | 'capacity'>;
 type Step = 'select' | 'entries';
@@ -17,6 +19,132 @@ type Step = 'select' | 'entries';
 const CGST_PERCENT = 9;
 const SGST_PERCENT = 9;
 const IGST_PERCENT = 18;
+
+// Description of Services labels for the generated Tax Invoice PDF — capacity/type
+// only, never a registration number (multiple vehicles of the same capacity are
+// meant to be grouped into one row; see buildInvoiceItems below).
+function craneDescriptionLabel(vehicleType: string, ton: number | null): string {
+  if (vehicleType === 'JCB') return 'JCB';
+  if (ton != null) {
+    const tonNum = Number(ton);
+    const tonStr = Number.isInteger(tonNum) ? String(tonNum) : String(round2(tonNum));
+    return `${tonStr} TON CRANE`;
+  }
+  return vehicleType ? vehicleType.toUpperCase() : 'CRANE';
+}
+
+interface GeneratedInvoiceItem {
+  description: string;
+  quantity: number;
+  rate: number;
+  unit: string;
+  amount: number;
+  calculation_details: string;
+}
+
+/**
+ * Builds the Description of Services rows for the generated Tax Invoice, grouped by
+ * Capacity + Billing Type + Hour Stage — never one row per working-day entry, and
+ * never a registration number in the description. Quantities/rates/amounts are
+ * derived entirely from each line's own already-computed first/second hour amounts
+ * (themselves sourced from Rate Master via computeBillingLineAmounts when the line
+ * was added) — nothing here is hardcoded.
+ */
+function buildInvoiceItems(lines: InvoiceBillingLine[]): GeneratedInvoiceItem[] {
+  interface HourlyGroup { label: string; firstQty: number; firstAmt: number; firstRates: Set<number>; firstRateSample: number; secondQty: number; secondAmt: number; secondRates: Set<number>; secondRateSample: number; }
+  interface FlatGroup { label: string; qty: number; amt: number; rates: Set<number>; rateSample: number; unit: string; }
+
+  const hourlyGroups = new Map<string, HourlyGroup>();
+  const flatGroups = new Map<string, FlatGroup>();
+
+  // Quantities accumulate at full precision (never rounded mid-way) so that, when a
+  // group's rate needs to be derived from amount/quantity (see pickRate below), it
+  // reproduces the exact Rate Master rate instead of drifting off it (e.g. 900.90
+  // instead of 900.00) purely because an intermediate quantity got rounded to 2dp
+  // before being used as a divisor.
+  for (const l of lines) {
+    const label = craneDescriptionLabel(l.vehicle_type, l.ton);
+    if (l.rate_type === 'Hourly') {
+      const totalHoursLine = (Number(l.hours) || 0) + (Number(l.minutes) || 0) / 60;
+      const firstQty = Math.min(totalHoursLine, 1);
+      const secondQty = Math.max(totalHoursLine - 1, 0);
+      const r1 = Number(l.first_hour_rate) || 0;
+      const r2 = Number(l.second_hour_rate) || 0;
+      const g = hourlyGroups.get(label) ?? {
+        label, firstQty: 0, firstAmt: 0, firstRates: new Set<number>(), firstRateSample: r1,
+        secondQty: 0, secondAmt: 0, secondRates: new Set<number>(), secondRateSample: r2,
+      };
+      g.firstQty += firstQty;
+      g.firstAmt = round2(g.firstAmt + (Number(l.first_hour_amount) || 0));
+      g.firstRates.add(r1);
+      g.secondQty += secondQty;
+      g.secondAmt = round2(g.secondAmt + (Number(l.second_hour_amount) || 0));
+      g.secondRates.add(r2);
+      hourlyGroups.set(label, g);
+    } else if (l.rate_type === 'Monthly') {
+      // Monthly — one row per capacity, described as "{label} MONTHLY RENTAL"
+      // with a MONTH unit and decimal quantity (e.g. 1.50 MONTH), never split
+      // into First/Second Hour like Hourly or plain like Daily.
+      const monthLabel = `${label} MONTHLY RENTAL`;
+      const months = Math.max(0.01, Number(l.days) || 1);
+      const monthlyRate = Number(l.first_hour_rate) || 0;
+      const amt = round2(monthlyRate * months);
+      const g = flatGroups.get(monthLabel) ?? { label: monthLabel, qty: 0, amt: 0, rates: new Set<number>(), rateSample: monthlyRate, unit: 'MONTH' };
+      g.qty += months;
+      g.amt = round2(g.amt + amt);
+      g.rates.add(monthlyRate);
+      flatGroups.set(monthLabel, g);
+    } else {
+      // Daily — one row per capacity, no First/Second Hour split.
+      const days = Math.max(1, Number(l.days) || 1);
+      const dayRate = Number(l.first_hour_rate) || 0;
+      const amt = round2(dayRate * days);
+      const g = flatGroups.get(label) ?? { label, qty: 0, amt: 0, rates: new Set<number>(), rateSample: dayRate, unit: 'DAY' };
+      g.qty += days;
+      g.amt = round2(g.amt + amt);
+      g.rates.add(dayRate);
+      flatGroups.set(label, g);
+    }
+  }
+
+  // The rate shown is always the exact Rate Master value snapshotted on the line(s) -
+  // never a derived/rounded figure - as long as every line in the group agrees on it
+  // (the normal case, since Rate Master is keyed by capacity). Only if lines in the
+  // same capacity group genuinely disagree (e.g. the rate changed between two working
+  // dates) does this fall back to an amount/quantity blend, using the full-precision
+  // quantity so it still reproduces the true rate exactly when possible.
+  const pickRate = (rates: Set<number>, amt: number, qty: number, sample: number): number =>
+    rates.size <= 1 ? sample : (qty > 0 ? round2(amt / qty) : sample);
+
+  const items: GeneratedInvoiceItem[] = [];
+  hourlyGroups.forEach(g => {
+    if (g.firstQty > 0) {
+      const rate = pickRate(g.firstRates, g.firstAmt, g.firstQty, g.firstRateSample);
+      const qty = round2(g.firstQty);
+      items.push({
+        description: `${g.label} FIRST HOUR`, quantity: qty, rate, unit: 'HR', amount: g.firstAmt,
+        calculation_details: `${g.label} First Hour: ${qty.toFixed(2)} hr x ${formatCurrency(rate)} = ${formatCurrency(g.firstAmt)}`,
+      });
+    }
+    if (g.secondQty > 0) {
+      const rate = pickRate(g.secondRates, g.secondAmt, g.secondQty, g.secondRateSample);
+      const qty = round2(g.secondQty);
+      items.push({
+        description: `${g.label} SECOND HOUR`, quantity: qty, rate, unit: 'HR', amount: g.secondAmt,
+        calculation_details: `${g.label} Second Hour: ${qty.toFixed(2)} hr x ${formatCurrency(rate)} = ${formatCurrency(g.secondAmt)}`,
+      });
+    }
+  });
+  flatGroups.forEach(g => {
+    const rate = pickRate(g.rates, g.amt, g.qty, g.rateSample);
+    const qty = round2(g.qty);
+    items.push({
+      description: g.label, quantity: qty, rate, unit: g.unit, amount: g.amt,
+      calculation_details: `${g.label}: ${qty} ${g.unit} x ${formatCurrency(rate)} = ${formatCurrency(g.amt)}`,
+    });
+  });
+  return items;
+}
 
 export default function GstBillingEntry({ invoiceId, onDone }: { invoiceId?: string | null; onDone: () => void }) {
   const { show } = useToast();
@@ -36,6 +164,23 @@ export default function GstBillingEntry({ invoiceId, onDone }: { invoiceId?: str
   const [customerId, setCustomerId] = useState('');
   const [placeOfWork, setPlaceOfWork] = useState('');
   const [previewInvoiceNumber, setPreviewInvoiceNumber] = useState('');
+
+  // PO Orders integration — optional, isolated feature. When the selected customer has
+  // an Active Purchase Order, this dropdown lets the user draw the invoice's taxable
+  // amount against it; if none is selected, invoice generation works exactly as before.
+  const [availablePos, setAvailablePos] = useState<PurchaseOrder[]>([]);
+  const [selectedPoId, setSelectedPoId] = useState('');
+  // When resuming an invoice that already has a utilization record, this holds that
+  // record's PO id + amount - used only to compute the correct "available headroom"
+  // for the PO-exceeded check below (a resumed invoice's own prior deduction is part
+  // of its own room, not a competing use of the PO's balance).
+  const [existingPoUtilization, setExistingPoUtilization] = useState<{ poId: string; amount: number } | null>(null);
+  // Shown after a successful save when the invoice's taxable amount exceeded the
+  // selected PO's available headroom - the invoice itself is never blocked or
+  // partially deducted (see proceedSaveInvoice); this is purely informational and
+  // offers "Request New PO" as the next step.
+  const [poInsufficientWarning, setPoInsufficientWarning] = useState<{ po: PurchaseOrder; headroom: number; invoiceAmount: number } | null>(null);
+  const [poRequestModalOpen, setPoRequestModalOpen] = useState(false);
 
   // activeInvoice is null until the user's first "Capture Trip" click actually
   // inserts a real invoice row - merely opening/selecting a customer/vehicle
@@ -158,6 +303,53 @@ export default function GstBillingEntry({ invoiceId, onDone }: { invoiceId?: str
     return () => { cancelled = true; };
   }, [customerId, activeInvoice]);
 
+  // PO Orders integration — fetch this customer's Purchase Orders and offer only the
+  // ones currently Active (status re-derived from the raw fields, not the possibly
+  // stale stored column) for selection. Resets the selection whenever the customer
+  // changes so a PO never carries over to a different customer's invoice.
+  //
+  // Keyed on `invoiceId` (a stable prop, only set when RESUMING an existing invoice)
+  // rather than `activeInvoice?.id` deliberately — activeInvoice only comes into
+  // existence partway through a brand-new invoice (on its first captured line), and
+  // keying on it here would re-run this effect at that moment and wipe out a PO the
+  // user had already picked in the 'select' step, before any utilization row exists
+  // to restore it from.
+  useEffect(() => {
+    setSelectedPoId('');
+    setExistingPoUtilization(null);
+    if (!customerId) { setAvailablePos([]); return; }
+    let cancelled = false;
+    (async () => {
+      const { data } = await supabase.from('purchase_orders').select('*').eq('customer_id', customerId);
+      if (cancelled) return;
+      const allPos = (data ?? []) as PurchaseOrder[];
+      let active = allPos.filter(p => getEffectivePoStatus(p) === 'Active');
+
+      // Resuming an existing invoice that already has a PO utilization record —
+      // restore that exact selection, even if the PO itself is no longer Active
+      // (e.g. it has since become Completed), so simply reopening and re-saving the
+      // invoice doesn't look like "no PO selected" and reverse a still-correct
+      // deduction (see applyPoUtilization's reconciliation logic below).
+      if (invoiceId) {
+        const { data: utilRows } = await supabase.from('purchase_order_utilization').select('purchase_order_id, utilized_amount').eq('invoice_id', invoiceId);
+        if (cancelled) return;
+        const linkedRow = (utilRows ?? [])[0] as { purchase_order_id: string; utilized_amount: number } | undefined;
+        if (linkedRow) {
+          const linkedPo = allPos.find(p => p.id === linkedRow.purchase_order_id);
+          if (linkedPo && !active.some(p => p.id === linkedRow.purchase_order_id)) active = [...active, linkedPo];
+          setAvailablePos(active);
+          setSelectedPoId(linkedRow.purchase_order_id);
+          setExistingPoUtilization({ poId: linkedRow.purchase_order_id, amount: Number(linkedRow.utilized_amount) || 0 });
+          return;
+        }
+      }
+      setAvailablePos(active);
+    })();
+    return () => { cancelled = true; };
+  }, [customerId, invoiceId]);
+
+  const selectedPo = availablePos.find(p => p.id === selectedPoId) ?? null;
+
   function goBack() {
     onDone();
   }
@@ -187,11 +379,14 @@ export default function GstBillingEntry({ invoiceId, onDone }: { invoiceId?: str
 
   const selectedEntVehicle = entVehicleId ? vehiclesById.get(entVehicleId) ?? null : null;
   const entRate = (entDate && entVehicleId) ? rateFor(entVehicleId, entDate) : null;
-  const entDaysNum = Math.max(1, Number(entDays) || 1);
+  // Shared by Full Day's "No. of Days" and Monthly's "Quantity (Months)" - Monthly
+  // allows decimals (1.5, 3.25), Daily is whole numbers by convention but nothing here
+  // forces that since Math.max never truncates.
+  const entDaysNum = Math.max(entRateType === 'Monthly' ? 0.01 : 1, Number(entDays) || 1);
   const entCalc = (entDate && entVehicleId)
-    ? computeBillingLineAmounts(entRateType, entRateType === 'Daily' ? 0 : Number(entHours) || 0, entRateType === 'Daily' ? 0 : Number(entMinutes) || 0, entRate, entDaysNum)
+    ? computeBillingLineAmounts(entRateType, entRateType === 'Hourly' ? Number(entHours) || 0 : 0, entRateType === 'Hourly' ? Number(entMinutes) || 0 : 0, entRate, entDaysNum)
     : null;
-  const canSaveLine = !!(entDate && entVehicleId && (entRateType === 'Daily' ? Number(entDays) > 0 : (entHours !== '' || entMinutes !== '')) && entCalc?.rateFound);
+  const canSaveLine = !!(entDate && entVehicleId && (entRateType !== 'Hourly' ? Number(entDays) > 0 : (entHours !== '' || entMinutes !== '')) && entCalc?.rateFound);
 
   async function saveLine() {
     if (savingLine) return;
@@ -245,9 +440,9 @@ export default function GstBillingEntry({ invoiceId, onDone }: { invoiceId?: str
       justCreatedInvoice = true;
     }
 
-    const hours = entRateType === 'Daily' ? 0 : Number(entHours) || 0;
-    const minutes = entRateType === 'Daily' ? 0 : Number(entMinutes) || 0;
-    const days = entRateType === 'Daily' ? entDaysNum : 1;
+    const hours = entRateType === 'Hourly' ? Number(entHours) || 0 : 0;
+    const minutes = entRateType === 'Hourly' ? Number(entMinutes) || 0 : 0;
+    const days = entRateType !== 'Hourly' ? entDaysNum : 1;
     const payload = {
       invoice_id: invoice.id,
       working_date: entDate,
@@ -375,83 +570,37 @@ export default function GstBillingEntry({ invoiceId, onDone }: { invoiceId?: str
     await supabase.from('invoice_items').delete().eq('invoice_id', invoice.id);
     const hsnSac = invoiceSettings?.hsn_sac || '997319';
     const items: { invoice_id: string; sl_no: number; description: string; hsn_sac: string; quantity: number; rate: number; unit: string; amount: number; batha: number; calculation_details: string }[] = [];
-    currentLines.forEach(l => {
-      if (l.rate_type !== 'Daily') {
-        // Hourly — one line per entry, rental only. Operator Batha is no longer
-        // per-entry; see the single invoice-level line pushed below.
-        const { description, calculation_details } = buildInvoiceLineDescription({
-          rate_type: l.rate_type,
-          total_hours: l.hours + l.minutes / 60,
-          rental_amount: l.total_amount,
-          trip_date: l.working_date,
-          work_date: l.working_date,
-          place_of_work: placeOfWork.trim() || '',
-          capacity_tons: l.ton != null ? String(l.ton) : null,
-          first_hour_rate: l.first_hour_rate,
-          second_hour_rate: l.second_hour_rate,
-          weekly_rate_snapshot: null,
-          daily_rate_snapshot: null,
-          monthly_rate_snapshot: null,
-          vehicle: { registration_number: l.vehicle_number, type: l.vehicle_type, capacity: l.ton },
-        }, { omitDate: true });
-        items.push({
-          invoice_id: invoice.id, sl_no: items.length + 1, description,
-          hsn_sac: hsnSac, quantity: 1, rate: l.total_amount,
-          unit: 'nos', amount: l.total_amount, batha: 0,
-          calculation_details,
-        });
-        return;
-      }
-
-      // Full Day: Rental Amount = No. of Days x per-day Rate (the Rate itself is never
-      // multiplied/changed). Operator Batha is no longer per-entry; see the single
-      // invoice-level line pushed below.
-      const days = Math.max(1, Number(l.days) || 1);
-      const dayRate = Number(l.first_hour_rate) || 0;
-      const rentalAmount = round2(dayRate * days);
-
-      const { description, calculation_details } = buildInvoiceLineDescription({
-        rate_type: l.rate_type,
-        total_hours: 0,
-        rental_amount: rentalAmount,
-        trip_date: l.working_date,
-        work_date: l.working_date,
-        place_of_work: placeOfWork.trim() || '',
-        capacity_tons: l.ton != null ? String(l.ton) : null,
-        first_hour_rate: l.first_hour_rate,
-        second_hour_rate: l.second_hour_rate,
-        weekly_rate_snapshot: null,
-        daily_rate_snapshot: l.first_hour_rate,
-        monthly_rate_snapshot: null,
-        vehicle: { registration_number: l.vehicle_number, type: l.vehicle_type, capacity: l.ton },
-      }, { omitDate: true });
-
+    // Description of Services — grouped by Capacity + Billing Type + Hour Stage
+    // (never one row per working-day entry, never a registration number in the
+    // description); see buildInvoiceItems above. Operator Batha is invoice-level,
+    // not per-entry; see the single line pushed below.
+    for (const gi of buildInvoiceItems(currentLines)) {
       items.push({
-        invoice_id: invoice.id, sl_no: items.length + 1, description,
-        hsn_sac: hsnSac, quantity: days, rate: dayRate,
-        unit: 'day', amount: rentalAmount, batha: 0,
-        calculation_details,
+        invoice_id: invoice.id, sl_no: items.length + 1, description: gi.description,
+        hsn_sac: hsnSac, quantity: gi.quantity, rate: gi.rate,
+        unit: gi.unit, amount: gi.amount, batha: 0,
+        calculation_details: gi.calculation_details,
       });
-    });
+    }
     if (up > 0) {
-      items.push({ invoice_id: invoice.id, sl_no: items.length + 1, description: 'UP & DOWN TRANSPORTATION CHARGES', hsn_sac: invoiceSettings?.hsn_sac || '997319', quantity: 1, rate: up, unit: 'nos', amount: up, batha: 0, calculation_details: `Up & Down Transportation: ${formatCurrency(up)}` });
+      items.push({ invoice_id: invoice.id, sl_no: items.length + 1, description: 'UP AND DOWN TRANSPORTATION CHARGES', hsn_sac: invoiceSettings?.hsn_sac || '997319', quantity: 1, rate: up, unit: 'NOS', amount: up, batha: 0, calculation_details: `Up and Down Transportation: ${formatCurrency(up)}` });
     }
     if (operatorBatha > 0) {
       items.push({
         invoice_id: invoice.id, sl_no: items.length + 1, description: 'OPERATOR BATHA',
         hsn_sac: hsnSac, quantity: operatorBathaQuantityNum, rate: operatorBathaRateNum,
-        unit: 'nos', amount: operatorBatha, batha: operatorBatha,
+        unit: 'NOS', amount: operatorBatha, batha: operatorBatha,
         calculation_details: `Operator Batha: ${operatorBathaQuantityNum} x ${formatCurrency(operatorBathaRateNum)} = ${formatCurrency(operatorBatha)}`,
       });
     }
     if (additional > 0) {
-      items.push({ invoice_id: invoice.id, sl_no: items.length + 1, description: additionalDescription.trim() || 'ADDITIONAL CHARGES', hsn_sac: invoiceSettings?.hsn_sac || '997319', quantity: 1, rate: additional, unit: 'nos', amount: additional, batha: 0, calculation_details: `Additional Charges: ${formatCurrency(additional)}` });
+      items.push({ invoice_id: invoice.id, sl_no: items.length + 1, description: (additionalDescription.trim() || 'ADDITIONAL CHARGES').toUpperCase(), hsn_sac: invoiceSettings?.hsn_sac || '997319', quantity: 1, rate: additional, unit: 'NOS', amount: additional, batha: 0, calculation_details: `Additional Charges: ${formatCurrency(additional)}` });
     }
     if (discount > 0) {
       // Shown as its own negative line so the printed invoice explains why the Total
       // (already net of this discount via taxable_amount) is lower than the sum of
       // the positive lines above it.
-      items.push({ invoice_id: invoice.id, sl_no: items.length + 1, description: 'DISCOUNT', hsn_sac: invoiceSettings?.hsn_sac || '997319', quantity: 1, rate: -discount, unit: 'nos', amount: -discount, batha: 0, calculation_details: `Discount: -${formatCurrency(discount)}` });
+      items.push({ invoice_id: invoice.id, sl_no: items.length + 1, description: 'DISCOUNT', hsn_sac: invoiceSettings?.hsn_sac || '997319', quantity: 1, rate: -discount, unit: 'NOS', amount: -discount, batha: 0, calculation_details: `Discount: -${formatCurrency(discount)}` });
     }
     if (items.length > 0) {
       const { error: itemsErr } = await supabase.from('invoice_items').insert(items);
@@ -460,15 +609,139 @@ export default function GstBillingEntry({ invoiceId, onDone }: { invoiceId?: str
     return true;
   }
 
-  async function saveInvoice() {
+  function saveInvoice() {
     if (!activeInvoice) return;
     if (lines.length === 0) { show('Please add at least one billing entry before saving the invoice.', 'error'); return; }
+    // PO Orders integration — the balance check MUST happen BEFORE any save/finalize
+    // write, not after. If the selected PO's available headroom is insufficient, we
+    // stop here and ask for confirmation via poInsufficientWarning; proceedSaveInvoice
+    // (the only place that writes invoice_status: 'Generated'/applies PO utilization)
+    // is never called until the user explicitly clicks Continue in that dialog - so an
+    // unconfirmed insufficient-balance attempt never finalizes/saves anything. On a
+    // resumed invoice that already utilized this same PO, that prior amount is added
+    // back as headroom — it's this invoice's own room, not a competing deduction (see
+    // applyPoUtilization's reconciliation logic).
+    if (selectedPo) {
+      const priorOwnAmount = existingPoUtilization?.poId === selectedPo.id ? existingPoUtilization.amount : 0;
+      const availableHeadroom = poRound2(selectedPo.remaining_amount + priorOwnAmount);
+      if (totals.taxable > availableHeadroom) {
+        setPoInsufficientWarning({ po: selectedPo, headroom: availableHeadroom, invoiceAmount: totals.taxable });
+        return;
+      }
+    }
+    void proceedSaveInvoice({});
+  }
+
+  /** "Continue" on the PO Balance Insufficient confirmation — the only path that
+   *  finalizes/saves the invoice despite an insufficient PO balance; skips the PO
+   *  deduction (never partial, never an incorrect utilization row). */
+  function confirmSaveDespiteInsufficientPo() {
+    const warning = poInsufficientWarning;
+    if (!warning) return;
+    setPoInsufficientWarning(null);
+    void proceedSaveInvoice({ skipPoDeduction: true, insufficientPo: warning.po });
+  }
+
+  /** Cancel/close on the PO Balance Insufficient confirmation — nothing has been
+   *  saved, so this only dismisses the dialog and leaves the user on the entries
+   *  screen to adjust the invoice or PO selection; it must never navigate away. */
+  function cancelInsufficientPoWarning() {
+    setPoInsufficientWarning(null);
+  }
+
+  async function proceedSaveInvoice(opts: { skipPoDeduction?: boolean; insufficientPo?: PurchaseOrder }) {
+    if (!activeInvoice) return;
     setSavingInvoice(true);
     const saved = await syncInvoiceTotals(lines, { billDate: billDateDraft || null, finalize: true });
     setSavingInvoice(false);
     if (!saved) return;
-    show('Invoice saved.', 'success');
+    // Only on a successful save: show the toast, then redirect to Customer Invoices so
+    // the new invoice is visible in the list immediately - never redirect on failure.
+    show('Invoice Saved Successfully.', 'success');
+    if (opts.skipPoDeduction) {
+      // User confirmed Continue despite insufficient PO balance - do NOT deduct, do
+      // NOT touch any existing purchase_order_utilization row for this invoice. The
+      // invoice itself still saves in full with all its own amounts unchanged.
+      onDone();
+      return;
+    }
+    // Always reconciles (not only when a PO is currently selected) so that removing
+    // a previously-selected PO on a resumed invoice correctly reverses its old
+    // deduction too - see applyPoUtilization's doc comment.
+    await applyPoUtilization(selectedPo?.id ?? null, totals.taxable, activeInvoice.id, activeInvoice.invoice_number ?? '', billDateDraft || activeInvoice.invoice_date || todayISO());
     onDone();
+  }
+
+  /**
+   * Deducts this invoice's taxable amount from the selected PO's remaining balance and
+   * logs one po_utilization row - called only AFTER the invoice itself has already been
+   * saved successfully. Never throws: per spec, a PO update failure must never undo or
+   * invalidate an already-saved invoice, so any error here is surfaced as a standalone
+   * warning toast instead of being allowed to affect the caller's success path.
+   */
+  /** Adds `delta` (positive or negative) to one PO's utilized/remaining amount and
+   *  recomputes its status - the single place that ever mutates a PO's running
+   *  balance, so every caller stays consistent. */
+  async function adjustPoBalance(poId: string, delta: number): Promise<number> {
+    const { data: poRow, error } = await supabase.from('purchase_orders').select('*').eq('id', poId).single();
+    if (error || !poRow) throw error ?? new Error('Purchase Order not found');
+    const newUtilized = poRound2((Number(poRow.utilized_amount) || 0) + delta);
+    const newRemaining = poRound2((Number(poRow.grand_total) || 0) - newUtilized);
+    const status: PurchaseOrderStatus = getEffectivePoStatus({ remaining_amount: newRemaining, valid_to: poRow.valid_to });
+    const { error: updErr } = await supabase.from('purchase_orders').update({ utilized_amount: newUtilized, remaining_amount: newRemaining, status, updated_at: new Date().toISOString() }).eq('id', poId);
+    if (updErr) throw updErr;
+    return newRemaining;
+  }
+
+  /**
+   * Reconciles this invoice's PO utilization to match its CURRENT selected PO and
+   * taxable amount - called after every successful save, not just the first one.
+   * GST invoices can be reopened and re-saved (see the "resume" flow in
+   * Invoices.tsx), so a naive "always add" would double-deduct the same invoice
+   * every time it's re-saved. Instead: look up any utilization row already linked
+   * to this invoice_id (there is ever at most one), and:
+   *   - same PO as before -> adjust the PO by only the DELTA between the old and
+   *     new amount (handles the invoice's amount changing between saves);
+   *   - different PO (or PO removed) -> fully reverse the old PO's deduction, then
+   *     apply the new one (if any) to the newly selected PO.
+   * Never throws - a PO update failure must never affect the already-saved invoice,
+   * only surface as a warning toast.
+   */
+  async function applyPoUtilization(poId: string | null, amount: number, invoiceId: string, invoiceNumber: string, invoiceDate: string) {
+    try {
+      const { data: existingRows, error: existErr } = await supabase.from('purchase_order_utilization').select('*').eq('invoice_id', invoiceId);
+      if (existErr) throw existErr;
+      const existing = (existingRows ?? [])[0] ?? null;
+
+      if (existing && poId && existing.purchase_order_id === poId) {
+        const delta = poRound2(amount - Number(existing.utilized_amount));
+        if (Math.abs(delta) < 0.005) return; // nothing actually changed since the last save
+        const newRemaining = await adjustPoBalance(poId, delta);
+        const { error: updErr } = await supabase.from('purchase_order_utilization').update({
+          utilized_amount: amount, balance_after: newRemaining, invoice_number: invoiceNumber, invoice_date: invoiceDate,
+        }).eq('id', existing.id);
+        if (updErr) throw updErr;
+        return;
+      }
+
+      if (existing) {
+        await adjustPoBalance(existing.purchase_order_id, -Number(existing.utilized_amount));
+        const { error: delErr } = await supabase.from('purchase_order_utilization').delete().eq('id', existing.id);
+        if (delErr) throw delErr;
+      }
+
+      if (poId) {
+        const newRemaining = await adjustPoBalance(poId, amount);
+        const { error: insErr } = await supabase.from('purchase_order_utilization').insert({
+          purchase_order_id: poId, invoice_id: invoiceId, invoice_number: invoiceNumber, invoice_date: invoiceDate,
+          utilized_amount: amount, balance_after: newRemaining,
+        });
+        if (insErr) throw insErr;
+      }
+    } catch (e) {
+      console.error('PO utilization update failed:', e);
+      show('Invoice saved, but the PO balance could not be updated automatically. Please adjust it manually in PO Orders.', 'error');
+    }
   }
 
   function handlePrint() {
@@ -546,6 +819,19 @@ export default function GstBillingEntry({ invoiceId, onDone }: { invoiceId?: str
               )}
             </div>
           )}
+          {availablePos.length > 0 && (
+            <div className="mt-3">
+              <Field label="Select PO Number (Optional)" hint="This customer has an Active Purchase Order. Selecting one will deduct this invoice's taxable amount from its remaining balance after saving.">
+                <SearchableSelect
+                  value={selectedPoId}
+                  onChange={setSelectedPoId}
+                  options={[{ value: '', label: 'No PO - invoice as usual' }, ...availablePos.map(p => ({ value: p.id, label: `${p.po_number} - ${formatDate(p.po_date)} - ${formatCurrency(p.grand_total)} - Remaining ${formatCurrency(p.remaining_amount)}` }))]}
+                  placeholder="No PO - invoice as usual"
+                  disabled={!!activeInvoice}
+                />
+              </Field>
+            </div>
+          )}
           <div className="flex justify-end mt-4">
             <Button onClick={goToEntries} disabled={!customerId}>
               Continue<ChevronRight className="w-4 h-4" />
@@ -561,9 +847,16 @@ export default function GstBillingEntry({ invoiceId, onDone }: { invoiceId?: str
           <div className="bg-white border border-slate-200 rounded-xl p-4">
             <div className="flex items-center justify-between mb-2">
               <p className="text-xs font-bold uppercase tracking-wide text-slate-500">Customer Information</p>
-              <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-bold bg-blue-50 text-blue-700 border border-blue-100">
-                Invoice No: {invoiceNoDisplay || '-'}
-              </span>
+              <div className="flex items-center gap-2">
+                {selectedPo && (
+                  <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-bold bg-amber-50 text-amber-700 border border-amber-100">
+                    PO: {selectedPo.po_number} (Remaining {formatCurrency(selectedPo.remaining_amount)})
+                  </span>
+                )}
+                <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-bold bg-blue-50 text-blue-700 border border-blue-100">
+                  Invoice No: {invoiceNoDisplay || '-'}
+                </span>
+              </div>
             </div>
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-sm">
               <div><span className="text-slate-500">Name: </span><span className="font-semibold text-slate-800">{selectedCustomer?.name ?? activeInvoice?.customer_name}</span></div>
@@ -602,6 +895,7 @@ export default function GstBillingEntry({ invoiceId, onDone }: { invoiceId?: str
                 <select className={inputClass()} value={entRateType} onChange={e => setEntRateType(e.target.value as PoRateType)}>
                   <option value="Hourly">Hourly</option>
                   <option value="Daily">Full Day</option>
+                  <option value="Monthly">Monthly</option>
                 </select>
               </Field>
               {entRateType === 'Hourly' ? (
@@ -609,9 +903,13 @@ export default function GstBillingEntry({ invoiceId, onDone }: { invoiceId?: str
                   <Field label="Hours"><input type="number" min="0" className={inputClass()} value={entHours} onChange={e => setEntHours(e.target.value)} placeholder="3" /></Field>
                   <Field label="Minutes"><input type="number" min="0" max="59" className={inputClass()} value={entMinutes} onChange={e => setEntMinutes(e.target.value)} placeholder="20" /></Field>
                 </div>
-              ) : (
+              ) : entRateType === 'Daily' ? (
                 <Field label="No. of Days" required>
                   <input type="number" min="1" step="1" className={inputClass()} value={entDays} onChange={e => setEntDays(e.target.value)} placeholder="1" />
+                </Field>
+              ) : (
+                <Field label="Quantity (Months)" required>
+                  <input type="number" min="0.01" step="0.01" className={inputClass()} value={entDays} onChange={e => setEntDays(e.target.value)} placeholder="1" />
                 </Field>
               )}
             </div>
@@ -625,6 +923,12 @@ export default function GstBillingEntry({ invoiceId, onDone }: { invoiceId?: str
                       <span className="text-slate-500">Full Day Rate: <b className="text-slate-800">{formatCurrency(entCalc.firstRate)} / day</b></span>
                       <span className="text-emerald-700 font-semibold">Rental Amount: {formatCurrency(entCalc.rentalAmount)}</span>
                     </>
+                  ) : entRateType === 'Monthly' ? (
+                    <>
+                      <span className="text-slate-500">Quantity: <b className="text-slate-800">{entDaysNum} month{entDaysNum === 1 ? '' : 's'}</b></span>
+                      <span className="text-slate-500">Monthly Rate: <b className="text-slate-800">{formatCurrency(entCalc.firstRate)} / month</b></span>
+                      <span className="text-emerald-700 font-semibold">Rental Amount: {formatCurrency(entCalc.rentalAmount)}</span>
+                    </>
                   ) : (
                     <>
                       <span className="text-slate-500">1st Hr Rate: <b className="text-slate-800">{formatCurrency(entCalc.firstRate)}</b></span>
@@ -635,7 +939,12 @@ export default function GstBillingEntry({ invoiceId, onDone }: { invoiceId?: str
                     </>
                   )
                 ) : (
-                  <span className="text-red-600 font-semibold flex items-center gap-1.5"><AlertTriangle className="w-4 h-4" />No applicable rate found for this vehicle/ton/type{entRateType === 'Daily' ? ' (Full Day Rate)' : ''} in Rate Master.</span>
+                  <span className="text-red-600 font-semibold flex items-center gap-1.5">
+                    <AlertTriangle className="w-4 h-4" />
+                    {entCalc?.reason === 'monthly_rate_missing'
+                      ? 'Monthly rate not configured in Rate Master.'
+                      : `No applicable rate found for this vehicle/ton/type${entRateType === 'Daily' ? ' (Full Day Rate)' : entRateType === 'Monthly' ? ' (Monthly Rate)' : ''} in Rate Master.`}
+                  </span>
                 )}
               </div>
             )}
@@ -805,6 +1114,44 @@ export default function GstBillingEntry({ invoiceId, onDone }: { invoiceId?: str
         message="This billing entry will be deleted permanently and totals will recalculate."
         confirmText="Remove"
         danger
+      />
+
+      <Modal
+        open={!!poInsufficientWarning && !poRequestModalOpen}
+        onClose={cancelInsufficientPoWarning}
+        title="PO Balance Insufficient"
+        size="sm"
+        footer={<>
+          <Button variant="secondary" onClick={cancelInsufficientPoWarning} disabled={savingInvoice}>Cancel</Button>
+          <Button variant="outline" onClick={() => setPoRequestModalOpen(true)} disabled={savingInvoice}><Mail className="w-4 h-4" />Request New PO</Button>
+          <Button onClick={confirmSaveDespiteInsufficientPo} disabled={savingInvoice}>{savingInvoice ? 'Saving...' : 'Continue'}</Button>
+        </>}
+      >
+        {poInsufficientWarning && (
+          <div className="space-y-3 text-sm">
+            <p className="flex items-center gap-1.5 font-bold text-red-600"><AlertTriangle className="w-4 h-4" />PO BALANCE INSUFFICIENT</p>
+            <div className="space-y-1.5 p-3 bg-red-50 border border-red-100 rounded-lg">
+              <div className="flex justify-between"><span className="text-slate-500">Current PO Balance</span><b className="tabular-nums">{formatCurrency(poInsufficientWarning.headroom)}</b></div>
+              <div className="flex justify-between"><span className="text-slate-500">Invoice Amount</span><b className="tabular-nums">{formatCurrency(poInsufficientWarning.invoiceAmount)}</b></div>
+              <div className="flex justify-between pt-1.5 border-t border-dashed border-red-200"><span className="font-semibold text-red-700">Shortfall</span><b className="tabular-nums text-red-700">{formatCurrency(round2(poInsufficientWarning.invoiceAmount - poInsufficientWarning.headroom))}</b></div>
+            </div>
+            <p className="text-xs text-slate-500">
+              This invoice has not been saved yet. Click Continue to save it in full — this amount will NOT be deducted from PO {poInsufficientWarning.po.po_number} because it exceeds the available balance. You can request an additional PO first, or Cancel to adjust the invoice or PO selection.
+            </p>
+          </div>
+        )}
+      </Modal>
+
+      <PoRequestModal
+        open={poRequestModalOpen}
+        onClose={() => setPoRequestModalOpen(false)}
+        customers={customers}
+        initial={poInsufficientWarning ? {
+          customerId: poInsufficientWarning.po.customer_id,
+          poNumber: poInsufficientWarning.po.po_number,
+          currentBalance: poInsufficientWarning.headroom,
+          requiredInvoiceAmount: poInsufficientWarning.invoiceAmount,
+        } : null}
       />
     </div>
   );

@@ -9,7 +9,7 @@ import {
   Truck, Wrench, Fuel, AlertCircle, Calendar, FileText, AlertTriangle,
   RefreshCw, X, ArrowRight, CalendarClock, ShieldCheck, ClipboardCheck,
   CreditCard, Eye, ClipboardList, CheckCircle2, Clock, MapPin,
-  TrendingUp, Gauge,
+  TrendingUp, Gauge, IndianRupee,
 } from 'lucide-react';
 import type {
   Vehicle, TripWithRelations, DieselWithRelations, MaintenanceWithRelations,
@@ -30,7 +30,9 @@ interface WorkProgressRow {
 // other path below matches the app's routes exactly.)
 const WORK_TYPE_ROUTES: Record<string, string> = {
   'Diesel Entry': '/diesel',
-  'PO Order': '/po-orders',
+  // Displayed as "Log Book Entry" (PO Orders renamed in the UI only) - the route
+  // itself is still /po-orders, unchanged.
+  'Log Book Entry': '/po-orders',
   'Maintenance Entry': '/maintenance',
   'Customer Invoice': '/invoices',
 };
@@ -235,8 +237,6 @@ export default function StaffDashboard({ onNavigate }: { onNavigate: (path: stri
     const maintenanceVehicles = activeVehicles.filter(v => v.status === 'Maintenance');
     const inactiveVehicles = data.vehicles.filter(v => !v.active || v.status === 'Inactive');
 
-    const activeContracts = data.contracts.filter(c => c.status === 'Active' && c.start_date <= today && (!c.end_date || c.end_date >= today));
-
     const todayTripsCount = data.todayTrips.length;
     const completedTodayTrips = data.todayTrips.filter(tr => tr.bill_status === 'Paid').length;
     const pendingTodayTrips = data.todayTrips.filter(tr => tr.bill_status !== 'Paid').length;
@@ -268,6 +268,8 @@ export default function StaffDashboard({ onNavigate }: { onNavigate: (path: stri
       fitnessExpiring: data.vehicles.filter(v => v.fitness_expiry_date && daysUntil(v.fitness_expiry_date) >= 0 && daysUntil(v.fitness_expiry_date) <= 30).length,
       licenseExpired: data.employees.filter(e => e.license_expiry && daysUntil(e.license_expiry) < 0).length,
       licenseExpiring: data.employees.filter(e => e.license_expiry && daysUntil(e.license_expiry) >= 0 && daysUntil(e.license_expiry) <= 30).length,
+      insuranceExpired: data.vehicles.filter(v => v.insurance_expiry_date && daysUntil(v.insurance_expiry_date) < 0).length,
+      insuranceExpiring: data.vehicles.filter(v => v.insurance_expiry_date && daysUntil(v.insurance_expiry_date) >= 0 && daysUntil(v.insurance_expiry_date) <= 7).length,
     };
 
     const quotationBreakdown = {
@@ -280,9 +282,6 @@ export default function StaffDashboard({ onNavigate }: { onNavigate: (path: stri
     const recentMaintenance = data.periodMaintenance.slice(0, 5);
 
     const upcomingEvents: { label: string; date: string; type: string; navigateTo: string }[] = [];
-    data.contracts.forEach(c => {
-      if (c.end_date) { const d = daysUntil(c.end_date); if (d >= 0 && d <= 7) upcomingEvents.push({ label: `Rental ending - ${c.company_name}`, date: c.end_date, type: 'rental', navigateTo: '/contracts' }); }
-    });
     data.emiRecords.forEach(e => {
       if (e.status !== 'Paid') { const d = daysUntil(e.due_date); if (d >= 0 && d <= 7) upcomingEvents.push({ label: `EMI due - ${e.vehicle?.registration_number ?? 'N/A'}`, date: e.due_date, type: 'emi', navigateTo: '/emi' }); }
     });
@@ -315,7 +314,7 @@ export default function StaffDashboard({ onNavigate }: { onNavigate: (path: stri
       ...data.activePoOrders.map(p => ({
         id: `po-${p.id}`,
         name: p.customer?.name ?? p.po_number,
-        workType: 'PO Order',
+        workType: 'Log Book Entry',
         status: 'In Progress' as WorkProgressStatus,
       })),
       ...data.todayMaintenance.map(m => ({
@@ -338,7 +337,6 @@ export default function StaffDashboard({ onNavigate }: { onNavigate: (path: stri
       maintenanceVehicles: maintenanceVehicles.length,
       inactiveVehicles: inactiveVehicles.length,
       totalVehicles: data.vehicles.length,
-      activeContracts,
       todayTripsCount, completedTodayTrips, pendingTodayTrips,
       periodTripsCount, completedPeriodTrips, activePeriodTrips,
       periodRevenue, periodBatha,
@@ -418,7 +416,7 @@ export default function StaffDashboard({ onNavigate }: { onNavigate: (path: stri
             {visibleNotifications.slice(0, 10).map(n => {
               const isExpired = n.severity === 'expired' || n.severity === 'overdue';
               const isToday = n.severity === 'due-today';
-              const icon = n.category === 'eye_test' ? Eye : n.category === 'emi' ? CreditCard : n.category === 'fitness' ? Truck : AlertCircle;
+              const icon = n.category === 'eye_test' ? Eye : n.category === 'emi' ? CreditCard : n.category === 'fitness' ? Truck : n.category === 'insurance' ? ShieldCheck : n.category === 'po_low_balance' ? IndianRupee : AlertCircle;
               const Icon = icon;
               return (
                 <button key={n.id} type="button" onClick={() => onNavigate(n.navigateTo)} className="w-full flex items-center gap-3 px-4 py-2.5 hover:bg-slate-50 transition-colors text-left">
@@ -465,9 +463,9 @@ export default function StaffDashboard({ onNavigate }: { onNavigate: (path: stri
             <p className="text-lg font-bold text-orange-700 tabular-nums">{computed.todayDieselEntries}</p>
             <p className="text-[10px] font-semibold text-orange-600 uppercase mt-0.5">Diesel Entries</p>
           </button>
-          <button type="button" onClick={() => onNavigate(WORK_TYPE_ROUTES['PO Order'])} className="text-center p-2.5 rounded-lg bg-blue-50 cursor-pointer transition-all hover:shadow-md hover:ring-1 hover:ring-blue-300">
+          <button type="button" onClick={() => onNavigate(WORK_TYPE_ROUTES['Log Book Entry'])} className="text-center p-2.5 rounded-lg bg-blue-50 cursor-pointer transition-all hover:shadow-md hover:ring-1 hover:ring-blue-300">
             <p className="text-lg font-bold text-blue-700 tabular-nums">{computed.todayPoOrdersCount}</p>
-            <p className="text-[10px] font-semibold text-blue-600 uppercase mt-0.5">PO Orders</p>
+            <p className="text-[10px] font-semibold text-blue-600 uppercase mt-0.5">Log Book Entries</p>
           </button>
           <button type="button" onClick={() => onNavigate(WORK_TYPE_ROUTES['Maintenance Entry'])} className="text-center p-2.5 rounded-lg bg-amber-50 cursor-pointer transition-all hover:shadow-md hover:ring-1 hover:ring-amber-300">
             <p className="text-lg font-bold text-amber-700 tabular-nums">{computed.todayMaintenanceCount}</p>
@@ -531,8 +529,8 @@ export default function StaffDashboard({ onNavigate }: { onNavigate: (path: stri
         )}
       </div>
 
-      {/* FLEET STATUS + ACTIVE CONTRACTS */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+      {/* FLEET STATUS */}
+      <div className="grid grid-cols-1 gap-4">
         {/* Fleet Status */}
         <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-4 min-w-0">
           <div className="flex items-center justify-between mb-4">
@@ -584,41 +582,6 @@ export default function StaffDashboard({ onNavigate }: { onNavigate: (path: stri
               />
             </div>
           </div>
-        </div>
-
-        {/* Active Contracts */}
-        <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden min-w-0">
-          <div className="px-4 py-3 border-b border-slate-100 flex items-center justify-between bg-gradient-to-r from-blue-50/50 to-transparent">
-            <div className="flex items-center gap-2">
-              <div className="w-8 h-8 rounded-lg bg-blue-50 flex items-center justify-center">
-                <FileText className="w-4 h-4 text-blue-600" />
-              </div>
-              <h3 className="text-sm font-bold text-slate-800">{t('activeMonthlyContracts')}</h3>
-            </div>
-            <button onClick={() => onNavigate('/contracts')} className="text-xs font-semibold text-blue-600 hover:text-blue-700 flex items-center gap-1 flex-shrink-0">
-              {t('viewAll')} <ArrowRight className="w-3 h-3" />
-            </button>
-          </div>
-          {computed.activeContracts.length === 0 ? (
-            <p className="text-xs text-slate-400 italic px-4 py-6 text-center">{t('noActiveContracts')}</p>
-          ) : (
-            <div className="divide-y divide-slate-100 max-h-56 overflow-y-auto">
-              {computed.activeContracts.slice(0, 6).map(c => {
-                const vehicle = data.vehicles.find(v => v.id === c.vehicle_id);
-                const daysToEnd = c.end_date ? daysUntil(c.end_date) : null;
-                return (
-                  <button key={c.id} onClick={() => onNavigate('/contracts')} className="w-full flex items-center gap-3 p-3 hover:bg-slate-50 transition-colors text-left min-w-0">
-                    <div className={classNames('w-2.5 h-2.5 rounded-full flex-shrink-0', daysToEnd !== null && daysToEnd <= 7 ? 'bg-amber-500' : 'bg-blue-500')} />
-                    <span className="text-sm font-medium text-slate-700 truncate flex-1 min-w-0">{c.company_name}</span>
-                    <span className="text-xs text-slate-500 whitespace-nowrap flex-shrink-0">{vehicle?.registration_number ?? '-'}</span>
-                    {daysToEnd !== null && daysToEnd <= 7 && (
-                      <span className="text-[10px] font-bold text-amber-600 bg-amber-50 px-2 py-0.5 rounded-md flex-shrink-0">{t('daysLeft').replace('{days}', String(daysToEnd))}</span>
-                    )}
-                  </button>
-                );
-              })}
-            </div>
-          )}
         </div>
       </div>
 
@@ -674,6 +637,13 @@ export default function StaffDashboard({ onNavigate }: { onNavigate: (path: stri
               </div>
               <span className="text-sm text-slate-700 flex-1">{t('fitnessExpiringExpired')}</span>
               <span className={classNames('text-sm font-bold tabular-nums', computed.docExpiry.fitnessExpired > 0 ? 'text-red-600' : 'text-slate-800')}>{computed.docExpiry.fitnessExpiring + computed.docExpiry.fitnessExpired}</span>
+            </button>
+            <button onClick={() => onNavigate('/vehicles')} className="w-full flex items-center gap-3 p-2.5 rounded-xl hover:bg-slate-50 transition-colors text-left group">
+              <div className={classNames('w-9 h-9 rounded-xl flex items-center justify-center flex-shrink-0 transition-transform group-hover:scale-110', computed.docExpiry.insuranceExpired > 0 ? 'bg-red-50' : 'bg-amber-50')}>
+                <ShieldCheck className={classNames('w-4 h-4', computed.docExpiry.insuranceExpired > 0 ? 'text-red-600' : 'text-amber-600')} />
+              </div>
+              <span className="text-sm text-slate-700 flex-1">{t('insuranceExpiringExpired')}</span>
+              <span className={classNames('text-sm font-bold tabular-nums', computed.docExpiry.insuranceExpired > 0 ? 'text-red-600' : 'text-slate-800')}>{computed.docExpiry.insuranceExpiring + computed.docExpiry.insuranceExpired}</span>
             </button>
             <button onClick={() => onNavigate('/employees')} className="w-full flex items-center gap-3 p-2.5 rounded-xl hover:bg-slate-50 transition-colors text-left group">
               <div className={classNames('w-9 h-9 rounded-xl flex items-center justify-center flex-shrink-0 transition-transform group-hover:scale-110', computed.docExpiry.licenseExpired > 0 ? 'bg-red-50' : 'bg-amber-50')}>
