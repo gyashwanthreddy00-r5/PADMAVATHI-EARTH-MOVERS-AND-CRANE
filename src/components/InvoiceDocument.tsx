@@ -87,7 +87,7 @@ export function invoiceDocHTML(
   };
   const itemRowsEstPx = itemRows.reduce((sum, r) => sum + estimateItemRowPx(r.description), 0);
   const taxRowCount = (!isProforma ? ((isIgst ? (igstAmt > 0 ? 1 : 0) : (cgstAmt > 0 ? 1 : 0) + (sgstAmt > 0 ? 1 : 0)) + (inv.discount_enabled ? 1 : 0)) : 0);
-  const TABLE_TARGET_PX = 420;
+  const TABLE_TARGET_PX = 350;
   const usedTablePx = 30 /* thead */ + itemRowsEstPx + taxRowCount * 22 + 30 /* Total row */;
   const tableSpacerPx = Math.max(0, TABLE_TARGET_PX - usedTablePx);
 

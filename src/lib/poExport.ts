@@ -1,6 +1,6 @@
 import type { PurchaseOrder, PurchaseOrderItem } from '@/types';
 import { formatCurrency, formatDate, type ExportCompanyInfo } from '@/lib/utils';
-import { exportToExcelProfessional } from '@/lib/excelExport';
+import { exportToXlsxWithCompany } from '@/lib/exportXlsx';
 import { PO_CGST_PERCENT, PO_SGST_PERCENT } from '@/lib/poOrderManagement';
 
 export interface PoPrintCompany extends ExportCompanyInfo {
@@ -8,11 +8,45 @@ export interface PoPrintCompany extends ExportCompanyInfo {
   authorized_signatory?: string | null;
 }
 
-/** Opens a professional printable Purchase Order in a new tab and triggers print. */
-export function printPurchaseOrder(company: PoPrintCompany, po: PurchaseOrder, customerName: string, customerAddress: string | null | undefined, items: PurchaseOrderItem[]) {
-  const win = window.open('', '_blank');
-  if (!win) return;
+// Same hidden-iframe print pipeline used elsewhere in the app (Invoices.tsx,
+// SettlementReport.tsx, poOrdersExport.ts, printReport.ts, VehicleWiseReport.tsx) -
+// triggers the browser print dialog on the current page instead of opening a new tab.
+function printInIframe(html: string) {
+  const iframe = document.createElement('iframe');
+  iframe.style.position = 'fixed';
+  iframe.style.right = '0';
+  iframe.style.bottom = '0';
+  iframe.style.width = '0';
+  iframe.style.height = '0';
+  iframe.style.border = 'none';
+  iframe.style.visibility = 'hidden';
+  document.body.appendChild(iframe);
 
+  const doc = iframe.contentWindow?.document;
+  if (!doc) {
+    if (iframe.parentNode) document.body.removeChild(iframe);
+    return;
+  }
+
+  doc.open();
+  doc.write(html);
+  doc.close();
+
+  iframe.onload = () => {
+    setTimeout(() => {
+      try {
+        iframe.contentWindow?.focus();
+        iframe.contentWindow?.print();
+      } catch { /* ignore */ }
+      setTimeout(() => {
+        if (iframe.parentNode) document.body.removeChild(iframe);
+      }, 1000);
+    }, 350);
+  };
+}
+
+/** Prints a professional Purchase Order on the current page (no new tab). */
+export function printPurchaseOrder(company: PoPrintCompany, po: PurchaseOrder, customerName: string, customerAddress: string | null | undefined, items: PurchaseOrderItem[]) {
   const rowsHtml = items.map(it => `<tr>
     <td>${it.sl_no}</td>
     <td style="text-align:left">${it.vehicle_type}</td>
@@ -25,11 +59,12 @@ export function printPurchaseOrder(company: PoPrintCompany, po: PurchaseOrder, c
     <td style="text-align:right;font-weight:600">${formatCurrency(it.total_amount)}</td>
   </tr>`).join('');
 
-  win.document.write(`<!doctype html>
+  const html = `<!doctype html>
 <html><head><title>Purchase Order ${po.po_number}</title>
 <style>
   * { box-sizing: border-box; }
   body { font-family: Arial, Helvetica, sans-serif; padding: 24px; color: #111; }
+  .page-frame { border: 1.5px solid #000; padding: 8mm; min-height: 265mm; -webkit-box-decoration-break: clone; box-decoration-break: clone; }
   .co { text-align: center; font-weight: 800; font-size: 18px; text-transform: uppercase; }
   .addr { text-align: center; font-size: 12px; color: #333; margin-top: 2px; }
   h2.title { text-align: center; text-decoration: underline; margin: 16px 0; font-size: 15px; }
@@ -42,9 +77,10 @@ export function printPurchaseOrder(company: PoPrintCompany, po: PurchaseOrder, c
   .totals td { border: none; text-align: right; padding: 3px 6px; }
   .totals .grand { font-weight: 800; border-top: 2px solid #333; }
   .sign { margin-top: 60px; text-align: right; font-size: 13px; }
-  @media print { body { padding: 0; } }
+  @media print { body { padding: 0; } @page { size: A4 portrait; margin: 10mm; } }
 </style>
 </head><body>
+  <div class="page-frame">
   <div class="co">${company.company_name}</div>
   ${company.address ? `<div class="addr">${company.address}${company.gstin ? ' &middot; GSTIN: ' + company.gstin : ''}</div>` : ''}
   <h2 class="title">Purchase Order</h2>
@@ -79,28 +115,27 @@ export function printPurchaseOrder(company: PoPrintCompany, po: PurchaseOrder, c
     ${company.authorized_signatory ? `<p style="margin:2px 0">${company.authorized_signatory}</p>` : ''}
     <p style="font-weight:bold;margin:4px 0 0">AUTHORISED SIGNATORY</p>
   </div>
-</body></html>`);
-  win.document.close();
-  win.focus();
-  setTimeout(() => win.print(), 300);
+  </div>
+</body></html>`;
+  printInIframe(html);
 }
 
-/** Downloads a formatted .xls export of one Purchase Order's items + totals. */
+/** Downloads a formatted .xlsx export of one Purchase Order's items + totals, matching
+ * the app-wide letterhead + Excel Table format used by every other export. */
 export function exportPurchaseOrderToExcel(company: ExportCompanyInfo, po: PurchaseOrder, customerName: string, items: PurchaseOrderItem[]) {
   const headers = ['Sl.No', 'Ton / Vehicle Type', 'Remarks', 'Quantity', 'Unit Rate', 'Taxable Amount', `CGST ${PO_CGST_PERCENT}%`, `SGST ${PO_SGST_PERCENT}%`, 'Total Amount'];
-  const dataRows = items.map(it => [it.sl_no, it.vehicle_type, it.remarks ?? '', it.quantity, it.unit_rate, it.taxable_amount, it.cgst_amount, it.sgst_amount, it.total_amount]);
+  const dataRows = items.map(it => [it.sl_no, it.vehicle_type, it.remarks ?? '-', it.quantity, it.unit_rate, it.taxable_amount, it.cgst_amount, it.sgst_amount, it.total_amount]);
   const totalRow = ['', 'TOTAL', '', '', '', po.taxable_total, po.cgst_total, po.sgst_total, po.grand_total];
-  const dateRange = `Customer: ${customerName} | PO Number: ${po.po_number} | PO Date: ${formatDate(po.po_date)} | Status: ${po.status} | Grand Total: ${formatCurrency(po.grand_total)} | Utilized: ${formatCurrency(po.utilized_amount)} | Remaining: ${formatCurrency(po.remaining_amount)}`;
-  exportToExcelProfessional(
-    `PO-${po.po_number}`.replace(/[/\\?%*:|"<>]/g, '-'),
+  const filters = `Customer: ${customerName} | Status: ${po.status} | Utilized: ${formatCurrency(po.utilized_amount)} | Remaining: ${formatCurrency(po.remaining_amount)}`;
+  exportToXlsxWithCompany(
+    `PO-${po.po_number}`.replace(/[/\\?%*:|"<>]/g, '-') + '.xlsx',
     `Purchase Order - ${po.po_number}`,
     company,
-    dateRange,
+    `PO Date: ${formatDate(po.po_date)}`,
+    new Date().toLocaleString('en-IN'),
+    filters,
     headers,
     dataRows,
     totalRow,
-    [4, 5, 6, 7, 8],
-    [],
-    [3],
   );
 }
