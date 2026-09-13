@@ -73,7 +73,8 @@ export default function Vehicles() {
     const { data, error: fetchError } = await supabase
       .from('vehicles')
       .select('*')
-      .order('serial_number', { ascending: true });
+      .order('serial_number', { ascending: true })
+      .order('id', { ascending: true });
     if (fetchError) {
       setError(fetchError.message);
       setVehicles([]);

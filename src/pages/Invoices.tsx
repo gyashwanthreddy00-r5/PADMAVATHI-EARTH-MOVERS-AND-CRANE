@@ -168,8 +168,7 @@ export default function Invoices({ initialTab = 'list' }: InvoicesProps = {}) {
   const { t } = useLang();
   const { show } = useToast();
   const { settings } = useSettings();
-  const { profile } = useAuth();
-  const isAdmin = profile?.role === 'admin';
+  const { isAdmin } = useAuth();
   const [step, setStep] = useState<Step>(initialTab);
   const [showNewGstFlow, setShowNewGstFlow] = useState(false);
   const [resumeGstInvoiceId, setResumeGstInvoiceId] = useState<string | null>(null);

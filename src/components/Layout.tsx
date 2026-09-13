@@ -105,7 +105,7 @@ interface LayoutProps {
 }
 
 export function Layout({ currentPath, onNavigate, children }: LayoutProps) {
-  const { user, profile, signOut, allowedPages, isAdmin } = useAuth();
+  const { user, profile, signOut, allowedPages, isAdmin, roleNames } = useAuth();
   // Owner and Admin both see the admin dashboard, but only Admin bypasses page assignments.
   // Owner is restricted to pages assigned via role-page assignment, so isAllowed uses isAdmin only.
   const { t, lang, setLang } = useLang();
@@ -306,7 +306,7 @@ export function Layout({ currentPath, onNavigate, children }: LayoutProps) {
           {!collapsed && (
             <div className="flex-1 min-w-0 overflow-hidden">
               <p className="text-xs text-white truncate">{profile?.display_name ?? profile?.username ?? user?.email}</p>
-              {profile && <p className="text-[10px] text-slate-400 capitalize">{profile.role}</p>}
+              {profile && roleNames.length > 0 && <p className="text-[10px] text-slate-400 capitalize">{roleNames.join(', ')}</p>}
             </div>
           )}
         </div>

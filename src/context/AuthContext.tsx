@@ -11,6 +11,7 @@ interface AuthContextType {
   allowedPages: string[];
   isAdmin: boolean;
   isOwner: boolean;
+  roleNames: string[];
   signIn: (username: string, password: string) => Promise<{ error: string | null }>;
   signOut: () => Promise<void>;
 }
@@ -25,6 +26,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [allowedPages, setAllowedPages] = useState<string[]>([]);
   const [isAdmin, setIsAdmin] = useState(false);
   const [isOwner, setIsOwner] = useState(false);
+  const [roleNames, setRoleNames] = useState<string[]>([]);
 
   useEffect(() => {
     supabase.auth.getSession().then(({ data }) => {
@@ -54,6 +56,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         setAllowedPages([]);
         setIsAdmin(false);
         setIsOwner(false);
+        setRoleNames([]);
         setProfileLoaded(true);
         return;
       }
@@ -78,6 +81,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
         setIsAdmin(adminRole);
         setIsOwner(ownerRole);
+        setRoleNames(activeRoles.filter(r => r.roles.is_active).map(r => r.roles.name));
 
         // Auto-sync: register any new app routes into the pages table.
         // Only admin users trigger this to avoid unnecessary calls for every user.
@@ -156,6 +160,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         setAllowedPages([]);
         setIsAdmin(false);
         setIsOwner(false);
+        setRoleNames([]);
       }
       setProfileLoaded(true);
     })();
@@ -193,13 +198,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setAllowedPages([]);
     setIsAdmin(false);
     setIsOwner(false);
+    setRoleNames([]);
     setProfileLoaded(true);
   };
 
   const authReady = loading || (session ? !profileLoaded : false);
 
   return (
-    <AuthContext.Provider value={{ session, user: session?.user ?? null, profile, loading: authReady, allowedPages, isAdmin, isOwner, signIn, signOut }}>
+    <AuthContext.Provider value={{ session, user: session?.user ?? null, profile, loading: authReady, allowedPages, isAdmin, isOwner, roleNames, signIn, signOut }}>
       {children}
     </AuthContext.Provider>
   );

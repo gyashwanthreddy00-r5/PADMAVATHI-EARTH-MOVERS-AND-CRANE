@@ -810,6 +810,18 @@ Deno.serve(async (req: Request) => {
         { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } },
       );
     }
+    if (!recipientEmail) {
+      return new Response(
+        JSON.stringify({ error: "Recipient email is required." }),
+        { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } },
+      );
+    }
+    if (!emailSubject || !emailBody) {
+      return new Response(
+        JSON.stringify({ error: "Email subject and body are required." }),
+        { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } },
+      );
+    }
 
     const { data: quotation, error: qError } = await adminClient
       .from("quotations")

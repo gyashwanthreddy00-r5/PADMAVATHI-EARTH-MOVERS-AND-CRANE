@@ -205,15 +205,19 @@ export function ErrorState({ message }: { message: string }) {
 }
 
 export function Field({ label, required, error, children, hint }: { label: string; required?: boolean; error?: string; hint?: string; children: ReactNode }) {
+  // The label text lives in its own <span> (carrying the visible styling) rather
+  // than directly on the <label>, so wrapping the field's input inside <label>
+  // for proper screen-reader association doesn't make the input inherit the
+  // label's font-weight/color - purely additive, no visual change at any call site.
   return (
-    <div>
-      <label className="block text-sm font-semibold text-slate-700 mb-1.5">
+    <label className="block">
+      <span className="block text-sm font-semibold text-slate-700 mb-1.5">
         {label} {required && <span className="text-red-500 font-bold">*</span>}
-      </label>
+      </span>
       {children}
       {hint && <p className="text-xs text-slate-400 mt-1 leading-relaxed">{hint}</p>}
       {error && <p className="text-xs font-medium text-red-500 mt-1">{error}</p>}
-    </div>
+    </label>
   );
 }
 
