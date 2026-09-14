@@ -72,7 +72,6 @@ const nav: NavSection[] = [
   {
     title: 'reports',
     items: [
-      { key: 'report-trips', label: 'tripReport', icon: BarChart3, path: '/reports/trips' },
       { key: 'report-diesel', label: 'dieselReport', icon: BarChart3, path: '/reports/diesel' },
       { key: 'report-attendance', label: 'attendanceReport', icon: BarChart3, path: '/reports/attendance' },
       { key: 'report-maintenance', label: 'maintenanceReport', icon: BarChart3, path: '/reports/maintenance' },
@@ -83,6 +82,8 @@ const nav: NavSection[] = [
       { key: 'report-profit-loss', label: 'profitLoss', icon: TrendingUp, path: '/reports/profit-loss' },
       { key: 'report-cash-bills', label: 'cashBillReport', icon: BarChart3, path: '/reports/cash-bills' },
       { key: 'report-vehicle-wise', label: 'vehicleWiseReport', icon: TrendingUp, path: '/reports/vehicle-wise' },
+      { key: 'report-po-orders', label: 'poOrdersReport', icon: ClipboardList, path: '/reports/po-orders' },
+      { key: 'report-purchase', label: 'purchaseReportNav', icon: ShoppingCart, path: '/reports/purchase' },
     ],
   },
   {

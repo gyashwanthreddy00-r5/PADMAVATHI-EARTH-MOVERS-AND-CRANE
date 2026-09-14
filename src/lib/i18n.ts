@@ -109,6 +109,8 @@ export const translations = {
     cashPaymentReport: 'Cash & Payment Report',
     gstInvoiceReport: 'GST Invoice Report',
     vehicleWiseReport: 'Vehicle-Wise Report',
+    poOrdersReport: 'PO Orders Report',
+    purchaseReportNav: 'Purchase Report',
     customers: 'Customers',
 
     // Dashboard
@@ -842,6 +844,8 @@ export const translations = {
     cashPaymentReport: 'క్యాష్ & చెల్లింపు నివేదిక',
     gstInvoiceReport: 'GST ఇన్వాయిస్ నివేదిక',
     vehicleWiseReport: 'వాహన వారీ నివేదిక',
+    poOrdersReport: 'PO ఆర్డర్ల నివేదిక',
+    purchaseReportNav: 'కొనుగోలు నివేదిక',
     customers: 'కస్టమర్లు',
 
     totalVehicles: 'మొత్తం వాహనాలు',

@@ -8,7 +8,7 @@ import { formatCurrency, formatDate, todayISO, classNames, amountInWords } from 
 import { findRateMasterForVehicle } from '@/lib/rateLookup';
 import { computeBillingLineAmounts, round2 } from '@/lib/gstBillingCalc';
 import { printGstBillingData, exportGstBillingDataToExcel } from '@/lib/gstBillingExport';
-import { getEffectivePoStatus, round2 as poRound2 } from '@/lib/poOrderManagement';
+import { getEffectivePoStatus, allocatePoBalances, type PoAllocation, round2 as poRound2 } from '@/lib/poOrderManagement';
 import { PoRequestModal } from '@/components/PoRequestModal';
 import { Plus, Trash2, Pencil, AlertTriangle, ArrowLeft, Printer, Download, Save, X, ChevronRight, Mail } from 'lucide-react';
 import type { Customer, RateMaster, InvoiceSettings, PoRateType, Vehicle, Invoice, InvoiceBillingLine, PurchaseOrder, PurchaseOrderStatus } from '@/types';
@@ -170,16 +170,18 @@ export default function GstBillingEntry({ invoiceId, onDone }: { invoiceId?: str
   // amount against it; if none is selected, invoice generation works exactly as before.
   const [availablePos, setAvailablePos] = useState<PurchaseOrder[]>([]);
   const [selectedPoId, setSelectedPoId] = useState('');
-  // When resuming an invoice that already has a utilization record, this holds that
-  // record's PO id + amount - used only to compute the correct "available headroom"
-  // for the PO-exceeded check below (a resumed invoice's own prior deduction is part
-  // of its own room, not a competing use of the PO's balance).
-  const [existingPoUtilization, setExistingPoUtilization] = useState<{ poId: string; amount: number } | null>(null);
-  // Shown after a successful save when the invoice's taxable amount exceeded the
-  // selected PO's available headroom - the invoice itself is never blocked or
-  // partially deducted (see proceedSaveInvoice); this is purely informational and
-  // offers "Request New PO" as the next step.
-  const [poInsufficientWarning, setPoInsufficientWarning] = useState<{ po: PurchaseOrder; headroom: number; invoiceAmount: number } | null>(null);
+  // When resuming an invoice that already has utilization record(s), this holds each
+  // record's PO id + amount - used only to fold this invoice's own prior deduction(s)
+  // back into "available headroom" per PO for the cascade below (a resumed invoice's
+  // own prior deduction is part of its own room, not a competing use of the PO's
+  // balance). An invoice can now span multiple POs, so this is a list, not one row.
+  const [existingPoUtilizations, setExistingPoUtilizations] = useState<{ poId: string; amount: number }[]>([]);
+  // Shown before save when the invoice's taxable amount exceeds the COMBINED
+  // available headroom of the selected PO + every later active PO in date order (the
+  // cascade) - the invoice itself is never blocked; on "Continue" the partial
+  // allocations that DO fit are applied (see proceedSaveInvoice) and this is purely
+  // informational, offering "Request New PO" as the next step.
+  const [poInsufficientWarning, setPoInsufficientWarning] = useState<{ allocations: PoAllocation[]; shortfall: number; invoiceAmount: number } | null>(null);
   const [poRequestModalOpen, setPoRequestModalOpen] = useState(false);
 
   // activeInvoice is null until the user's first "Capture Trip" click actually
@@ -316,39 +318,70 @@ export default function GstBillingEntry({ invoiceId, onDone }: { invoiceId?: str
   // to restore it from.
   useEffect(() => {
     setSelectedPoId('');
-    setExistingPoUtilization(null);
+    setExistingPoUtilizations([]);
     if (!customerId) { setAvailablePos([]); return; }
     let cancelled = false;
     (async () => {
       const { data } = await supabase.from('purchase_orders').select('*').eq('customer_id', customerId);
       if (cancelled) return;
       const allPos = (data ?? []) as PurchaseOrder[];
-      let active = allPos.filter(p => getEffectivePoStatus(p) === 'Active');
+      // Oldest PO Date first — this is the order the cascade walks forward through,
+      // and it's what the dropdown itself displays (see the Select PO Number field).
+      let active = allPos.filter(p => getEffectivePoStatus(p) === 'Active').sort((a, b) => a.po_date.localeCompare(b.po_date));
 
-      // Resuming an existing invoice that already has a PO utilization record —
-      // restore that exact selection, even if the PO itself is no longer Active
-      // (e.g. it has since become Completed), so simply reopening and re-saving the
-      // invoice doesn't look like "no PO selected" and reverse a still-correct
-      // deduction (see applyPoUtilization's reconciliation logic below).
+      // Resuming an existing invoice that already has PO utilization record(s) —
+      // restore that exact selection (the FIRST/oldest PO this invoice used), even if
+      // the PO itself is no longer Active (e.g. it has since become Completed), so
+      // simply reopening and re-saving the invoice doesn't look like "no PO selected"
+      // and reverse a still-correct deduction (see applyPoUtilization's reconciliation
+      // logic below).
       if (invoiceId) {
         const { data: utilRows } = await supabase.from('purchase_order_utilization').select('purchase_order_id, utilized_amount').eq('invoice_id', invoiceId);
         if (cancelled) return;
-        const linkedRow = (utilRows ?? [])[0] as { purchase_order_id: string; utilized_amount: number } | undefined;
-        if (linkedRow) {
-          const linkedPo = allPos.find(p => p.id === linkedRow.purchase_order_id);
-          if (linkedPo && !active.some(p => p.id === linkedRow.purchase_order_id)) active = [...active, linkedPo];
+        const linkedRows = (utilRows ?? []) as { purchase_order_id: string; utilized_amount: number }[];
+        if (linkedRows.length > 0) {
+          for (const row of linkedRows) {
+            const linkedPo = allPos.find(p => p.id === row.purchase_order_id);
+            if (linkedPo && !active.some(p => p.id === row.purchase_order_id)) {
+              active = [...active, linkedPo].sort((a, b) => a.po_date.localeCompare(b.po_date));
+            }
+          }
           setAvailablePos(active);
-          setSelectedPoId(linkedRow.purchase_order_id);
-          setExistingPoUtilization({ poId: linkedRow.purchase_order_id, amount: Number(linkedRow.utilized_amount) || 0 });
+          // The oldest PO among this invoice's own utilization rows is the one the
+          // dropdown should show as "selected" — the cascade below always rebuilds
+          // the full chain from whichever PO is selected forward, so selecting the
+          // oldest one reproduces the same chain this invoice originally used.
+          const linkedPoIds = new Set(linkedRows.map(r => r.purchase_order_id));
+          const startPo = active.find(p => linkedPoIds.has(p.id)) ?? active[0];
+          setSelectedPoId(startPo?.id ?? '');
+          setExistingPoUtilizations(linkedRows.map(r => ({ poId: r.purchase_order_id, amount: Number(r.utilized_amount) || 0 })));
           return;
         }
       }
+      // Auto-default to the oldest Active PO - the user should not have to manually
+      // find/select it for the common case, but the dropdown stays fully overridable.
       setAvailablePos(active);
+      if (active.length > 0) setSelectedPoId(active[0].id);
     })();
     return () => { cancelled = true; };
   }, [customerId, invoiceId]);
 
   const selectedPo = availablePos.find(p => p.id === selectedPoId) ?? null;
+
+  // The cascade this invoice will actually draw against: the selected PO plus every
+  // later PO in date order (never backward/earlier POs the user skipped past). Each
+  // PO's own remaining_amount is first topped back up by whatever THIS invoice had
+  // already utilized against it on a prior save, so re-saving an unchanged invoice
+  // never looks like a new shortfall.
+  const poChain = useMemo(() => {
+    if (!selectedPo) return [];
+    const startIdx = availablePos.findIndex(p => p.id === selectedPo.id);
+    if (startIdx === -1) return [selectedPo];
+    return availablePos.slice(startIdx).map(p => {
+      const priorOwn = existingPoUtilizations.find(u => u.poId === p.id)?.amount ?? 0;
+      return { ...p, remaining_amount: poRound2(p.remaining_amount + priorOwn) };
+    });
+  }, [availablePos, selectedPo, existingPoUtilizations]);
 
   function goBack() {
     onDone();
@@ -514,6 +547,11 @@ export default function GstBillingEntry({ invoiceId, onDone }: { invoiceId?: str
     return { totalHours, rentalSubtotal, up, operatorBatha, additional, discount, taxable, cgstAmt, sgstAmt, igstAmt, totalGst, grandTotal, gstLabel };
   }, [lines, upEnabled, upAmount, operatorBathaEnabled, operatorBathaRate, operatorBathaQuantity, additionalEnabled, additionalAmount, preTaxDiscountEnabled, preTaxDiscountAmount, gstType]);
 
+  // Live "before Save" preview of exactly how the taxable amount will be split across
+  // this invoice's PO cascade - purely a read of allocatePoBalances, never written
+  // anywhere until Save Invoice actually runs (see saveInvoice/proceedSaveInvoice).
+  const poPreview = useMemo(() => selectedPo ? allocatePoBalances(poChain, totals.taxable) : null, [selectedPo, poChain, totals.taxable]);
+
   /** Recomputes and persists totals + rebuilds invoice_items - called after every line add/edit/delete and from Save Invoice. Returns whether the invoice row itself was saved successfully. */
   async function syncInvoiceTotals(currentLines: InvoiceBillingLine[], opts?: { billDate?: string | null; finalize?: boolean }, invoiceOverride?: Invoice): Promise<boolean> {
     const invoice = invoiceOverride ?? activeInvoice;
@@ -613,33 +651,33 @@ export default function GstBillingEntry({ invoiceId, onDone }: { invoiceId?: str
     if (!activeInvoice) return;
     if (lines.length === 0) { show('Please add at least one billing entry before saving the invoice.', 'error'); return; }
     // PO Orders integration — the balance check MUST happen BEFORE any save/finalize
-    // write, not after. If the selected PO's available headroom is insufficient, we
-    // stop here and ask for confirmation via poInsufficientWarning; proceedSaveInvoice
-    // (the only place that writes invoice_status: 'Generated'/applies PO utilization)
-    // is never called until the user explicitly clicks Continue in that dialog - so an
-    // unconfirmed insufficient-balance attempt never finalizes/saves anything. On a
-    // resumed invoice that already utilized this same PO, that prior amount is added
-    // back as headroom — it's this invoice's own room, not a competing deduction (see
-    // applyPoUtilization's reconciliation logic).
-    if (selectedPo) {
-      const priorOwnAmount = existingPoUtilization?.poId === selectedPo.id ? existingPoUtilization.amount : 0;
-      const availableHeadroom = poRound2(selectedPo.remaining_amount + priorOwnAmount);
-      if (totals.taxable > availableHeadroom) {
-        setPoInsufficientWarning({ po: selectedPo, headroom: availableHeadroom, invoiceAmount: totals.taxable });
+    // write, not after. If the PO cascade (selected PO + every later Active PO in date
+    // order) can't fully cover the taxable amount, we stop here and ask for
+    // confirmation via poInsufficientWarning; proceedSaveInvoice (the only place that
+    // writes invoice_status: 'Generated'/applies PO utilization) is never called until
+    // the user explicitly clicks Continue in that dialog - so an unconfirmed
+    // insufficient-balance attempt never finalizes/saves anything.
+    if (selectedPo && poPreview) {
+      if (poPreview.shortfall > 0.004) {
+        setPoInsufficientWarning({ allocations: poPreview.allocations, shortfall: poPreview.shortfall, invoiceAmount: totals.taxable });
         return;
       }
+      void proceedSaveInvoice({ allocations: poPreview.allocations });
+      return;
     }
-    void proceedSaveInvoice({});
+    void proceedSaveInvoice({ allocations: [] });
   }
 
   /** "Continue" on the PO Balance Insufficient confirmation — the only path that
-   *  finalizes/saves the invoice despite an insufficient PO balance; skips the PO
-   *  deduction (never partial, never an incorrect utilization row). */
+   *  finalizes/saves the invoice despite an insufficient PO balance; applies the
+   *  PARTIAL allocations that DO fit (draining every PO they touch), leaving only the
+   *  true shortfall undeducted - never a negative remaining_amount, never more than
+   *  what the cascade could actually cover. */
   function confirmSaveDespiteInsufficientPo() {
     const warning = poInsufficientWarning;
     if (!warning) return;
     setPoInsufficientWarning(null);
-    void proceedSaveInvoice({ skipPoDeduction: true, insufficientPo: warning.po });
+    void proceedSaveInvoice({ allocations: warning.allocations });
   }
 
   /** Cancel/close on the PO Balance Insufficient confirmation — nothing has been
@@ -649,7 +687,7 @@ export default function GstBillingEntry({ invoiceId, onDone }: { invoiceId?: str
     setPoInsufficientWarning(null);
   }
 
-  async function proceedSaveInvoice(opts: { skipPoDeduction?: boolean; insufficientPo?: PurchaseOrder }) {
+  async function proceedSaveInvoice(opts: { allocations: PoAllocation[] }) {
     if (!activeInvoice) return;
     setSavingInvoice(true);
     const saved = await syncInvoiceTotals(lines, { billDate: billDateDraft || null, finalize: true });
@@ -658,17 +696,10 @@ export default function GstBillingEntry({ invoiceId, onDone }: { invoiceId?: str
     // Only on a successful save: show the toast, then redirect to Customer Invoices so
     // the new invoice is visible in the list immediately - never redirect on failure.
     show('Invoice Saved Successfully.', 'success');
-    if (opts.skipPoDeduction) {
-      // User confirmed Continue despite insufficient PO balance - do NOT deduct, do
-      // NOT touch any existing purchase_order_utilization row for this invoice. The
-      // invoice itself still saves in full with all its own amounts unchanged.
-      onDone();
-      return;
-    }
-    // Always reconciles (not only when a PO is currently selected) so that removing
-    // a previously-selected PO on a resumed invoice correctly reverses its old
-    // deduction too - see applyPoUtilization's doc comment.
-    await applyPoUtilization(selectedPo?.id ?? null, totals.taxable, activeInvoice.id, activeInvoice.invoice_number ?? '', billDateDraft || activeInvoice.invoice_date || todayISO());
+    // Always reconciles (even with an empty allocations list) so that removing a
+    // previously-selected PO on a resumed invoice correctly reverses its old
+    // deduction(s) too - see applyPoUtilization's doc comment.
+    await applyPoUtilization(opts.allocations, activeInvoice.id, activeInvoice.invoice_number ?? '', billDateDraft || activeInvoice.invoice_date || todayISO());
     onDone();
   }
 
@@ -694,47 +725,60 @@ export default function GstBillingEntry({ invoiceId, onDone }: { invoiceId?: str
   }
 
   /**
-   * Reconciles this invoice's PO utilization to match its CURRENT selected PO and
-   * taxable amount - called after every successful save, not just the first one.
-   * GST invoices can be reopened and re-saved (see the "resume" flow in
-   * Invoices.tsx), so a naive "always add" would double-deduct the same invoice
-   * every time it's re-saved. Instead: look up any utilization row already linked
-   * to this invoice_id (there is ever at most one), and:
-   *   - same PO as before -> adjust the PO by only the DELTA between the old and
-   *     new amount (handles the invoice's amount changing between saves);
-   *   - different PO (or PO removed) -> fully reverse the old PO's deduction, then
-   *     apply the new one (if any) to the newly selected PO.
-   * Never throws - a PO update failure must never affect the already-saved invoice,
-   * only surface as a warning toast.
+   * Reconciles this invoice's PO utilization row(s) to match its CURRENT allocation
+   * list - called after every successful save, not just the first one. GST invoices
+   * can be reopened and re-saved (see the "resume" flow in Invoices.tsx), so a naive
+   * "always add" would double-deduct the same invoice every time it's re-saved.
+   * Instead, over the union of (PO ids already linked to this invoice) and (PO ids in
+   * the new `allocations`):
+   *   - a PO in both -> adjust it by only the DELTA between its old and new amount
+   *     (handles the invoice's amount, or the split across POs, changing between
+   *     saves);
+   *   - a PO only in the new allocations -> apply the full new amount (fresh row);
+   *   - a PO only in the old linked rows -> fully reverse its deduction and delete
+   *     the row (this invoice no longer draws on it).
+   * `allocations` may be empty (no PO selected, or the invoice was saved without any
+   * PO deduction) - that still runs the reconciliation so a previously-linked PO's
+   * deduction gets correctly reversed. Never throws - a PO update failure must never
+   * affect the already-saved invoice, only surface as a warning toast.
    */
-  async function applyPoUtilization(poId: string | null, amount: number, invoiceId: string, invoiceNumber: string, invoiceDate: string) {
+  async function applyPoUtilization(allocations: PoAllocation[], invoiceId: string, invoiceNumber: string, invoiceDate: string) {
     try {
       const { data: existingRows, error: existErr } = await supabase.from('purchase_order_utilization').select('*').eq('invoice_id', invoiceId);
       if (existErr) throw existErr;
-      const existing = (existingRows ?? [])[0] ?? null;
+      const existing = (existingRows ?? []) as { id: string; purchase_order_id: string; utilized_amount: number }[];
+      const existingByPo = new Map(existing.map(r => [r.purchase_order_id, r]));
+      const newByPo = new Map(allocations.map(a => [a.poId, a.amount]));
+      const allPoIds = new Set([...existingByPo.keys(), ...newByPo.keys()]);
 
-      if (existing && poId && existing.purchase_order_id === poId) {
-        const delta = poRound2(amount - Number(existing.utilized_amount));
-        if (Math.abs(delta) < 0.005) return; // nothing actually changed since the last save
-        const newRemaining = await adjustPoBalance(poId, delta);
-        const { error: updErr } = await supabase.from('purchase_order_utilization').update({
-          utilized_amount: amount, balance_after: newRemaining, invoice_number: invoiceNumber, invoice_date: invoiceDate,
-        }).eq('id', existing.id);
-        if (updErr) throw updErr;
-        return;
-      }
+      for (const poId of allPoIds) {
+        const existingRow = existingByPo.get(poId);
+        const newAmount = newByPo.get(poId) ?? 0;
 
-      if (existing) {
-        await adjustPoBalance(existing.purchase_order_id, -Number(existing.utilized_amount));
-        const { error: delErr } = await supabase.from('purchase_order_utilization').delete().eq('id', existing.id);
-        if (delErr) throw delErr;
-      }
+        if (existingRow && newAmount > 0) {
+          const delta = poRound2(newAmount - Number(existingRow.utilized_amount));
+          if (Math.abs(delta) < 0.005) continue; // nothing actually changed since the last save
+          const newRemaining = await adjustPoBalance(poId, delta);
+          const { error: updErr } = await supabase.from('purchase_order_utilization').update({
+            utilized_amount: newAmount, balance_after: newRemaining, invoice_number: invoiceNumber, invoice_date: invoiceDate,
+          }).eq('id', existingRow.id);
+          if (updErr) throw updErr;
+          continue;
+        }
 
-      if (poId) {
-        const newRemaining = await adjustPoBalance(poId, amount);
+        if (existingRow) {
+          // No longer part of this invoice's allocation - fully reverse and remove.
+          await adjustPoBalance(poId, -Number(existingRow.utilized_amount));
+          const { error: delErr } = await supabase.from('purchase_order_utilization').delete().eq('id', existingRow.id);
+          if (delErr) throw delErr;
+          continue;
+        }
+
+        // Newly allocated to this PO - fresh row.
+        const newRemaining = await adjustPoBalance(poId, newAmount);
         const { error: insErr } = await supabase.from('purchase_order_utilization').insert({
           purchase_order_id: poId, invoice_id: invoiceId, invoice_number: invoiceNumber, invoice_date: invoiceDate,
-          utilized_amount: amount, balance_after: newRemaining,
+          utilized_amount: newAmount, balance_after: newRemaining,
         });
         if (insErr) throw insErr;
       }
@@ -821,11 +865,11 @@ export default function GstBillingEntry({ invoiceId, onDone }: { invoiceId?: str
           )}
           {availablePos.length > 0 && (
             <div className="mt-3">
-              <Field label="Select PO Number (Optional)" hint="This customer has an Active Purchase Order. Selecting one will deduct this invoice's taxable amount from its remaining balance after saving.">
+              <Field label="Select PO Number (Optional)" hint="This customer has Active Purchase Order(s), oldest first. The invoice's taxable amount is deducted starting from the selected PO's balance and automatically continues into the next oldest Active PO if it runs short - no manual splitting needed.">
                 <SearchableSelect
                   value={selectedPoId}
                   onChange={setSelectedPoId}
-                  options={[{ value: '', label: 'No PO - invoice as usual' }, ...availablePos.map(p => ({ value: p.id, label: `${p.po_number} - ${formatDate(p.po_date)} - ${formatCurrency(p.grand_total)} - Remaining ${formatCurrency(p.remaining_amount)}` }))]}
+                  options={[{ value: '', label: 'No PO - invoice as usual' }, ...availablePos.map(p => ({ value: p.id, label: `${p.po_number} • ${formatDate(p.po_date)} • PO ${formatCurrency(p.grand_total)} • Remaining ${formatCurrency(p.remaining_amount)}` }))]}
                   placeholder="No PO - invoice as usual"
                   disabled={!!activeInvoice}
                 />
@@ -848,9 +892,11 @@ export default function GstBillingEntry({ invoiceId, onDone }: { invoiceId?: str
             <div className="flex items-center justify-between mb-2">
               <p className="text-xs font-bold uppercase tracking-wide text-slate-500">Customer Information</p>
               <div className="flex items-center gap-2">
-                {selectedPo && (
+                {selectedPo && poPreview && (
                   <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-bold bg-amber-50 text-amber-700 border border-amber-100">
-                    PO: {selectedPo.po_number} (Remaining {formatCurrency(selectedPo.remaining_amount)})
+                    {poPreview.allocations.length <= 1
+                      ? `PO: ${selectedPo.po_number} (Remaining ${formatCurrency(selectedPo.remaining_amount)})`
+                      : `PO: ${poPreview.allocations.length} POs in use, starting ${selectedPo.po_number}`}
                   </span>
                 )}
                 <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-bold bg-blue-50 text-blue-700 border border-blue-100">
@@ -1092,6 +1138,27 @@ export default function GstBillingEntry({ invoiceId, onDone }: { invoiceId?: str
                       <span className="font-bold text-blue-700 tabular-nums">{formatCurrency(totals.grandTotal)}</span>
                     </div>
                   </div>
+                  {selectedPo && poPreview && poPreview.allocations.length > 0 && (
+                    <div className="p-3 bg-amber-50 border border-amber-100 rounded-lg space-y-1.5 text-xs">
+                      <p className="font-bold uppercase tracking-wide text-amber-700">PO Allocation Preview</p>
+                      {poPreview.allocations.map(a => {
+                        const po = poChain.find(p => p.id === a.poId);
+                        const after = po ? poRound2(po.remaining_amount - a.amount) : 0;
+                        return (
+                          <div key={a.poId} className="flex justify-between text-slate-600">
+                            <span>{a.poNumber} Used</span>
+                            <b className="tabular-nums text-slate-800">{formatCurrency(a.amount)} <span className="font-normal text-slate-400">(Remaining {formatCurrency(after)})</span></b>
+                          </div>
+                        );
+                      })}
+                      <div className="flex justify-between pt-1 border-t border-dashed border-amber-200 font-bold text-amber-800">
+                        <span>Total Allocated</span><span className="tabular-nums">{formatCurrency(poRound2(totals.taxable - poPreview.shortfall))}</span>
+                      </div>
+                      {poPreview.shortfall > 0.004 && (
+                        <p className="flex items-center gap-1.5 text-red-600 font-semibold pt-1"><AlertTriangle className="w-3.5 h-3.5" />Shortfall {formatCurrency(poPreview.shortfall)} - no further Active PO available.</p>
+                      )}
+                    </div>
+                  )}
                   {/* Print/Excel intentionally not offered here - this is the
                       pre-generation entry screen. Both remain available on the
                       generated invoice via Customer Invoices' own Print/Excel
@@ -1131,12 +1198,16 @@ export default function GstBillingEntry({ invoiceId, onDone }: { invoiceId?: str
           <div className="space-y-3 text-sm">
             <p className="flex items-center gap-1.5 font-bold text-red-600"><AlertTriangle className="w-4 h-4" />PO BALANCE INSUFFICIENT</p>
             <div className="space-y-1.5 p-3 bg-red-50 border border-red-100 rounded-lg">
-              <div className="flex justify-between"><span className="text-slate-500">Current PO Balance</span><b className="tabular-nums">{formatCurrency(poInsufficientWarning.headroom)}</b></div>
+              {poInsufficientWarning.allocations.length === 0 ? (
+                <div className="flex justify-between"><span className="text-slate-500">Available PO Balance</span><b className="tabular-nums">{formatCurrency(0)}</b></div>
+              ) : poInsufficientWarning.allocations.map(a => (
+                <div key={a.poId} className="flex justify-between"><span className="text-slate-500">PO {a.poNumber} Used</span><b className="tabular-nums">{formatCurrency(a.amount)}</b></div>
+              ))}
               <div className="flex justify-between"><span className="text-slate-500">Invoice Amount</span><b className="tabular-nums">{formatCurrency(poInsufficientWarning.invoiceAmount)}</b></div>
-              <div className="flex justify-between pt-1.5 border-t border-dashed border-red-200"><span className="font-semibold text-red-700">Shortfall</span><b className="tabular-nums text-red-700">{formatCurrency(round2(poInsufficientWarning.invoiceAmount - poInsufficientWarning.headroom))}</b></div>
+              <div className="flex justify-between pt-1.5 border-t border-dashed border-red-200"><span className="font-semibold text-red-700">Shortfall</span><b className="tabular-nums text-red-700">{formatCurrency(poInsufficientWarning.shortfall)}</b></div>
             </div>
             <p className="text-xs text-slate-500">
-              This invoice has not been saved yet. Click Continue to save it in full — this amount will NOT be deducted from PO {poInsufficientWarning.po.po_number} because it exceeds the available balance. You can request an additional PO first, or Cancel to adjust the invoice or PO selection.
+              This invoice has not been saved yet. Click Continue to save it in full — the amount above will be deducted from the PO(s) shown, but the {formatCurrency(poInsufficientWarning.shortfall)} shortfall will NOT be deducted from any PO because no further Active PO balance is available. You can request an additional PO first, or Cancel to adjust the invoice or PO selection.
             </p>
           </div>
         )}
@@ -1146,10 +1217,10 @@ export default function GstBillingEntry({ invoiceId, onDone }: { invoiceId?: str
         open={poRequestModalOpen}
         onClose={() => setPoRequestModalOpen(false)}
         customers={customers}
-        initial={poInsufficientWarning ? {
-          customerId: poInsufficientWarning.po.customer_id,
-          poNumber: poInsufficientWarning.po.po_number,
-          currentBalance: poInsufficientWarning.headroom,
+        initial={poInsufficientWarning && selectedCustomer ? {
+          customerId: selectedCustomer.id,
+          poNumber: poInsufficientWarning.allocations.map(a => a.poNumber).join(', '),
+          currentBalance: 0,
           requiredInvoiceAmount: poInsufficientWarning.invoiceAmount,
         } : null}
       />

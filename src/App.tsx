@@ -38,6 +38,9 @@ const Quotations = lazy(() => import('@/pages/Quotations'));
 const PoOrders = lazy(() => import('@/pages/PoOrders'));
 const PurchaseOrders = lazy(() => import('@/pages/PurchaseOrders'));
 const Purchase = lazy(() => import('@/pages/Purchase'));
+const PoOrdersReport = lazy(() => import('@/pages/PoOrdersReport'));
+const PurchaseReport = lazy(() => import('@/pages/PurchaseReport'));
+const DailyVehicleReport = lazy(() => import('@/pages/DailyVehicleReport'));
 
 function AppContent() {
   const { session, profile, loading, allowedPages, isAdmin, isOwner } = useAuth();
@@ -114,18 +117,19 @@ function AppContent() {
       case '/settings/users': return <UserManagement />;
       case '/settings/pages': return <PagesManagement />;
       case '/settings/role-pages': return <RolePagesManagement />;
-      case '/reports/trips': return <Reports type="trips" />;
       case '/reports/diesel': return <Reports type="diesel" />;
       case '/reports/attendance': return <Reports type="attendance" />;
       case '/reports/maintenance': return <Reports type="maintenance" />;
       case '/reports/emi': return <Reports type="emi" />;
       case '/reports/salary': return <Reports type="salary" />;
-      case '/reports/daily-vehicle': return <Reports type="daily-vehicle" />;
+      case '/reports/daily-vehicle': return <DailyVehicleReport />;
       case '/reports/monthly': return <Reports type="monthly" />;
       case '/reports/profit-loss': return <Reports type="profit-loss" />;
       case '/reports/cash-bills': return <Reports type="cash-bills" />;
       case '/reports/customer-billing': return <Reports type="customer-billing" />;
       case '/reports/vehicle-wise': return <VehicleWiseReport />;
+      case '/reports/po-orders': return <PoOrdersReport />;
+      case '/reports/purchase': return <PurchaseReport />;
       default: return (isAdmin || isOwner) ? <Dashboard onNavigate={navigate} /> : <StaffDashboard onNavigate={navigate} />;
     }
   };

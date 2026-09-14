@@ -5,14 +5,14 @@ import { useSettings } from '@/context/SettingsContext';
 import { DataTable, type Column } from '@/components/ui/DataTable';
 import { Button, Field, inputClass, LoadingSpinner, StatusBadge } from '@/components/ui/common';
 import { Download, Printer } from 'lucide-react';
-import { formatCurrency, formatDate, formatTime, todayISO, monthName } from '@/lib/utils';
+import { formatCurrency, formatDate, todayISO, monthName } from '@/lib/utils';
 import { exportToXlsxWithCompany } from '@/lib/exportXlsx';
 import { printReportWithCompany } from '@/lib/printReport';
 import { getReportLogoUrl } from '@/lib/reportLogo';
 import { DatePicker } from '@/components/ui/DatePicker';
-import type { TripWithRelations, DieselWithRelations, MaintenanceWithRelations, EmiWithRelations, AttendanceWithEmployee, Employee, Vehicle, InvoiceWithRelations, InvoiceVehicle } from '@/types';
+import type { DieselWithRelations, MaintenanceWithRelations, EmiWithRelations, AttendanceWithEmployee, Employee, Vehicle, InvoiceWithRelations, InvoiceVehicle } from '@/types';
 
-type ReportType = 'trips' | 'diesel' | 'attendance' | 'maintenance' | 'emi' | 'salary' | 'daily-vehicle' | 'monthly' | 'profit-loss' | 'cash-bills' | 'customer-billing';
+type ReportType = 'diesel' | 'attendance' | 'maintenance' | 'emi' | 'salary' | 'monthly' | 'profit-loss' | 'cash-bills' | 'customer-billing';
 
 interface ReportProps {
   type: ReportType;
@@ -67,13 +67,11 @@ export default function Reports({ type }: ReportProps) {
     setErrorMsg(null);
     try {
       switch (type) {
-        case 'trips': await fetchTripsReport(); break;
         case 'diesel': await fetchDieselReport(); break;
         case 'attendance': await fetchAttendanceReport(); break;
         case 'maintenance': await fetchMaintenanceReport(); break;
         case 'emi': await fetchEmiReport(); break;
         case 'salary': await fetchSalaryReport(); break;
-        case 'daily-vehicle': await fetchDailyVehicleReport(); break;
         case 'monthly': await fetchMonthlyReport(); break;
         case 'profit-loss': await fetchProfitLossReport(); break;
         case 'cash-bills': await fetchInvoiceReport('Cash'); break;
@@ -88,20 +86,6 @@ export default function Reports({ type }: ReportProps) {
   }, [type, filters]);
 
   useEffect(() => { fetchData(); }, [fetchData]);
-
-  const fetchTripsReport = async () => {
-    let q = supabase.from('trips').select('*, vehicle:vehicles(id,registration_number,model,type,capacity), driver:employees(id,name,role), customer:customers(id,name), sessions:trip_sessions(*)').eq('is_cancelled', false);
-    if (filters.from) q = q.gte('trip_date', filters.from);
-    if (filters.to) q = q.lte('trip_date', filters.to);
-    if (filters.vehicle_id) q = q.eq('vehicle_id', filters.vehicle_id);
-    if (filters.driver_id) q = q.eq('driver_id', filters.driver_id);
-    if (filters.payment_status) q = q.eq('bill_status', filters.payment_status);
-    const { data: result, error } = await q.order('trip_date', { ascending: false });
-    if (error) { console.error('Trips report query error:', error); setErrorMsg('Unable to load Trip report data.'); setData([]); return; }
-    let filtered = (result ?? []) as TripWithRelations[];
-    if (filters.place_of_work) filtered = filtered.filter(tr => tr.place_of_work?.toLowerCase().includes(filters.place_of_work.toLowerCase()));
-    setData(filtered);
-  };
 
   const fetchDieselReport = async () => {
     let q = supabase.from('diesel_entries').select('*, vehicle:vehicles(id,registration_number,type)').eq('is_cancelled', false);
@@ -165,47 +149,6 @@ export default function Reports({ type }: ReportProps) {
       return { employee: emp, present, absent, holiday, payable, advance, balance, salary: Number(emp.salary) };
     });
     setData(salaryData);
-  };
-
-  const fetchDailyVehicleReport = async () => {
-    const date = filters.from;
-    const [invRes, dRes, mRes] = await Promise.all([
-      supabase.from('invoices').select('id, invoice_number, invoice_date, invoice_type, grand_total, payment_status, place_of_work, driver_name, is_cancelled, invoice_vehicles:invoice_vehicles(*, vehicle:vehicles(id,registration_number,type), driver:employees(id,name,role))').eq('invoice_date', date).eq('is_cancelled', false),
-      supabase.from('diesel_entries').select('*, vehicle:vehicles(id)').eq('diesel_date', date).eq('is_cancelled', false),
-      supabase.from('maintenance').select('*, vehicle:vehicles(id)').eq('maintenance_date', date).eq('is_cancelled', false),
-    ]);
-    if (invRes.error) { console.error('Daily vehicle report error:', invRes.error); setErrorMsg('Unable to load daily vehicle report.'); setData([]); return; }
-    const invoices = (invRes.data ?? []) as (InvoiceWithRelations & { invoice_vehicles?: (InvoiceVehicle & { vehicle: { id: string; registration_number: string; type: string } | null; driver: { id: string; name: string; role: string } | null })[] })[];
-    const diesel = (dRes.data ?? []) as DieselWithRelations[];
-    const maint = (mRes.data ?? []) as MaintenanceWithRelations[];
-    const rows: { trip: TripWithRelations; dAmount: number; dLiters: number; mAmount: number; net: number }[] = [];
-    for (const inv of invoices) {
-      for (const iv of inv.invoice_vehicles ?? []) {
-        const vehId = iv.vehicle_id ?? iv.vehicle?.id ?? '';
-        const dAmount = diesel.filter(d => d.vehicle_id === vehId).reduce((s, d) => s + Number(d.total_amount), 0);
-        const dLiters = diesel.filter(d => d.vehicle_id === vehId).reduce((s, d) => s + Number(d.quantity_liters), 0);
-        const mAmount = maint.filter(m => m.vehicle_id === vehId).reduce((s, m) => s + Number(m.amount), 0);
-        const totalCost = dAmount + mAmount + Number(iv.batha);
-        const net = Number(iv.vehicle_total) - totalCost;
-        rows.push({
-          trip: {
-            trip_number: inv.invoice_number,
-            trip_date: inv.invoice_date,
-            vehicle: iv.vehicle ? { id: iv.vehicle.id, registration_number: iv.vehicle.registration_number, type: iv.vehicle.type } : null,
-            driver: iv.driver ? { id: iv.driver.id, name: iv.driver.name, role: iv.driver.role } : { id: '', name: inv.driver_name ?? '-', role: '' },
-            place_of_work: iv.place_of_work ?? inv.place_of_work ?? '-',
-            in_time: null, out_time: null,
-            total_hours: Number(iv.total_hours) || 0,
-            rental_amount: Number(iv.rental_amount) || 0,
-            batha: Number(iv.batha) || 0,
-            total_amount: Number(iv.vehicle_total) || 0,
-            bill_status: (inv.payment_status ?? 'Pending') as 'Paid' | 'Pending',
-          } as TripWithRelations,
-          dAmount, dLiters, mAmount, net,
-        });
-      }
-    }
-    setData(rows);
   };
 
   const fetchMonthlyReport = async () => {
@@ -303,9 +246,9 @@ export default function Reports({ type }: ReportProps) {
   };
 
   const reportTitles: Record<ReportType, string> = {
-    trips: t('tripReport'), diesel: t('dieselReport'), attendance: t('attendanceReport'),
+    diesel: t('dieselReport'), attendance: t('attendanceReport'),
     maintenance: t('maintenanceReport'), emi: t('emiReport'), salary: t('salaryStatement'),
-    'daily-vehicle': t('dailyVehicleReport'), monthly: t('monthlyReport'),
+    monthly: t('monthlyReport'),
     'profit-loss': t('profitLoss'), 'cash-bills': t('cashBillReport'),
     'customer-billing': t('customerBillingReport'),
   };
@@ -346,19 +289,6 @@ export default function Reports({ type }: ReportProps) {
     const monthYearRange = `${monthName(filters.month - 1)} ${filters.year}`;
 
     switch (type) {
-      case 'trips': {
-        const tripsData = data as TripWithRelations[];
-        return {
-          filename: `Trip_Report_${filters.from}_${filters.to}.xlsx`, title: 'Trip Entries Report',
-          headers: [t('tripNumber'), t('date'), t('vehicleNumber'), t('driver'), t('customer'), t('placeOfWork'), t('totalHours'), t('sessions'), t('rentalAmount'), t('batha'), t('totalAmount'), t('billStatus')],
-          rows: tripsData.map(tr => {
-            const ss = (tr as TripWithRelations & { sessions?: unknown[] }).sessions;
-            return [tr.trip_number, formatDate(tr.trip_date), tr.vehicle?.registration_number ?? '-', tr.driver?.name ?? '-', tr.customer?.name ?? '-', tr.place_of_work, tr.total_hours, ss && ss.length > 0 ? ss.length : 1, tr.rental_amount, tr.batha, tr.total_amount, tr.bill_status];
-          }),
-          totalRow: [t('total'), '', '', '', '', '', tripsData.reduce((s, tr) => s + tr.total_hours, 0), '', tripsData.reduce((s, tr) => s + Number(tr.rental_amount), 0), tripsData.reduce((s, tr) => s + Number(tr.batha), 0), tripsData.reduce((s, tr) => s + Number(tr.total_amount), 0), ''],
-          dateRange: genericDateRange, filterStr: genericFilterStr,
-        };
-      }
       case 'diesel': {
         const dieselData = data as DieselWithRelations[];
         return {
@@ -413,16 +343,6 @@ export default function Reports({ type }: ReportProps) {
           rows: salData.map(s => [s.employee.name, s.employee.role, s.salary, s.present, s.absent, s.holiday, s.advance, s.payable, s.balance]),
           totalRow: [t('total'), '', salData.reduce((s, d) => s + d.salary, 0), salData.reduce((s, d) => s + d.present, 0), salData.reduce((s, d) => s + d.absent, 0), salData.reduce((s, d) => s + d.holiday, 0), salData.reduce((s, d) => s + d.advance, 0), salData.reduce((s, d) => s + d.payable, 0), salData.reduce((s, d) => s + d.balance, 0)],
           dateRange: monthYearRange, filterStr: '',
-        };
-      }
-      case 'daily-vehicle': {
-        const dvData = data as { trip: TripWithRelations; dAmount: number; dLiters: number; mAmount: number; net: number }[];
-        return {
-          filename: `Daily_Vehicle_Report_${filters.from}.xlsx`, title: 'Daily Vehicle Report',
-          headers: [t('date'), t('vehicleNumber'), t('driver'), t('placeOfWork'), t('inTime'), t('outTime'), t('totalHours'), t('rentalAmount'), t('batha'), t('totalAmount'), t('dieselLiters'), t('dieselAmount'), t('maintenance'), t('totalCost'), t('netAmount'), t('billStatus')],
-          rows: dvData.map(r => [formatDate(r.trip.trip_date), r.trip.vehicle?.registration_number ?? '-', r.trip.driver?.name ?? '-', r.trip.place_of_work, formatTime(r.trip.in_time), formatTime(r.trip.out_time), r.trip.total_hours, r.trip.rental_amount, r.trip.batha, r.trip.total_amount, r.dLiters, r.dAmount, r.mAmount, r.dAmount + r.mAmount + r.trip.batha, r.net, r.trip.bill_status]),
-          totalRow: [t('total'), '', '', '', '', '', dvData.reduce((s, r) => s + r.trip.total_hours, 0), dvData.reduce((s, r) => s + Number(r.trip.rental_amount), 0), dvData.reduce((s, r) => s + Number(r.trip.batha), 0), dvData.reduce((s, r) => s + Number(r.trip.total_amount), 0), dvData.reduce((s, r) => s + r.dLiters, 0), dvData.reduce((s, r) => s + r.dAmount, 0), dvData.reduce((s, r) => s + r.mAmount, 0), dvData.reduce((s, r) => s + r.dAmount + r.mAmount + r.trip.batha, 0), dvData.reduce((s, r) => s + r.net, 0), ''],
-          dateRange: formatDate(filters.from), filterStr: genericFilterStr,
         };
       }
       case 'monthly':
@@ -490,7 +410,6 @@ export default function Reports({ type }: ReportProps) {
 
   const showMonthYear = type === 'salary' || type === 'monthly';
   const showDateRange = type !== 'emi' && !showMonthYear;
-  const showDailyDate = type === 'daily-vehicle';
   const showEmiDateRange = type === 'emi';
 
   const setQuickRange = (range: 'today' | 'week' | 'month' | 'all') => {
@@ -534,7 +453,6 @@ export default function Reports({ type }: ReportProps) {
   const printFilterSummary = (() => {
     const parts: string[] = [];
     if (showDateRange || showEmiDateRange) parts.push(`${t('from')}: ${formatDate(filters.from)} - ${t('to')}: ${formatDate(filters.to)}`);
-    if (showDailyDate) parts.push(`${t('date')}: ${formatDate(filters.from)}`);
     if (showMonthYear) parts.push(`${monthName(filters.month - 1)} ${filters.year}`);
     if (filters.vehicle_id) parts.push(`${t('vehicleNumber')}: ${vehicles.find(v => v.id === filters.vehicle_id)?.registration_number ?? ''}`);
     if (filters.driver_id) parts.push(`${t('driver')}: ${employees.find(e => e.id === filters.driver_id)?.name ?? ''}`);
@@ -582,11 +500,6 @@ export default function Reports({ type }: ReportProps) {
               </div>
             </>
           )}
-          {showDailyDate && (
-            <Field label={t('date')}>
-              <DatePicker value={filters.from} onChange={v => setFilters(f => ({ ...f, from: v, to: v }))} />
-            </Field>
-          )}
           {showMonthYear && (
             <>
               <Field label={t('month')}>
@@ -599,7 +512,7 @@ export default function Reports({ type }: ReportProps) {
               </Field>
             </>
           )}
-          {(type === 'trips' || type === 'daily-vehicle' || type === 'diesel' || type === 'maintenance') && (
+          {(type === 'diesel' || type === 'maintenance') && (
             <Field label={t('vehicleNumber')}>
               <select className={inputClass()} value={filters.vehicle_id} onChange={e => setFilters(f => ({ ...f, vehicle_id: e.target.value }))}>
                 <option value="">{t('all')}</option>
@@ -607,20 +520,7 @@ export default function Reports({ type }: ReportProps) {
               </select>
             </Field>
           )}
-          {(type === 'trips' || type === 'daily-vehicle') && (
-            <>
-              <Field label={t('driver')}>
-                <select className={inputClass()} value={filters.driver_id} onChange={e => setFilters(f => ({ ...f, driver_id: e.target.value }))}>
-                  <option value="">{t('all')}</option>
-                  {employees.filter(e => e.role === 'Driver' || e.role === 'Operator').map(e => <option key={e.id} value={e.id}>{e.name}</option>)}
-                </select>
-              </Field>
-              <Field label={t('placeOfWork')}>
-                <input className={inputClass()} value={filters.place_of_work} onChange={e => setFilters(f => ({ ...f, place_of_work: e.target.value }))} />
-              </Field>
-            </>
-          )}
-          {(type === 'trips' || type === 'cash-bills' || type === 'customer-billing') && (
+          {(type === 'cash-bills' || type === 'customer-billing') && (
             <Field label={t('paymentStatus')}>
               <select className={inputClass()} value={filters.payment_status} onChange={e => setFilters(f => ({ ...f, payment_status: e.target.value }))}>
                 <option value="">{t('all')}</option>
@@ -692,53 +592,6 @@ function ReportData({ type, data, t, filters, settings }: { type: ReportType; da
   }
 
   switch (type) {
-    case 'trips': {
-      const trips = data as TripWithRelations[];
-      const totalRental = trips.reduce((s, tr) => s + Number(tr.rental_amount), 0);
-      const totalBatha = trips.reduce((s, tr) => s + Number(tr.batha), 0);
-      const totalAmount = trips.reduce((s, tr) => s + Number(tr.total_amount), 0);
-      const totalHours = trips.reduce((s, tr) => s + Number(tr.total_hours), 0);
-      const totalPaid = trips.filter(tr => tr.bill_status === 'Paid').reduce((s, tr) => s + Number(tr.total_amount), 0);
-      const totalPending = totalAmount - totalPaid;
-      const columns: Column<TripWithRelations>[] = [
-        { key: 'trip_number', header: t('tripNumber'), sortable: true },
-        { key: 'trip_date', header: t('date'), sortable: true, render: tr => formatDate(tr.trip_date) },
-        { key: 'vehicle', header: t('vehicleNumber'), render: tr => tr.vehicle?.registration_number ?? '-' },
-        { key: 'driver', header: t('driver'), render: tr => tr.driver?.name ?? '-' },
-        { key: 'customer', header: t('customer'), render: tr => tr.customer?.name ?? '-' },
-        { key: 'place_of_work', header: t('placeOfWork') },
-        { key: 'total_hours', header: t('totalHours'), align: 'right', sortable: true, render: tr => `${tr.total_hours}h` },
-        { key: 'sessions', header: t('sessions'), align: 'center', render: tr => {
-          const ss = (tr as TripWithRelations & { sessions?: { session_number: number }[] }).sessions;
-          if (!ss || ss.length === 0) return '1';
-          return ss.length;
-        } },
-        { key: 'rental_amount', header: t('rentalAmount'), align: 'right', render: tr => formatCurrency(tr.rental_amount), sortable: true },
-        { key: 'batha', header: t('batha'), align: 'right', render: tr => formatCurrency(tr.batha) },
-        { key: 'total_amount', header: t('totalAmount'), align: 'right', render: tr => formatCurrency(tr.total_amount), sortable: true },
-        { key: 'bill_status', header: t('billStatus'), render: tr => <StatusBadge status={tr.bill_status} /> },
-      ];
-      return (
-        <div className="space-y-3">
-          <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-6 gap-3">
-            <div className="bg-white rounded-lg border border-slate-200 p-3"><div className="text-xs text-slate-500">Total Trips</div><div className="text-lg font-bold text-slate-800">{trips.length}</div></div>
-            <div className="bg-white rounded-lg border border-slate-200 p-3"><div className="text-xs text-slate-500">Total Hours</div><div className="text-lg font-bold text-slate-800">{totalHours}h</div></div>
-            <div className="bg-white rounded-lg border border-slate-200 p-3"><div className="text-xs text-slate-500">Rental Amount</div><div className="text-lg font-bold text-slate-800">{formatCurrency(totalRental)}</div></div>
-            <div className="bg-white rounded-lg border border-slate-200 p-3"><div className="text-xs text-slate-500">Batha</div><div className="text-lg font-bold text-slate-800">{formatCurrency(totalBatha)}</div></div>
-            <div className="bg-white rounded-lg border border-emerald-200 p-3"><div className="text-xs text-slate-500">Paid</div><div className="text-lg font-bold text-emerald-600">{formatCurrency(totalPaid)}</div></div>
-            <div className="bg-white rounded-lg border border-red-200 p-3"><div className="text-xs text-slate-500">Pending</div><div className="text-lg font-bold text-red-600">{formatCurrency(totalPending)}</div></div>
-          </div>
-          <DataTable columns={columns} data={trips} pageSize={50} showSerialNumber />
-          <PrintFooter companyName={settings?.company_name} items={[
-            { label: 'Total Trips', value: String(trips.length) },
-            { label: 'Rental Amount', value: formatCurrency(totalRental) },
-            { label: 'Batha', value: formatCurrency(totalBatha) },
-            { label: 'Paid', value: formatCurrency(totalPaid), color: 'emerald' },
-            { label: 'Pending', value: formatCurrency(totalPending), color: 'red' },
-          ]} />
-        </div>
-      );
-    }
     case 'diesel': {
       const diesel = data as DieselWithRelations[];
       const totalLiters = diesel.reduce((s, d) => s + Number(d.quantity_liters), 0);
@@ -912,42 +765,6 @@ function ReportData({ type, data, t, filters, settings }: { type: ReportType; da
             { label: 'Total Payable', value: formatCurrency(totalPayable) },
             { label: 'Total Advance', value: formatCurrency(totalAdvance) },
             { label: 'Total Balance', value: formatCurrency(totalBalance), color: totalBalance >= 0 ? 'emerald' : 'red' },
-          ]} />
-        </div>
-      );
-    }
-    case 'daily-vehicle': {
-      const dv = data as { trip: TripWithRelations; dAmount: number; dLiters: number; mAmount: number; net: number }[];
-      const columns: Column<typeof dv[number]>[] = [
-        { key: 'date', header: t('date'), render: r => formatDate(r.trip.trip_date) },
-        { key: 'vehicle', header: t('vehicleNumber'), render: r => r.trip.vehicle?.registration_number ?? '-' },
-        { key: 'driver', header: t('driver'), render: r => r.trip.driver?.name ?? '-' },
-        { key: 'place', header: t('placeOfWork'), render: r => r.trip.place_of_work },
-        { key: 'in_time', header: t('inTime'), render: r => formatTime(r.trip.in_time) },
-        { key: 'out_time', header: t('outTime'), render: r => formatTime(r.trip.out_time) },
-        { key: 'hours', header: t('totalHours'), align: 'right', render: r => `${r.trip.total_hours}h` },
-        { key: 'rental', header: t('rentalAmount'), align: 'right', render: r => formatCurrency(r.trip.rental_amount) },
-        { key: 'batha', header: t('batha'), align: 'right', render: r => formatCurrency(r.trip.batha) },
-        { key: 'total_bill', header: t('totalAmount'), align: 'right', render: r => formatCurrency(r.trip.total_amount) },
-        { key: 'diesel_liters', header: t('dieselLiters'), align: 'right', render: r => `${r.dLiters} L` },
-        { key: 'diesel_amount', header: t('dieselAmount'), align: 'right', render: r => formatCurrency(r.dAmount) },
-        { key: 'maintenance', header: t('maintenance'), align: 'right', render: r => formatCurrency(r.mAmount) },
-        { key: 'total_cost', header: t('totalCost'), align: 'right', render: r => formatCurrency(r.dAmount + r.mAmount + r.trip.batha) },
-        { key: 'net', header: t('netAmount'), align: 'right', render: r => <span className={r.net >= 0 ? 'text-emerald-600 font-medium' : 'text-red-600 font-medium'}>{formatCurrency(r.net)}</span> },
-        { key: 'bill_status', header: t('billStatus'), render: r => <StatusBadge status={r.trip.bill_status} /> },
-      ];
-      const totalRentalDv = dv.reduce((s, r) => s + Number(r.trip.rental_amount), 0);
-      const totalDieselDv = dv.reduce((s, r) => s + r.dAmount, 0);
-      const totalMaintDv = dv.reduce((s, r) => s + r.mAmount, 0);
-      const totalNetDv = dv.reduce((s, r) => s + r.net, 0);
-      return (
-        <div className="space-y-3">
-          <DataTable columns={columns} data={dv} pageSize={50} showSerialNumber />
-          <PrintFooter companyName={settings?.company_name} items={[
-            { label: 'Rental Amount', value: formatCurrency(totalRentalDv) },
-            { label: t('dieselAmount'), value: formatCurrency(totalDieselDv) },
-            { label: t('maintenance'), value: formatCurrency(totalMaintDv) },
-            { label: t('netAmount'), value: formatCurrency(totalNetDv), color: totalNetDv >= 0 ? 'emerald' : 'red' },
           ]} />
         </div>
       );

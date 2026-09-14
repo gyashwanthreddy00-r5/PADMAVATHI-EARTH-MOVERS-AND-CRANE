@@ -113,7 +113,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             { path: '/settings/users', label_key: 'userManagement', label: 'User Management', section: 'settings', icon: 'Users', sort_order: 18 },
             { path: '/settings/pages', label_key: 'pagesManagement', label: 'Pages Management', section: 'settings', icon: 'FileText', sort_order: 31 },
             { path: '/settings/role-pages', label_key: 'rolePageAssignment', label: 'Role-Page Assignment', section: 'settings', icon: 'Link', sort_order: 32 },
-            { path: '/reports/trips', label_key: 'tripReport', label: 'Trip Report', section: 'reports', icon: 'BarChart3', sort_order: 19 },
             { path: '/reports/diesel', label_key: 'dieselReport', label: 'Diesel Report', section: 'reports', icon: 'BarChart3', sort_order: 20 },
             { path: '/reports/attendance', label_key: 'attendanceReport', label: 'Attendance Report', section: 'reports', icon: 'BarChart3', sort_order: 21 },
             { path: '/reports/maintenance', label_key: 'maintenanceReport', label: 'Maintenance Report', section: 'reports', icon: 'BarChart3', sort_order: 22 },
@@ -124,6 +123,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             { path: '/reports/profit-loss', label_key: 'profitLoss', label: 'Profit & Loss', section: 'reports', icon: 'TrendingUp', sort_order: 27 },
             { path: '/reports/cash-bills', label_key: 'cashBillReport', label: 'Cash Bill Report', section: 'reports', icon: 'BarChart3', sort_order: 28 },
             { path: '/reports/vehicle-wise', label_key: 'vehicleWiseReport', label: 'Vehicle-Wise Report', section: 'reports', icon: 'TrendingUp', sort_order: 30 },
+            { path: '/reports/po-orders', label_key: 'poOrdersReport', label: 'PO Orders Report', section: 'reports', icon: 'ClipboardList', sort_order: 37 },
+            { path: '/reports/purchase', label_key: 'purchaseReportNav', label: 'Purchase Report', section: 'reports', icon: 'ShoppingCart', sort_order: 38 },
           ];
           // Fire-and-forget: upsert each route. Errors are silently ignored so they
           // never block the login flow. Param names must match the SQL function's

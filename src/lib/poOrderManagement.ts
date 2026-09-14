@@ -47,3 +47,30 @@ export function isPoLowBalance(po: Pick<PurchaseOrder, 'remaining_amount' | 'val
   if (getEffectivePoStatus(po) !== 'Active') return false;
   return Number(po.remaining_amount) > 0 && Number(po.remaining_amount) <= PO_LOW_BALANCE_THRESHOLD;
 }
+
+export interface PoAllocation { poId: string; poNumber: string; amount: number; }
+
+/**
+ * Greedily drains each PO's remaining balance in order (`pos` must already be
+ * sorted oldest po_date first) until `amount` is fully covered or POs run out.
+ * Never lets a PO's allocation exceed its own remaining balance, so a caller
+ * that applies these allocations can never push a PO's remaining_amount below
+ * zero. `shortfall` is whatever part of `amount` no PO in the list could cover.
+ */
+export function allocatePoBalances(
+  pos: Pick<PurchaseOrder, 'id' | 'po_number' | 'remaining_amount'>[],
+  amount: number,
+): { allocations: PoAllocation[]; shortfall: number } {
+  let remaining = round2(Math.max(0, amount));
+  const allocations: PoAllocation[] = [];
+  for (const po of pos) {
+    if (remaining <= 0) break;
+    const available = round2(Math.max(0, Number(po.remaining_amount) || 0));
+    if (available <= 0) continue;
+    const take = round2(Math.min(available, remaining));
+    if (take <= 0) continue;
+    allocations.push({ poId: po.id, poNumber: po.po_number, amount: take });
+    remaining = round2(remaining - take);
+  }
+  return { allocations, shortfall: Math.max(0, remaining) };
+}
