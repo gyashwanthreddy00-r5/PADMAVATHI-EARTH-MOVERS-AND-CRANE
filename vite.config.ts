@@ -18,8 +18,8 @@ export default defineConfig(({ mode }) => {
   return {
     plugins: [react()],
     define: {
-      'import.meta.env.VITE_SUPABASE_URL': JSON.stringify(supabaseUrl),
-      'import.meta.env.VITE_SUPABASE_ANON_KEY': JSON.stringify(supabaseAnonKey),
+      __SUPABASE_URL__: JSON.stringify(supabaseUrl),
+      __SUPABASE_ANON_KEY__: JSON.stringify(supabaseAnonKey),
     },
     resolve: {
       alias: {
