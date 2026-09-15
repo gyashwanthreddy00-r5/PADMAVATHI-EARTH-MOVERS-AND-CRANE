@@ -904,9 +904,10 @@ Deno.serve(async (req: Request) => {
     const htmlBody = finalBody.replace(/\n/g, "<br/>");
 
     const senderEmail = Deno.env.get("RESEND_FROM_EMAIL") ?? "invoices@coreone-demo.in";
+    const senderName = Deno.env.get("RESEND_FROM_NAME") ?? "Core1ERP";
 
     const resendBody: Record<string, unknown> = {
-      from: `Core1ERP <${senderEmail}>`,
+      from: `${senderName} <${senderEmail}>`,
       to: customerEmail,
       subject: finalSubject,
       html: `<div style="font-family: Arial, Helvetica, sans-serif; font-size: 14px; color: #333; max-width: 600px; margin: 0 auto;">${htmlBody}</div>`,
@@ -920,6 +921,11 @@ Deno.serve(async (req: Request) => {
 
     if (ccEmail) resendBody.cc = ccEmail;
     if (bccEmail) resendBody.bcc = bccEmail;
+
+    // Default CC + Reply-To for every outgoing quotation email - uncomment to enable
+    // const defaultCcReplyTo = "Padmavathicranes@gmail.com";
+    // resendBody.cc = [...(Array.isArray(resendBody.cc) ? resendBody.cc as string[] : resendBody.cc ? [resendBody.cc as string] : []), defaultCcReplyTo];
+    // resendBody.reply_to = defaultCcReplyTo;
 
     const resendResponse = await fetch("https://api.resend.com/emails", {
       method: "POST",

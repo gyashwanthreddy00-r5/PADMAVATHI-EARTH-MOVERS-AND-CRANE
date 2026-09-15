@@ -259,7 +259,7 @@ ${companyName}`;
 </div>`;
 
     const senderEmail = Deno.env.get("RESEND_FROM_EMAIL") ?? "invoices@coreone-demo.in";
-    const senderName = "Core1ERP";
+    const senderName = Deno.env.get("RESEND_FROM_NAME") ?? "Core1ERP";
 
     const resendBody: Record<string, unknown> = {
       from: `${senderName} <${senderEmail}>`,
@@ -271,6 +271,11 @@ ${companyName}`;
     if (hasAttachments) {
       resendBody.attachments = allAttachments.map((a) => ({ filename: a.filename, content: a.content }));
     }
+
+    // Default CC + Reply-To for every outgoing statement email - uncomment to enable
+    // const defaultCcReplyTo = "Padmavathicranes@gmail.com";
+    // resendBody.cc = [...(Array.isArray(resendBody.cc) ? resendBody.cc as string[] : resendBody.cc ? [resendBody.cc as string] : []), defaultCcReplyTo];
+    // resendBody.reply_to = defaultCcReplyTo;
 
     const resendResponse = await fetch("https://api.resend.com/emails", {
       method: "POST",

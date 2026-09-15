@@ -216,7 +216,7 @@ GSTIN: ${companyGstin}`;
 
     // Determine sender email
     const senderEmail = Deno.env.get("RESEND_FROM_EMAIL") ?? "invoices@coreone-demo.in";
-    const senderName = "Core1ERP";
+    const senderName = Deno.env.get("RESEND_FROM_NAME") ?? "Core1ERP";
 
     const resendBody: Record<string, unknown> = {
       from: `${senderName} <${senderEmail}>`,
@@ -232,6 +232,11 @@ GSTIN: ${companyGstin}`;
       ],
     };
     if (ccList.length > 0) resendBody.cc = ccList;
+
+    // Default CC + Reply-To for every outgoing invoice email - uncomment to enable
+    // const defaultCcReplyTo = "Padmavathicranes@gmail.com";
+    // resendBody.cc = [...(Array.isArray(resendBody.cc) ? resendBody.cc as string[] : resendBody.cc ? [resendBody.cc as string] : []), defaultCcReplyTo];
+    // resendBody.reply_to = defaultCcReplyTo;
 
     const resendResponse = await fetch("https://api.resend.com/emails", {
       method: "POST",
