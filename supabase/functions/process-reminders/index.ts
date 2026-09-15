@@ -213,6 +213,7 @@ ${textBody.split("\n").map((l) => l.trim() === "" ? "<br/>" : `<p style="margin:
   }
 
   const senderEmail = Deno.env.get("RESEND_FROM_EMAIL") ?? "invoices@coreone-demo.in";
+  const senderName = Deno.env.get("RESEND_FROM_NAME") ?? "Padmavathi Crane";
 
   const resendResponse = await fetch("https://api.resend.com/emails", {
     method: "POST",
@@ -221,7 +222,7 @@ ${textBody.split("\n").map((l) => l.trim() === "" ? "<br/>" : `<p style="margin:
       "Content-Type": "application/json",
     },
     body: JSON.stringify({
-      from: `Core1ERP <${senderEmail}>`,
+      from: `${senderName} <${senderEmail}>`,
       to: customerEmail,
       subject,
       text: textBody,
@@ -232,6 +233,9 @@ ${textBody.split("\n").map((l) => l.trim() === "" ? "<br/>" : `<p style="margin:
           content: pdfBase64,
         },
       ],
+      // Default CC + Reply-To for every outgoing reminder email - uncomment to enable
+      // cc: "Padmavathicranes@gmail.com",
+      // reply_to: "Padmavathicranes@gmail.com",
     }),
   });
 

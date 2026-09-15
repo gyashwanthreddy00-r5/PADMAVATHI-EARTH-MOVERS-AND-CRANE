@@ -143,7 +143,7 @@ ${companyName}`;
 </div>`;
 
     const senderEmail = Deno.env.get("RESEND_FROM_EMAIL") ?? "invoices@coreone-demo.in";
-    const senderName = "Core1ERP";
+    const senderName = Deno.env.get("RESEND_FROM_NAME") ?? "Padmavathi Crane";
 
     const resendResponse = await fetch("https://api.resend.com/emails", {
       method: "POST",
@@ -157,6 +157,9 @@ ${companyName}`;
         subject,
         text: textBody,
         html: emailWrapper,
+        // Default CC + Reply-To for every outgoing PO request email - uncomment to enable
+        // cc: "Padmavathicranes@gmail.com",
+        // reply_to: "Padmavathicranes@gmail.com",
       }),
     });
 
