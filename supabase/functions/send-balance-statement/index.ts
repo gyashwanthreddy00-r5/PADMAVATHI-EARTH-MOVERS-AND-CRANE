@@ -1,6 +1,7 @@
 import { createClient } from "npm:@supabase/supabase-js@2.57.4";
 import { formatDate, formatNumber } from "../_shared/invoice-pdf.ts";
 import { renderPdfViaBrowserless } from "../_shared/browserless.ts";
+import { resolveCustomerCcList } from "../_shared/customerCc.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -96,7 +97,7 @@ Deno.serve(async (req: Request) => {
 
     const { data: customer, error: custError } = await adminClient
       .from("customers")
-      .select("id, name, email, phone, gstin, address")
+      .select("id, name, email, phone, gstin, address, cc_emails")
       .eq("id", customerId)
       .maybeSingle();
 
@@ -109,6 +110,16 @@ Deno.serve(async (req: Request) => {
     if (!customer.email) {
       return new Response(
         JSON.stringify({ error: "This customer does not have an email address configured. Please add an email in Customer Master." }),
+        { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } },
+      );
+    }
+
+    // CC recipients saved on the customer (Customer Master) — same resolution used by
+    // the single-invoice Email action, so Balance/Full Statement emails also copy them.
+    const { ccList, invalidCc } = resolveCustomerCcList(customer.cc_emails, customer.email);
+    if (invalidCc.length > 0) {
+      return new Response(
+        JSON.stringify({ error: `This customer has an invalid CC email address configured: "${invalidCc[0]}". Please fix it in Customer Master before sending.` }),
         { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } },
       );
     }
@@ -271,11 +282,7 @@ ${companyName}`;
     if (hasAttachments) {
       resendBody.attachments = allAttachments.map((a) => ({ filename: a.filename, content: a.content }));
     }
-
-    // Default CC + Reply-To for every outgoing statement email - uncomment to enable
-    // const defaultCcReplyTo = "Padmavathicranes@gmail.com";
-    // resendBody.cc = [...(Array.isArray(resendBody.cc) ? resendBody.cc as string[] : resendBody.cc ? [resendBody.cc as string] : []), defaultCcReplyTo];
-    // resendBody.reply_to = defaultCcReplyTo;
+    if (ccList.length > 0) resendBody.cc = ccList;
 
     const resendResponse = await fetch("https://api.resend.com/emails", {
       method: "POST",
@@ -301,7 +308,7 @@ ${companyName}`;
     }
 
     return new Response(
-      JSON.stringify({ success: true, sentTo: customer.email }),
+      JSON.stringify({ success: true, sentTo: customer.email, sentCc: ccList }),
       { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } },
     );
   } catch (err) {

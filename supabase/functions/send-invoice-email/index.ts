@@ -1,6 +1,7 @@
 import { createClient } from "npm:@supabase/supabase-js@2.57.4";
 import { generateInvoicePdfBytes, toBase64, formatDate, formatNumber } from "../_shared/invoice-pdf.ts";
 import { renderPdfViaBrowserless } from "../_shared/browserless.ts";
+import { resolveCustomerCcList } from "../_shared/customerCc.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -135,17 +136,13 @@ Deno.serve(async (req: Request) => {
     // CC recipients saved on the customer (Customer Master) — validated up front so a
     // bad address never silently drops out; deduped against the primary "to" address
     // (case-insensitive) so the same person is never billed twice.
-    const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-    const rawCcList: string[] = (invoice.customer?.cc_emails ?? "")
-      .split(/[,;]/).map((e: string) => e.trim()).filter(Boolean);
-    const invalidCc = rawCcList.filter((e: string) => !emailPattern.test(e));
+    const { ccList, invalidCc } = resolveCustomerCcList(invoice.customer?.cc_emails, customerEmail);
     if (invalidCc.length > 0) {
       return new Response(
         JSON.stringify({ error: `This customer has an invalid CC email address configured: "${invalidCc[0]}". Please fix it in Customer Master before sending.` }),
         { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } },
       );
     }
-    const ccList = Array.from(new Set(rawCcList.filter((e: string) => e.toLowerCase() !== customerEmail.toLowerCase())));
 
     // Update the invoice's amount_received/balance if they were stale
     if (totalReceived !== Number(invoice.amount_received)) {
