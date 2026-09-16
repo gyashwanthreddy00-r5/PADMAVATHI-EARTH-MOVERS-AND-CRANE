@@ -2,6 +2,7 @@
 import { createClient } from "npm:@supabase/supabase-js@2.57.4";
 import { generateInvoicePdfBytes, toBase64 as sharedToBase64, formatDate, formatNumber, buildInvoiceLineDescription as sharedBuildDesc } from "../_shared/invoice-pdf.ts";
 import { renderPdfViaBrowserless } from "../_shared/browserless.ts";
+import { resolveCustomerCcList } from "../_shared/customerCc.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -47,7 +48,7 @@ async function sendReminderEmail(
   // Load invoice with customer
   const { data: invoice, error: invError } = await adminClient
     .from("invoices")
-    .select(`*, customer:customers!invoices_customer_id_fkey(id, name, address, email, phone, gstin, state, state_code)`)
+    .select(`*, customer:customers!invoices_customer_id_fkey(id, name, address, email, cc_emails, phone, gstin, state, state_code)`)
     .eq("id", reminder.invoice_id)
     .maybeSingle();
 
@@ -93,6 +94,13 @@ async function sendReminderEmail(
       error_message: "Customer email address is missing.",
     }).eq("id", reminder.id);
     return { success: false, error: "Customer email address is missing." };
+  }
+
+  // CC recipients saved on the customer (Customer Master) — same resolution used by
+  // the single-invoice Email action, so reminder emails also copy them.
+  const { ccList, invalidCc } = resolveCustomerCcList(invoice.customer?.cc_emails, customerEmail);
+  if (invalidCc.length > 0) {
+    return { success: false, error: `This customer has an invalid CC email address configured: "${invalidCc[0]}". Please fix it in Customer Master before sending.` };
   }
 
   // Load invoice items
@@ -215,28 +223,28 @@ ${textBody.split("\n").map((l) => l.trim() === "" ? "<br/>" : `<p style="margin:
   const senderEmail = Deno.env.get("RESEND_FROM_EMAIL") ?? "invoices@coreone-demo.in";
   const senderName = Deno.env.get("RESEND_FROM_NAME") ?? "Core1ERP";
 
+  const reminderResendBody: Record<string, unknown> = {
+    from: `${senderName} <${senderEmail}>`,
+    to: customerEmail,
+    subject,
+    text: textBody,
+    html: htmlBody,
+    attachments: [
+      {
+        filename: `Invoice_${invoice.invoice_number}.pdf`,
+        content: pdfBase64,
+      },
+    ],
+  };
+  if (ccList.length > 0) reminderResendBody.cc = ccList;
+
   const resendResponse = await fetch("https://api.resend.com/emails", {
     method: "POST",
     headers: {
       "Authorization": `Bearer ${resendApiKey}`,
       "Content-Type": "application/json",
     },
-    body: JSON.stringify({
-      from: `${senderName} <${senderEmail}>`,
-      to: customerEmail,
-      subject,
-      text: textBody,
-      html: htmlBody,
-      attachments: [
-        {
-          filename: `Invoice_${invoice.invoice_number}.pdf`,
-          content: pdfBase64,
-        },
-      ],
-      // Default CC + Reply-To for every outgoing reminder email - uncomment to enable
-      // cc: "Padmavathicranes@gmail.com",
-      // reply_to: "Padmavathicranes@gmail.com",
-    }),
+    body: JSON.stringify(reminderResendBody),
   });
 
   const resendResult = await resendResponse.json().catch(() => ({})) as { id?: string; message?: string; error?: string };
