@@ -18,6 +18,8 @@
     "html2canvas": "^1.4.1",
     "html2pdf.js": "^0.14.0",
     "jspdf": "^4.2.1",
+    "jspdf-autotable": "^5.0.8",
+    "jszip": "^3.10.2",
     "lucide-react": "^0.446.0",
     "pdf-lib": "^1.17.1",
     "react": "^18.3.1",

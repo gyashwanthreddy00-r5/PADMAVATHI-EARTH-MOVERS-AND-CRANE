@@ -8,7 +8,7 @@ import {
   Fuel, CalendarCheck, Wrench, CreditCard, Receipt, ShoppingCart,
   BarChart3, TrendingUp, Settings as SettingsIcon, LogOut, Menu, Globe, ChevronDown,
   Shield, Users as UsersIcon, FileText as FileTextIcon, Link as LinkIcon, Wallet, IndianRupee,
-  FileSpreadsheet,
+  FileSpreadsheet, Landmark,
 } from 'lucide-react';
 import { classNames } from '@/lib/utils';
 import type { TranslationKey } from '@/lib/i18n';
@@ -84,6 +84,12 @@ const nav: NavSection[] = [
       { key: 'report-vehicle-wise', label: 'vehicleWiseReport', icon: TrendingUp, path: '/reports/vehicle-wise' },
       { key: 'report-po-orders', label: 'poOrdersReport', icon: ClipboardList, path: '/reports/po-orders' },
       { key: 'report-purchase', label: 'purchaseReportNav', icon: ShoppingCart, path: '/reports/purchase' },
+    ],
+  },
+  {
+    title: 'gst',
+    items: [
+      { key: 'gst', label: 'gst', icon: Landmark, path: '/gst' },
     ],
   },
   {

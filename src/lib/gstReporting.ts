@@ -1,0 +1,374 @@
+import { supabase } from '@/lib/supabase';
+import { round2 } from '@/lib/gstBillingCalc';
+import type { Invoice, Purchase, Vendor } from '@/types';
+
+// ============================================================
+// This module is a READ-ONLY reporting layer over the EXISTING `invoices`
+// (invoice_type = 'GST') and `purchases` tables - it never inserts, updates,
+// or deletes a row in either. Nothing here changes GST Billing, Cash/UPI
+// Billing, or Purchase behavior; every value below is either read directly
+// from those tables or clearly derived (documented at each spot) for
+// display purposes only.
+// ============================================================
+
+export interface GstFilingMonth {
+  /** Calendar month, 1-12. */
+  month: number;
+  /** Calendar year this month falls in (Apr-Dec => FY start year, Jan-Mar => FY start year + 1). */
+  year: number;
+  label: string;
+}
+
+/** Indian financial year (Apr-Mar) label, e.g. "2026-27" - mirrors the DB's
+ *  current_financial_year() SQL function (see supabase/migrations/20260820064756_*)
+ *  exactly, just computed client-side for an arbitrary date instead of "now". */
+export function financialYearOf(date: Date): string {
+  const y = date.getFullYear();
+  const m = date.getMonth() + 1;
+  const startYear = m >= 4 ? y : y - 1;
+  return fyLabel(startYear);
+}
+
+export function currentFinancialYear(): string {
+  return financialYearOf(new Date());
+}
+
+function fyLabel(startYear: number): string {
+  return `${startYear}-${String((startYear + 1) % 100).padStart(2, '0')}`;
+}
+
+/** Financial years for the FY dropdown, always computed off today's system date -
+ *  never a fixed list. Defaults to a few years back (historical filing) through a
+ *  couple of years ahead, oldest first. Whatever "today" is when this runs, the
+ *  window slides with it (e.g. once the system date crosses into April 2027, the
+ *  current FY becomes "2027-28" and the whole window shifts forward automatically). */
+export function recentFinancialYears(pastCount = 3, futureCount = 2): string[] {
+  const currentStartYear = Number(currentFinancialYear().split('-')[0]);
+  const years: string[] = [];
+  for (let startYear = currentStartYear - pastCount; startYear <= currentStartYear + futureCount; startYear++) {
+    years.push(fyLabel(startYear));
+  }
+  return years;
+}
+
+const MONTH_NAMES = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+
+/** The 12 (month, year) pairs an FY label like "2026-27" spans, Apr through Mar. */
+export function monthsInFinancialYear(fy: string): GstFilingMonth[] {
+  const startYear = Number(fy.split('-')[0]);
+  const months: GstFilingMonth[] = [];
+  for (let i = 0; i < 12; i++) {
+    const m = ((3 + i) % 12) + 1; // 4,5,...,12,1,2,3
+    const y = m >= 4 ? startYear : startYear + 1;
+    months.push({ month: m, year: y, label: `${MONTH_NAMES[m - 1]} ${y}` });
+  }
+  return months;
+}
+
+export function monthLabel(month: number, year: number): string {
+  return `${MONTH_NAMES[month - 1]} ${year}`;
+}
+
+function pad2(n: number): string {
+  return String(n).padStart(2, '0');
+}
+
+/** [from, to] ISO date bounds (inclusive) for one calendar month. */
+export function monthDateRange(month: number, year: number): { from: string; to: string } {
+  const from = `${year}-${pad2(month)}-01`;
+  const lastDay = new Date(year, month, 0).getDate();
+  const to = `${year}-${pad2(month)}-${pad2(lastDay)}`;
+  return { from, to };
+}
+
+const GSTIN_RE = /^[0-9A-Z]{15}$/;
+
+export function isValidGstin(v: string | null | undefined): boolean {
+  return !!v && GSTIN_RE.test(v.trim().toUpperCase());
+}
+
+/** First 2 digits of a GSTIN are the standard GST state code - real data read
+ *  off the GSTIN string itself, not app-invented. Returns null when the GSTIN
+ *  isn't a plausible 15-char GSTIN. */
+export function gstinStateCode(gstin: string | null | undefined): string | null {
+  if (!isValidGstin(gstin)) return null;
+  return gstin!.trim().toUpperCase().slice(0, 2);
+}
+
+// ------------------------------------------------------------
+// Sales GST (from existing `invoices`, invoice_type = 'GST')
+// ------------------------------------------------------------
+
+export interface SalesGstRow {
+  id: string;
+  invoiceNumber: string | null;
+  invoiceDate: string;
+  customerName: string | null;
+  customerGstin: string | null;
+  placeOfSupply: string | null;
+  invoiceValue: number;
+  taxableValue: number;
+  gstRatePercent: number;
+  cgst: number;
+  sgst: number;
+  igst: number;
+  status: string;
+  isCancelled: boolean;
+  /** Whether this row counts toward totals: not cancelled and has a real invoice
+   *  number - the same rule the rest of the app already uses (see Invoices.tsx's
+   *  `!inv.is_cancelled && !!inv.invoice_number` filters). */
+  isCounted: boolean;
+  b2b: boolean;
+  taxType: Invoice['tax_type'];
+}
+
+export async function fetchGstInvoicesForMonth(month: number, year: number): Promise<Invoice[]> {
+  const { from, to } = monthDateRange(month, year);
+  const { data, error } = await supabase
+    .from('invoices')
+    .select('*')
+    .eq('invoice_type', 'GST')
+    .gte('invoice_date', from)
+    .lte('invoice_date', to)
+    .order('invoice_date', { ascending: true });
+  if (error) throw error;
+  return (data ?? []) as Invoice[];
+}
+
+export function toSalesGstRows(invoices: Invoice[]): SalesGstRow[] {
+  return invoices.map(inv => {
+    const gstRatePercent = inv.tax_type === 'igst'
+      ? Number(inv.igst_percent) || 0
+      : (Number(inv.cgst_percent) || 0) + (Number(inv.sgst_percent) || 0);
+    return {
+      id: inv.id,
+      invoiceNumber: inv.invoice_number,
+      invoiceDate: inv.invoice_date,
+      customerName: inv.customer_name,
+      customerGstin: inv.customer_gstin,
+      placeOfSupply: inv.consignee_state ? `${inv.consignee_state}${inv.consignee_state_code ? ` (${inv.consignee_state_code})` : ''}` : null,
+      invoiceValue: Number(inv.grand_total) || 0,
+      taxableValue: Number(inv.taxable_amount) || 0,
+      gstRatePercent,
+      cgst: Number(inv.cgst_amount) || 0,
+      sgst: Number(inv.sgst_amount) || 0,
+      igst: Number(inv.igst_amount) || 0,
+      status: inv.invoice_status,
+      isCancelled: inv.is_cancelled,
+      isCounted: !inv.is_cancelled && !!inv.invoice_number,
+      b2b: isValidGstin(inv.customer_gstin),
+      taxType: inv.tax_type,
+    };
+  });
+}
+
+// ------------------------------------------------------------
+// Purchase GST (from existing `purchases` + `vendors`)
+// ------------------------------------------------------------
+
+export type PurchaseGstSplitBasis = 'intrastate' | 'interstate' | 'unspecified';
+
+export interface PurchaseGstRow {
+  id: string;
+  vendorName: string;
+  vendorGstin: string | null;
+  billNo: string | null;
+  billDate: string;
+  taxableAmount: number;
+  gstRatePercent: number;
+  cgst: number;
+  sgst: number;
+  igst: number;
+  totalAmount: number;
+  splitBasis: PurchaseGstSplitBasis;
+  itcEligible: boolean;
+  itcOverridden: boolean;
+  itcReason: string | null;
+}
+
+interface PurchaseWithVendor extends Purchase {
+  vendor: Pick<Vendor, 'id' | 'name' | 'gst_number'> | null;
+}
+
+export async function fetchPurchasesForMonth(month: number, year: number): Promise<PurchaseWithVendor[]> {
+  const { from, to } = monthDateRange(month, year);
+  const { data, error } = await supabase
+    .from('purchases')
+    .select('*, vendor:vendors(id, name, gst_number)')
+    .gte('purchase_date', from)
+    .lte('purchase_date', to)
+    .order('purchase_date', { ascending: true });
+  if (error) throw error;
+  return (data ?? []) as unknown as PurchaseWithVendor[];
+}
+
+export interface GstPurchaseItcOverride {
+  purchase_id: string;
+  itc_eligible: boolean;
+  reason: string | null;
+}
+
+export async function fetchItcOverridesForPurchases(purchaseIds: string[]): Promise<Map<string, GstPurchaseItcOverride>> {
+  const map = new Map<string, GstPurchaseItcOverride>();
+  if (purchaseIds.length === 0) return map;
+  const { data, error } = await supabase
+    .from('gst_purchase_itc')
+    .select('purchase_id, itc_eligible, reason')
+    .in('purchase_id', purchaseIds);
+  if (error) throw error;
+  (data ?? []).forEach(row => map.set(row.purchase_id, row as GstPurchaseItcOverride));
+  return map;
+}
+
+/** Splits a purchase's single stored `gst_amount` into CGST/SGST/IGST by comparing
+ *  the vendor's GSTIN state-code prefix against the company's - see the "Purchase
+ *  GST split" decision in the plan. Never invents a split when the vendor GSTIN is
+ *  missing/invalid; callers should flag those via runGstErrorChecks instead. */
+export function toPurchaseGstRows(
+  purchases: PurchaseWithVendor[],
+  companyStateCode: string | null,
+  itcOverrides: Map<string, GstPurchaseItcOverride>,
+): PurchaseGstRow[] {
+  return purchases.map(p => {
+    const vendorGstin = p.vendor?.gst_number ?? null;
+    const vendorStateCode = gstinStateCode(vendorGstin);
+    const gstAmount = Number(p.gst_amount) || 0;
+    let splitBasis: PurchaseGstSplitBasis = 'unspecified';
+    let cgst = 0, sgst = 0, igst = 0;
+    if (vendorStateCode && companyStateCode) {
+      if (vendorStateCode === companyStateCode) {
+        splitBasis = 'intrastate';
+        cgst = round2(gstAmount / 2);
+        sgst = round2(gstAmount - cgst);
+      } else {
+        splitBasis = 'interstate';
+        igst = gstAmount;
+      }
+    }
+
+    const override = itcOverrides.get(p.id);
+    const defaultEligible = p.gst_enabled && gstAmount > 0;
+
+    return {
+      id: p.id,
+      vendorName: p.vendor?.name ?? 'Unknown Vendor',
+      vendorGstin,
+      billNo: p.bill_no,
+      billDate: p.purchase_date,
+      taxableAmount: Number(p.amount) || 0,
+      gstRatePercent: Number(p.gst_rate) || 0,
+      cgst, sgst, igst,
+      totalAmount: Number(p.total_amount) || 0,
+      splitBasis,
+      itcEligible: override ? override.itc_eligible : defaultEligible,
+      itcOverridden: !!override,
+      itcReason: override?.reason ?? null,
+    };
+  });
+}
+
+// ------------------------------------------------------------
+// Monthly summary (Dashboard / Monthly Summary / GSTR-3B outward+ITC)
+// ------------------------------------------------------------
+
+export interface GstMonthlySummary {
+  totalSales: number;
+  taxableSales: number;
+  outputCgst: number;
+  outputSgst: number;
+  outputIgst: number;
+  totalOutputGst: number;
+  totalPurchase: number;
+  inputCgst: number;
+  inputSgst: number;
+  inputIgst: number;
+  totalInputGst: number;
+  netGstPayable: number;
+}
+
+export function computeGstSummary(salesRows: SalesGstRow[], purchaseRows: PurchaseGstRow[]): GstMonthlySummary {
+  const counted = salesRows.filter(r => r.isCounted);
+  const totalSales = round2(counted.reduce((s, r) => s + r.invoiceValue, 0));
+  const taxableSales = round2(counted.reduce((s, r) => s + r.taxableValue, 0));
+  const outputCgst = round2(counted.reduce((s, r) => s + r.cgst, 0));
+  const outputSgst = round2(counted.reduce((s, r) => s + r.sgst, 0));
+  const outputIgst = round2(counted.reduce((s, r) => s + r.igst, 0));
+  const totalOutputGst = round2(outputCgst + outputSgst + outputIgst);
+
+  const totalPurchase = round2(purchaseRows.reduce((s, r) => s + r.totalAmount, 0));
+  const eligible = purchaseRows.filter(r => r.itcEligible);
+  const inputCgst = round2(eligible.reduce((s, r) => s + r.cgst, 0));
+  const inputSgst = round2(eligible.reduce((s, r) => s + r.sgst, 0));
+  const inputIgst = round2(eligible.reduce((s, r) => s + r.igst, 0));
+  const totalInputGst = round2(inputCgst + inputSgst + inputIgst);
+
+  return {
+    totalSales, taxableSales, outputCgst, outputSgst, outputIgst, totalOutputGst,
+    totalPurchase, inputCgst, inputSgst, inputIgst, totalInputGst,
+    netGstPayable: round2(totalOutputGst - totalInputGst),
+  };
+}
+
+// ------------------------------------------------------------
+// GST Error Check - read-only, never mutates a row
+// ------------------------------------------------------------
+
+export type GstIssueSeverity = 'RED' | 'ORANGE' | 'GREEN';
+
+export interface GstIssue {
+  severity: GstIssueSeverity;
+  source: 'Sales' | 'Purchase';
+  reference: string;
+  message: string;
+}
+
+export function runGstErrorChecks(salesRows: SalesGstRow[], purchaseRows: PurchaseGstRow[]): GstIssue[] {
+  const issues: GstIssue[] = [];
+
+  const seenInvoiceNumbers = new Map<string, number>();
+  salesRows.forEach(r => {
+    if (!r.invoiceNumber) return;
+    seenInvoiceNumbers.set(r.invoiceNumber, (seenInvoiceNumbers.get(r.invoiceNumber) ?? 0) + 1);
+  });
+
+  salesRows.forEach(r => {
+    const ref = r.invoiceNumber ?? `(no number) ${r.invoiceDate}`;
+    if (r.isCancelled) {
+      issues.push({ severity: 'ORANGE', source: 'Sales', reference: ref, message: 'Cancelled invoice present in this month - excluded from totals, review before filing.' });
+    }
+    if (!r.isCounted) return; // remaining checks are about invoices that would otherwise be filed
+    // B2C (no GSTIN at all) is valid - only flag when a GSTIN was entered but is malformed.
+    if (r.customerGstin && !isValidGstin(r.customerGstin)) {
+      issues.push({ severity: 'RED', source: 'Sales', reference: ref, message: 'Customer GSTIN is present but not a valid 15-character GSTIN.' });
+    }
+    if (r.taxType !== 'no_tax' && r.gstRatePercent <= 0) {
+      issues.push({ severity: 'RED', source: 'Sales', reference: ref, message: 'Missing/zero GST rate on a taxable invoice.' });
+    }
+    if (!r.placeOfSupply) {
+      issues.push({ severity: 'ORANGE', source: 'Sales', reference: ref, message: 'Missing customer state / place of supply.' });
+    }
+    if (r.taxType !== 'no_tax' && (r.cgst + r.sgst + r.igst) <= 0 && r.taxableValue > 0) {
+      issues.push({ severity: 'RED', source: 'Sales', reference: ref, message: 'Missing tax amount on a taxable invoice.' });
+    }
+    if (seenInvoiceNumbers.get(r.invoiceNumber!)! > 1) {
+      issues.push({ severity: 'RED', source: 'Sales', reference: ref, message: 'Duplicate invoice number within this month.' });
+    }
+  });
+  salesRows.filter(r => !r.invoiceNumber).forEach(r => {
+    issues.push({ severity: 'ORANGE', source: 'Sales', reference: `(no number) ${r.invoiceDate}`, message: 'Invoice has no invoice number assigned - excluded from totals, review before filing.' });
+  });
+
+  purchaseRows.forEach(r => {
+    const ref = r.billNo ?? `(no bill no) ${r.billDate}`;
+    if (!r.vendorGstin) {
+      issues.push({ severity: 'ORANGE', source: 'Purchase', reference: ref, message: 'Purchase without vendor GSTIN - CGST/SGST/IGST split could not be determined.' });
+    } else if (!isValidGstin(r.vendorGstin)) {
+      issues.push({ severity: 'RED', source: 'Purchase', reference: ref, message: 'Vendor GSTIN is present but not a valid 15-character GSTIN.' });
+    }
+    if (r.totalAmount > r.taxableAmount && (r.cgst + r.sgst + r.igst) <= 0) {
+      issues.push({ severity: 'RED', source: 'Purchase', reference: ref, message: 'GST amount is missing on a purchase billed above its taxable amount.' });
+    }
+  });
+
+  return issues;
+}

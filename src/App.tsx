@@ -41,6 +41,7 @@ const Purchase = lazy(() => import('@/pages/Purchase'));
 const PoOrdersReport = lazy(() => import('@/pages/PoOrdersReport'));
 const PurchaseReport = lazy(() => import('@/pages/PurchaseReport'));
 const DailyVehicleReport = lazy(() => import('@/pages/DailyVehicleReport'));
+const Gst = lazy(() => import('@/pages/Gst/Gst'));
 
 function AppContent() {
   const { session, profile, loading, allowedPages, isAdmin, isOwner } = useAuth();
@@ -130,6 +131,7 @@ function AppContent() {
       case '/reports/vehicle-wise': return <VehicleWiseReport />;
       case '/reports/po-orders': return <PoOrdersReport />;
       case '/reports/purchase': return <PurchaseReport />;
+      case '/gst': return <Gst />;
       default: return (isAdmin || isOwner) ? <Dashboard onNavigate={navigate} /> : <StaffDashboard onNavigate={navigate} />;
     }
   };
