@@ -270,7 +270,7 @@ ${companyName}`;
 </div>`;
 
     const senderEmail = Deno.env.get("RESEND_FROM_EMAIL") ?? "invoices@coreone-demo.in";
-    const senderName = Deno.env.get("RESEND_FROM_NAME") ?? "Padmavathi Crane";
+    const senderName = Deno.env.get("RESEND_FROM_NAME") ?? "Core1ERP";
 
     const resendBody: Record<string, unknown> = {
       from: `${senderName} <${senderEmail}>`,
