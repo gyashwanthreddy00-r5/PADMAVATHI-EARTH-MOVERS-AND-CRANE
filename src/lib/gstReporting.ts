@@ -159,8 +159,17 @@ export function toSalesGstRows(invoices: Invoice[]): SalesGstRow[] {
       sgst: Number(inv.sgst_amount) || 0,
       igst: Number(inv.igst_amount) || 0,
       status: inv.invoice_status,
-      isCancelled: inv.is_cancelled,
-      isCounted: !inv.is_cancelled && !!inv.invoice_number,
+      // The "Cancel Invoice" action in Invoices.tsx sets invoice_status to
+      // 'Cancelled' - it does NOT set is_cancelled (which is always inserted
+      // false and never flipped for this table anywhere in the app). Checking
+      // is_cancelled alone would silently keep cancelled invoices in GST totals.
+      isCancelled: inv.is_cancelled || inv.invoice_status === 'Cancelled',
+      // A GST invoice is assigned a real invoice_number and inserted as
+      // invoice_status 'Draft' the moment its first billing line is added
+      // (GstBillingEntry.tsx) - well before the user finishes and Saves it,
+      // which is what actually sets it to 'Generated'. An in-progress Draft
+      // must not be filed/counted yet.
+      isCounted: !inv.is_cancelled && inv.invoice_status !== 'Cancelled' && inv.invoice_status !== 'Draft' && !!inv.invoice_number,
       b2b: isValidGstin(inv.customer_gstin),
       taxType: inv.tax_type,
     };
@@ -184,6 +193,12 @@ export interface PurchaseGstRow {
   cgst: number;
   sgst: number;
   igst: number;
+  /** The real, recorded GST amount for this purchase (purchases.gst_amount) -
+   *  always known, unlike the cgst/sgst/igst split above which is only a
+   *  best-effort derivation and can be 0/0/0 when splitBasis is 'unspecified'.
+   *  Summary totals must use this, not cgst+sgst+igst, so an unresolvable
+   *  split never silently drops real money out of Total Input GST. */
+  gstAmount: number;
   totalAmount: number;
   splitBasis: PurchaseGstSplitBasis;
   itcEligible: boolean;
@@ -263,6 +278,7 @@ export function toPurchaseGstRows(
       taxableAmount: Number(p.amount) || 0,
       gstRatePercent: Number(p.gst_rate) || 0,
       cgst, sgst, igst,
+      gstAmount,
       totalAmount: Number(p.total_amount) || 0,
       splitBasis,
       itcEligible: override ? override.itc_eligible : defaultEligible,
@@ -305,7 +321,11 @@ export function computeGstSummary(salesRows: SalesGstRow[], purchaseRows: Purcha
   const inputCgst = round2(eligible.reduce((s, r) => s + r.cgst, 0));
   const inputSgst = round2(eligible.reduce((s, r) => s + r.sgst, 0));
   const inputIgst = round2(eligible.reduce((s, r) => s + r.igst, 0));
-  const totalInputGst = round2(inputCgst + inputSgst + inputIgst);
+  // Summed from each row's real gst_amount, not from cgst+sgst+igst above - a
+  // purchase with an 'unspecified' state split still has a known GST amount
+  // even though it can't be broken into CGST/SGST/IGST, so Net GST Payable
+  // must not silently drop that eligible ITC just because the split is unknown.
+  const totalInputGst = round2(eligible.reduce((s, r) => s + r.gstAmount, 0));
 
   return {
     totalSales, taxableSales, outputCgst, outputSgst, outputIgst, totalOutputGst,
@@ -340,6 +360,8 @@ export function runGstErrorChecks(salesRows: SalesGstRow[], purchaseRows: Purcha
     const ref = r.invoiceNumber ?? `(no number) ${r.invoiceDate}`;
     if (r.isCancelled) {
       issues.push({ severity: 'ORANGE', source: 'Sales', reference: ref, message: 'Cancelled invoice present in this month - excluded from totals, review before filing.' });
+    } else if (r.status === 'Draft') {
+      issues.push({ severity: 'ORANGE', source: 'Sales', reference: ref, message: 'Invoice is still in Draft status - not yet finalized, excluded from totals until generated.' });
     }
     if (!r.isCounted) return; // remaining checks are about invoices that would otherwise be filed
     // B2C (no GSTIN at all) is valid - only flag when a GSTIN was entered but is malformed.

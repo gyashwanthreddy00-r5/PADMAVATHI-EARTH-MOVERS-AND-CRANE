@@ -35,9 +35,15 @@ export default function PurchaseGst({ rows, monthLabel, company }: Props) {
   };
 
   const clearFilters = () => { setVendor(''); setBillSearch(''); setItcFilter('All'); };
+  const hasUnspecifiedSplit = filtered.some(r => r.splitBasis === 'unspecified');
 
   return (
     <div className="space-y-4">
+      {hasUnspecifiedSplit && (
+        <p className="text-xs text-amber-600 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
+          Some rows below have an "UNSPECIFIED" GSTIN split - their CGST/SGST/IGST columns show 0 because the split can't be determined, but their full GST amount is still included in Net GST Payable on the Monthly Summary/Dashboard. See Error Check for the affected bills.
+        </p>
+      )}
       <div className="flex items-center justify-end gap-2">
         <Button variant="outline" size="sm" onClick={() => printPurchaseGst(filtered, monthLabel, company)}><Printer className="w-4 h-4" />Print</Button>
         <Button variant="outline" size="sm" onClick={() => exportPurchaseGstCsv(filtered, monthLabel)}><FileDown className="w-4 h-4" />Export CSV</Button>
