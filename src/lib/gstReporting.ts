@@ -37,15 +37,20 @@ function fyLabel(startYear: number): string {
   return `${startYear}-${String((startYear + 1) % 100).padStart(2, '0')}`;
 }
 
-/** Financial years for the FY dropdown, always computed off today's system date -
- *  never a fixed list. Defaults to a few years back (historical filing) through a
- *  couple of years ahead, oldest first. Whatever "today" is when this runs, the
- *  window slides with it (e.g. once the system date crosses into April 2027, the
- *  current FY becomes "2027-28" and the whole window shifts forward automatically). */
-export function recentFinancialYears(pastCount = 3, futureCount = 2): string[] {
+/** The GST module has no data before this financial year (GST Billing/Purchase
+ *  records predating it aren't in scope for this module), so it's the fixed floor
+ *  of the FY dropdown - not derived from today's date. */
+const GST_MODULE_BASE_FY_START_YEAR = 2026;
+
+/** Financial years for the FY dropdown: fixed at 2026-27 as the floor, then
+ *  automatically extending forward past the current financial year (never a
+ *  hardcoded end point) so a new year becomes selectable on its own once the
+ *  system date reaches it, with no code change. */
+export function recentFinancialYears(futureBuffer = 5): string[] {
   const currentStartYear = Number(currentFinancialYear().split('-')[0]);
+  const endYear = Math.max(currentStartYear + futureBuffer, GST_MODULE_BASE_FY_START_YEAR);
   const years: string[] = [];
-  for (let startYear = currentStartYear - pastCount; startYear <= currentStartYear + futureCount; startYear++) {
+  for (let startYear = GST_MODULE_BASE_FY_START_YEAR; startYear <= endYear; startYear++) {
     years.push(fyLabel(startYear));
   }
   return years;
