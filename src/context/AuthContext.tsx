@@ -126,6 +126,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             { path: '/reports/po-orders', label_key: 'poOrdersReport', label: 'PO Orders Report', section: 'reports', icon: 'ClipboardList', sort_order: 37 },
             { path: '/reports/purchase', label_key: 'purchaseReportNav', label: 'Purchase Report', section: 'reports', icon: 'ShoppingCart', sort_order: 38 },
             { path: '/gst', label_key: 'gst', label: 'GST', section: 'gst', icon: 'Landmark', sort_order: 39 },
+            { path: '/bank', label_key: 'bank', label: 'Bank', section: 'bank', icon: 'Landmark', sort_order: 40 },
+            { path: '/salary-payments', label_key: 'salaryPayments', label: 'Salary Payments', section: 'operations', icon: 'Wallet', sort_order: 41 },
           ];
           // Fire-and-forget: upsert each route. Errors are silently ignored so they
           // never block the login flow. Param names must match the SQL function's

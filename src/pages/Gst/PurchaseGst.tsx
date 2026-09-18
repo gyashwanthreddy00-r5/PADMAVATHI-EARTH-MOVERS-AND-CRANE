@@ -12,19 +12,26 @@ interface Props {
 }
 
 type ItcFilter = 'All' | 'Eligible' | 'Not Eligible';
+type PurchasePaymentStatusFilter = 'All' | PurchaseGstRow['paymentStatus'];
+
+const PAYMENT_STATUS_VARIANT: Record<PurchaseGstRow['paymentStatus'], 'green' | 'red' | 'amber'> = {
+  Paid: 'green', Pending: 'red', 'Partially Paid': 'amber',
+};
 
 export default function PurchaseGst({ rows, monthLabel, company }: Props) {
   const [vendor, setVendor] = useState('');
   const [billSearch, setBillSearch] = useState('');
   const [itcFilter, setItcFilter] = useState<ItcFilter>('All');
+  const [paymentStatusFilter, setPaymentStatusFilter] = useState<PurchasePaymentStatusFilter>('All');
 
   const filtered = useMemo(() => {
     let r = rows;
     if (vendor.trim()) { const q = vendor.trim().toLowerCase(); r = r.filter(x => x.vendorName.toLowerCase().includes(q)); }
     if (billSearch.trim()) { const q = billSearch.trim().toLowerCase(); r = r.filter(x => (x.billNo ?? '').toLowerCase().includes(q)); }
     if (itcFilter !== 'All') r = r.filter(x => (x.itcEligible ? 'Eligible' : 'Not Eligible') === itcFilter);
+    if (paymentStatusFilter !== 'All') r = r.filter(x => x.paymentStatus === paymentStatusFilter);
     return r;
-  }, [rows, vendor, billSearch, itcFilter]);
+  }, [rows, vendor, billSearch, itcFilter, paymentStatusFilter]);
 
   const totals = {
     taxable: filtered.reduce((s, r) => s + r.taxableAmount, 0),
@@ -32,9 +39,11 @@ export default function PurchaseGst({ rows, monthLabel, company }: Props) {
     sgst: filtered.reduce((s, r) => s + r.sgst, 0),
     igst: filtered.reduce((s, r) => s + r.igst, 0),
     total: filtered.reduce((s, r) => s + r.totalAmount, 0),
+    paid: filtered.reduce((s, r) => s + r.paidAmount, 0),
+    balance: filtered.reduce((s, r) => s + r.balanceAmount, 0),
   };
 
-  const clearFilters = () => { setVendor(''); setBillSearch(''); setItcFilter('All'); };
+  const clearFilters = () => { setVendor(''); setBillSearch(''); setItcFilter('All'); setPaymentStatusFilter('All'); };
   const hasUnspecifiedSplit = filtered.some(r => r.splitBasis === 'unspecified');
 
   return (
@@ -62,6 +71,12 @@ export default function PurchaseGst({ rows, monthLabel, company }: Props) {
             <option value="Eligible">Eligible</option>
             <option value="Not Eligible">Not Eligible</option>
           </select>
+          <select className={inputClass()} value={paymentStatusFilter} onChange={e => setPaymentStatusFilter(e.target.value as PurchasePaymentStatusFilter)}>
+            <option value="All">Payment Status - All</option>
+            <option value="Paid">Paid</option>
+            <option value="Partially Paid">Partially Paid</option>
+            <option value="Pending">Pending</option>
+          </select>
           <div className="flex justify-end"><Button variant="secondary" size="sm" onClick={clearFilters}><X className="w-4 h-4" />Clear Filters</Button></div>
         </div>
       </div>
@@ -74,7 +89,7 @@ export default function PurchaseGst({ rows, monthLabel, company }: Props) {
             <table className="w-full">
               <thead>
                 <tr className="border-b border-slate-100 bg-slate-50/90">
-                  {['Sl No', 'Vendor Name', 'Vendor GSTIN', 'Purchase Bill No', 'Bill Date', 'Taxable Amount', 'GST Rate', 'CGST', 'SGST', 'IGST', 'Total Amount', 'ITC Eligible'].map(h => (
+                  {['Sl No', 'Vendor Name', 'Vendor GSTIN', 'Purchase Bill No', 'Bill Date', 'Taxable Amount', 'GST Rate', 'CGST', 'SGST', 'IGST', 'Total Amount', 'ITC Eligible', 'Payment Status', 'Paid Date', 'Paid Amount', 'Balance Amount', 'Payment Mode', 'Reference Number', 'Bank Account'].map(h => (
                     <th key={h} className="text-left px-3 py-2.5 text-xs font-bold text-slate-500 uppercase tracking-wider whitespace-nowrap">{h}</th>
                   ))}
                 </tr>
@@ -100,6 +115,13 @@ export default function PurchaseGst({ rows, monthLabel, company }: Props) {
                       <StatusBadge status={r.itcEligible ? 'Eligible' : 'Not Eligible'} variant={r.itcEligible ? 'green' : 'red'} />
                       {r.itcOverridden && <span className="ml-1.5 text-[10px] text-slate-400">(manual)</span>}
                     </td>
+                    <td className="px-3 py-2.5 whitespace-nowrap"><StatusBadge status={r.paymentStatus} variant={PAYMENT_STATUS_VARIANT[r.paymentStatus]} /></td>
+                    <td className="px-3 py-2.5 text-sm text-slate-600 whitespace-nowrap">{r.paidDate}</td>
+                    <td className="px-3 py-2.5 text-sm text-emerald-700 text-right tabular-nums whitespace-nowrap">{formatCurrency(r.paidAmount)}</td>
+                    <td className={`px-3 py-2.5 text-sm text-right tabular-nums whitespace-nowrap font-medium ${r.balanceAmount > 0 ? 'text-red-600' : 'text-slate-500'}`}>{formatCurrency(r.balanceAmount)}</td>
+                    <td className="px-3 py-2.5 text-sm text-slate-600 whitespace-nowrap">{r.paymentMode}</td>
+                    <td className="px-3 py-2.5 text-sm text-slate-600 whitespace-nowrap">{r.referenceNumber}</td>
+                    <td className="px-3 py-2.5 text-sm text-slate-600 whitespace-nowrap">{r.bankAccount}</td>
                   </tr>
                 ))}
               </tbody>
@@ -112,6 +134,13 @@ export default function PurchaseGst({ rows, monthLabel, company }: Props) {
                   <td className="px-3 py-2.5 text-sm text-slate-800 text-right tabular-nums">{formatCurrency(totals.sgst)}</td>
                   <td className="px-3 py-2.5 text-sm text-slate-800 text-right tabular-nums">{formatCurrency(totals.igst)}</td>
                   <td className="px-3 py-2.5 text-sm text-slate-800 text-right tabular-nums">{formatCurrency(totals.total)}</td>
+                  <td></td>
+                  <td></td>
+                  <td></td>
+                  <td className="px-3 py-2.5 text-sm text-emerald-700 text-right tabular-nums">{formatCurrency(totals.paid)}</td>
+                  <td className="px-3 py-2.5 text-sm text-red-600 text-right tabular-nums">{formatCurrency(totals.balance)}</td>
+                  <td></td>
+                  <td></td>
                   <td></td>
                 </tr>
               </tfoot>

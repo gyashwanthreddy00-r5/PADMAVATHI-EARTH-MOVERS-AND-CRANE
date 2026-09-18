@@ -8,8 +8,8 @@ import { DatePicker } from '@/components/ui/DatePicker';
 import { formatCurrency, formatDate, todayISO, classNames } from '@/lib/utils';
 import { exportToXlsxWithCompany } from '@/lib/exportXlsx';
 import { round2 } from '@/lib/gstBillingCalc';
-import { Plus, Pencil, Trash2, ArrowLeft, ShoppingCart, Search, Printer, FileSpreadsheet } from 'lucide-react';
-import type { Vendor, Purchase as PurchaseRow } from '@/types';
+import { Plus, Pencil, Trash2, ArrowLeft, ShoppingCart, Search, Printer, FileSpreadsheet, IndianRupee, X } from 'lucide-react';
+import type { Vendor, Purchase as PurchaseRow, PurchasePayment, BankAccount, PaymentMode } from '@/types';
 
 const GST_RATE = 18;
 
@@ -59,12 +59,20 @@ interface PurchaseForm {
   remark: string;
   purchase_date: string;
   amount: string;
-  paid_amount: string;
   gst_enabled: boolean;
 }
 
 // GST OFF by default — GST is optional per purchase, not assumed.
-const emptyPurchaseForm: PurchaseForm = { bill_no: '', remark: '', purchase_date: todayISO(), amount: '', paid_amount: '', gst_enabled: false };
+const emptyPurchaseForm: PurchaseForm = { bill_no: '', remark: '', purchase_date: todayISO(), amount: '', gst_enabled: false };
+
+const emptyPaymentForm = {
+  amount: '',
+  payment_date: todayISO(),
+  payment_mode: 'Cash' as PaymentMode,
+  bank_account_id: '',
+  reference_number: '',
+  remarks: '',
+};
 
 export default function Purchase() {
   const { show } = useToast();
@@ -111,9 +119,16 @@ export default function Purchase() {
   const [purchaseModalOpen, setPurchaseModalOpen] = useState(false);
   const [editingPurchase, setEditingPurchase] = useState<PurchaseRow | null>(null);
   const [purchaseForm, setPurchaseForm] = useState<PurchaseForm>(emptyPurchaseForm);
-  const [purchaseErrors, setPurchaseErrors] = useState<{ amount?: string; paid_amount?: string }>({});
+  const [purchaseErrors, setPurchaseErrors] = useState<{ amount?: string }>({});
   const [savingPurchase, setSavingPurchase] = useState(false);
   const [deletePurchaseId, setDeletePurchaseId] = useState<string | null>(null);
+
+  const [bankAccounts, setBankAccounts] = useState<BankAccount[]>([]);
+  const [paymentTarget, setPaymentTarget] = useState<PurchaseRow | null>(null);
+  const [paymentHistory, setPaymentHistory] = useState<PurchasePayment[]>([]);
+  const [paymentForm, setPaymentForm] = useState(emptyPaymentForm);
+  const [savingPayment, setSavingPayment] = useState(false);
+  const [deletePaymentId, setDeletePaymentId] = useState<string | null>(null);
 
   const fetchVendors = useCallback(async () => {
     setLoading(true);
@@ -132,7 +147,12 @@ export default function Purchase() {
     setAllPurchases((data ?? []) as PurchaseRow[]);
   }, [show]);
 
-  useEffect(() => { fetchVendors(); fetchAllPurchases(); }, [fetchVendors, fetchAllPurchases]);
+  const fetchBankAccounts = useCallback(async () => {
+    const { data } = await supabase.from('bank_accounts').select('*').eq('is_active', true).order('is_default', { ascending: false }).order('bank_name');
+    setBankAccounts((data ?? []) as BankAccount[]);
+  }, []);
+
+  useEffect(() => { fetchVendors(); fetchAllPurchases(); fetchBankAccounts(); }, [fetchVendors, fetchAllPurchases, fetchBankAccounts]);
 
   const fetchPurchases = useCallback(async (vendorId: string) => {
     setPurchasesLoading(true);
@@ -237,7 +257,6 @@ export default function Purchase() {
       remark: p.remark ?? '',
       purchase_date: p.purchase_date,
       amount: String(p.amount),
-      paid_amount: String(p.paid_amount),
       gst_enabled: p.gst_enabled,
     });
     setPurchaseErrors({});
@@ -250,17 +269,13 @@ export default function Purchase() {
     const gstRate = gstEnabled ? GST_RATE : 0;
     const gstAmount = gstEnabled ? round2(amount * GST_RATE / 100) : 0;
     const totalAmount = round2(amount + gstAmount);
-    const paidAmount = Number(purchaseForm.paid_amount) || 0;
-    const balanceAmount = round2(totalAmount - paidAmount);
-    return { amount, gstEnabled, gstRate, gstAmount, totalAmount, paidAmount, balanceAmount };
-  }, [purchaseForm.amount, purchaseForm.paid_amount, purchaseForm.gst_enabled]);
+    return { amount, gstEnabled, gstRate, gstAmount, totalAmount };
+  }, [purchaseForm.amount, purchaseForm.gst_enabled]);
 
   function validatePurchaseForm(): boolean {
     if (!purchaseForm.purchase_date) { show('Purchase Date is required.', 'error'); return false; }
     const errors: typeof purchaseErrors = {};
     if (!purchaseForm.amount.trim() || Number(purchaseForm.amount) <= 0) errors.amount = 'Enter a valid amount greater than 0.';
-    if (purchaseForm.paid_amount.trim() && Number(purchaseForm.paid_amount) < 0) errors.paid_amount = 'Paid amount cannot be negative.';
-    if (purchaseFormCalc.paidAmount > purchaseFormCalc.totalAmount) errors.paid_amount = `Paid amount cannot exceed the total bill amount (${formatCurrency(purchaseFormCalc.totalAmount)}).`;
     setPurchaseErrors(errors);
     return Object.keys(errors).length === 0;
   }
@@ -270,6 +285,10 @@ export default function Purchase() {
     if (!validatePurchaseForm()) return;
     setSavingPurchase(true);
     const { data: { user } } = await supabase.auth.getUser();
+    // paid_amount/balance_amount are now owned by the purchase_payments ledger
+    // (see "Record Payment") - balance here only needs to recompute against
+    // whatever has already been paid so far when the bill amount itself changes.
+    const alreadyPaid = editingPurchase?.paid_amount ?? 0;
     const payload = {
       vendor_id: selectedVendorId,
       bill_no: purchaseForm.bill_no.trim() || null,
@@ -280,8 +299,7 @@ export default function Purchase() {
       gst_rate: purchaseFormCalc.gstRate,
       gst_amount: purchaseFormCalc.gstAmount,
       total_amount: purchaseFormCalc.totalAmount,
-      paid_amount: purchaseFormCalc.paidAmount,
-      balance_amount: purchaseFormCalc.balanceAmount,
+      balance_amount: round2(purchaseFormCalc.totalAmount - alreadyPaid),
     };
     const result = editingPurchase
       ? await supabase.from('purchases').update(payload).eq('id', editingPurchase.id).select().single()
@@ -310,6 +328,64 @@ export default function Purchase() {
     setAllPurchases(prev => prev.filter(p => p.id !== deletePurchaseId));
     show('Purchase entry removed.', 'success');
     setDeletePurchaseId(null);
+  }
+
+  // ---------------- Payment ledger (one row per actual installment) ----------------
+
+  const fetchPaymentHistory = useCallback(async (purchaseId: string) => {
+    const { data } = await supabase.from('purchase_payments').select('*').eq('purchase_id', purchaseId).eq('is_cancelled', false).order('payment_date', { ascending: false }).order('created_at', { ascending: false });
+    setPaymentHistory((data ?? []) as PurchasePayment[]);
+  }, []);
+
+  function openRecordPayment(p: PurchaseRow) {
+    setPaymentTarget(p);
+    setPaymentForm({ ...emptyPaymentForm, bank_account_id: bankAccounts.find(a => a.is_default)?.id ?? bankAccounts[0]?.id ?? '' });
+    fetchPaymentHistory(p.id);
+  }
+
+  async function refreshPurchaseRow(purchaseId: string) {
+    const { data } = await supabase.from('purchases').select('*').eq('id', purchaseId).single();
+    if (!data) return;
+    const updated = data as PurchaseRow;
+    setPurchases(prev => prev.map(p => p.id === purchaseId ? updated : p));
+    setAllPurchases(prev => prev.map(p => p.id === purchaseId ? updated : p));
+    setPaymentTarget(prev => prev && prev.id === purchaseId ? updated : prev);
+  }
+
+  async function saveRecordPayment() {
+    if (!paymentTarget) return;
+    const amount = Number(paymentForm.amount) || 0;
+    if (amount <= 0) { show('Enter a valid amount greater than 0.', 'error'); return; }
+    if (amount > paymentTarget.balance_amount + 0.01) { show(`Payment cannot exceed the outstanding balance of ${formatCurrency(paymentTarget.balance_amount)}.`, 'error'); return; }
+    if (paymentForm.payment_mode !== 'Cash' && !paymentForm.bank_account_id) { show('Select a Bank Account.', 'error'); return; }
+    setSavingPayment(true);
+    const { data: { user } } = await supabase.auth.getUser();
+    const isCheque = paymentForm.payment_mode === 'Cheque';
+    const { error } = await supabase.from('purchase_payments').insert({
+      purchase_id: paymentTarget.id,
+      amount,
+      payment_date: paymentForm.payment_date,
+      payment_mode: paymentForm.payment_mode,
+      bank_account_id: paymentForm.payment_mode === 'Cash' ? null : paymentForm.bank_account_id,
+      reference_number: paymentForm.reference_number.trim() || null,
+      cheque_number: isCheque ? (paymentForm.reference_number.trim() || null) : null,
+      remarks: paymentForm.remarks.trim() || null,
+      created_by: user?.id ?? null,
+    });
+    if (error) { show(error.message, 'error'); setSavingPayment(false); return; }
+    show('Payment recorded.', 'success');
+    setPaymentForm({ ...emptyPaymentForm, bank_account_id: paymentForm.bank_account_id });
+    await Promise.all([fetchPaymentHistory(paymentTarget.id), refreshPurchaseRow(paymentTarget.id)]);
+    setSavingPayment(false);
+  }
+
+  async function cancelPayment() {
+    if (!deletePaymentId || !paymentTarget) return;
+    const { error } = await supabase.from('purchase_payments').update({ is_cancelled: true }).eq('id', deletePaymentId);
+    if (error) { show(error.message, 'error'); setDeletePaymentId(null); return; }
+    show('Payment cancelled.', 'success');
+    await Promise.all([fetchPaymentHistory(paymentTarget.id), refreshPurchaseRow(paymentTarget.id)]);
+    setDeletePaymentId(null);
   }
 
   const filteredPurchases = useMemo(() => {
@@ -610,6 +686,7 @@ export default function Purchase() {
                         <td className="text-right px-3 py-1.5 border-b border-slate-100 text-emerald-600">{formatCurrency(p.paid_amount)}</td>
                         <td className={`text-right px-3 py-1.5 border-b border-slate-100 font-semibold ${p.balance_amount > 0 ? 'text-red-600' : 'text-slate-400'}`}>{formatCurrency(p.balance_amount)}</td>
                         <td className="text-center px-3 py-1.5 border-b border-slate-100">
+                          <button onClick={() => openRecordPayment(p)} className="p-1 text-slate-400 hover:text-emerald-600" title="Record Payment"><IndianRupee className="w-4 h-4" /></button>
                           <button onClick={() => openEditPurchase(p)} className="p-1 text-slate-400 hover:text-blue-600" title="Edit"><Pencil className="w-4 h-4" /></button>
                           <button onClick={() => setDeletePurchaseId(p.id)} className="p-1 text-slate-400 hover:text-red-600" title="Delete"><Trash2 className="w-4 h-4" /></button>
                         </td>
@@ -715,14 +792,9 @@ export default function Purchase() {
           <Field label="Remark">
             <input type="text" className={inputClass()} value={purchaseForm.remark} onChange={e => setPurchaseForm(f => ({ ...f, remark: e.target.value }))} placeholder="Optional" />
           </Field>
-          <div className="grid grid-cols-2 gap-3">
-            <Field label="Amount" required error={purchaseErrors.amount}>
-              <input type="number" min="0" className={inputClass(purchaseErrors.amount)} value={purchaseForm.amount} onChange={e => setPurchaseForm(f => ({ ...f, amount: e.target.value }))} placeholder="0" />
-            </Field>
-            <Field label="Paid Amount" error={purchaseErrors.paid_amount}>
-              <input type="number" min="0" className={inputClass(purchaseErrors.paid_amount)} value={purchaseForm.paid_amount} onChange={e => setPurchaseForm(f => ({ ...f, paid_amount: e.target.value }))} placeholder="0" />
-            </Field>
-          </div>
+          <Field label="Amount" required error={purchaseErrors.amount}>
+            <input type="number" min="0" className={inputClass(purchaseErrors.amount)} value={purchaseForm.amount} onChange={e => setPurchaseForm(f => ({ ...f, amount: e.target.value }))} placeholder="0" />
+          </Field>
           <Field label="GST">
             <div className="grid grid-cols-2 gap-2 max-w-xs">
               {([false, true] as const).map(on => (
@@ -743,9 +815,11 @@ export default function Purchase() {
           <div className="p-3 bg-slate-50 rounded-lg border border-slate-200 text-sm space-y-1">
             <div className="flex justify-between"><span className="text-slate-500">GST</span><b className="text-slate-800">{formatCurrency(purchaseFormCalc.gstAmount)}</b></div>
             <div className="flex justify-between"><span className="text-slate-500">GST Rate</span><b className="text-slate-800">{purchaseFormCalc.gstEnabled ? `${purchaseFormCalc.gstRate}%` : '-'}</b></div>
-            <div className="flex justify-between"><span className="text-slate-500">Total Bill Amount</span><b className="text-slate-800">{formatCurrency(purchaseFormCalc.totalAmount)}</b></div>
-            <div className="flex justify-between pt-1 border-t border-dashed border-slate-200"><span className="font-semibold text-slate-700">Balance Amount</span><b className={purchaseFormCalc.balanceAmount > 0 ? 'text-red-600' : 'text-emerald-600'}>{formatCurrency(purchaseFormCalc.balanceAmount)}</b></div>
+            <div className="flex justify-between pt-1 border-t border-dashed border-slate-200"><span className="font-semibold text-slate-700">Total Bill Amount</span><b className="text-slate-800">{formatCurrency(purchaseFormCalc.totalAmount)}</b></div>
           </div>
+          {!editingPurchase && (
+            <p className="text-xs text-slate-400">Payments are recorded separately - use the ₹ Record Payment action on the purchase list once this bill is saved.</p>
+          )}
         </div>
       </Modal>
 
@@ -756,6 +830,95 @@ export default function Purchase() {
         title="Delete Purchase Entry"
         message="This purchase entry will be permanently deleted."
         confirmText="Delete"
+        danger
+      />
+
+      {/* Record Payment modal - one purchase_payments row per actual installment */}
+      <Modal
+        open={!!paymentTarget}
+        onClose={() => setPaymentTarget(null)}
+        title="Record Payment"
+        size="md"
+        closeOnBackdropClick={false}
+        footer={<><Button variant="secondary" onClick={() => setPaymentTarget(null)}>Close</Button><Button onClick={saveRecordPayment} disabled={savingPayment}>{savingPayment ? 'Saving...' : 'Save Payment'}</Button></>}
+      >
+        {paymentTarget && (
+          <div className="space-y-4">
+            <div className="p-3 bg-slate-50 rounded-lg text-sm grid grid-cols-3 gap-2">
+              <div><span className="text-slate-500 block text-xs">Bill Amount</span><b>{formatCurrency(paymentTarget.total_amount)}</b></div>
+              <div><span className="text-slate-500 block text-xs">Paid So Far</span><b className="text-emerald-600">{formatCurrency(paymentTarget.paid_amount)}</b></div>
+              <div><span className="text-slate-500 block text-xs">Balance</span><b className={paymentTarget.balance_amount > 0 ? 'text-red-600' : 'text-emerald-600'}>{formatCurrency(paymentTarget.balance_amount)}</b></div>
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <Field label="Amount" required>
+                <input type="number" step="0.01" min="0" className={inputClass()} value={paymentForm.amount} onChange={e => setPaymentForm(f => ({ ...f, amount: e.target.value }))} placeholder="0" />
+              </Field>
+              <Field label="Date" required>
+                <DatePicker value={paymentForm.payment_date} onChange={v => setPaymentForm(f => ({ ...f, payment_date: v }))} />
+              </Field>
+              <Field label="Payment Mode">
+                <select className={inputClass()} value={paymentForm.payment_mode} onChange={e => setPaymentForm(f => ({ ...f, payment_mode: e.target.value as PaymentMode }))}>
+                  <option value="Cash">Cash</option>
+                  <option value="Bank Transfer">Bank Transfer</option>
+                  <option value="UPI">UPI</option>
+                  <option value="Cheque">Cheque</option>
+                </select>
+              </Field>
+              {paymentForm.payment_mode !== 'Cash' && (
+                <Field label="Bank Account" required>
+                  <select className={inputClass()} value={paymentForm.bank_account_id} onChange={e => setPaymentForm(f => ({ ...f, bank_account_id: e.target.value }))}>
+                    <option value="">Select Bank Account</option>
+                    {bankAccounts.map(a => <option key={a.id} value={a.id}>{a.bank_name}</option>)}
+                  </select>
+                </Field>
+              )}
+              <Field label="Reference Number">
+                <input className={inputClass()} value={paymentForm.reference_number} onChange={e => setPaymentForm(f => ({ ...f, reference_number: e.target.value }))} placeholder="UPI Ref / Cheque No" />
+              </Field>
+            </div>
+
+            <div>
+              <p className="text-xs font-bold uppercase tracking-wide text-slate-500 mb-2">Payment History</p>
+              {paymentHistory.length === 0 ? (
+                <p className="text-sm text-slate-400">No payments recorded yet.</p>
+              ) : (
+                <table className="w-full text-sm border border-slate-200 rounded-lg overflow-hidden">
+                  <thead className="bg-slate-50">
+                    <tr>
+                      <th className="text-left px-3 py-1.5 font-medium text-slate-600">Date</th>
+                      <th className="text-left px-3 py-1.5 font-medium text-slate-600">Mode</th>
+                      <th className="text-left px-3 py-1.5 font-medium text-slate-600">Reference</th>
+                      <th className="text-right px-3 py-1.5 font-medium text-slate-600">Amount</th>
+                      <th className="w-8"></th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {paymentHistory.map(pay => (
+                      <tr key={pay.id} className="border-t border-slate-100">
+                        <td className="px-3 py-1.5">{formatDate(pay.payment_date)}</td>
+                        <td className="px-3 py-1.5">{pay.payment_mode}</td>
+                        <td className="px-3 py-1.5">{pay.reference_number ?? pay.cheque_number ?? '-'}</td>
+                        <td className="px-3 py-1.5 text-right font-medium">{formatCurrency(pay.amount)}</td>
+                        <td className="px-3 py-1.5 text-center">
+                          <button onClick={() => setDeletePaymentId(pay.id)} className="p-1 text-slate-400 hover:text-red-600"><X className="w-3.5 h-3.5" /></button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
+            </div>
+          </div>
+        )}
+      </Modal>
+
+      <ConfirmDialog
+        open={!!deletePaymentId}
+        onClose={() => setDeletePaymentId(null)}
+        onConfirm={cancelPayment}
+        title="Cancel Payment"
+        message="This payment will be cancelled and its linked Bank transaction reversed."
+        confirmText="Cancel Payment"
         danger
       />
     </div>

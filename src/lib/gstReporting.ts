@@ -1,5 +1,6 @@
 import { supabase } from '@/lib/supabase';
 import { round2 } from '@/lib/gstBillingCalc';
+import { formatDate } from '@/lib/utils';
 import type { Invoice, Purchase, Vendor } from '@/types';
 
 // ============================================================
@@ -118,6 +119,21 @@ export interface SalesGstRow {
   sgst: number;
   igst: number;
   status: string;
+  /** Actual collection status derived from invoices.payment_status/amount_received/
+   *  balance_amount (kept in sync by the DB's sync_invoice_payment_to_bank trigger
+   *  off the real invoice_payments ledger) - distinct from `status` (invoice_status,
+   *  the document lifecycle field used by isCounted/error-checks below, untouched).
+   *  Draft/Cancelled invoices have no meaningful payment state, so this mirrors
+   *  `status` for those instead of claiming a Pending/Received collection state. */
+  paymentStatus: 'Received' | 'Partially Received' | 'Pending' | 'Draft' | 'Cancelled';
+  /** Comma-joined, formatted date(s) of every real payment against this invoice
+   *  (see PAYMENT_DATE_FMT), or '-' when nothing has been received yet. */
+  receivedDate: string;
+  /** invoices.amount_received - already the correct sum of invoice_payments for
+   *  this invoice (trigger-maintained), so this is read directly rather than
+   *  re-summed here, which would risk double-counting the same payment. */
+  receivedAmount: number;
+  balanceAmount: number;
   isCancelled: boolean;
   /** Whether this row counts toward totals: not cancelled and has a real invoice
    *  number - the same rule the rest of the app already uses (see Invoices.tsx's
@@ -127,20 +143,44 @@ export interface SalesGstRow {
   taxType: Invoice['tax_type'];
 }
 
-export async function fetchGstInvoicesForMonth(month: number, year: number): Promise<Invoice[]> {
+/** Invoice row shape as actually returned by fetchGstInvoicesForMonth's select
+ *  below - Invoice itself plus the nested invoice_payments needed only to show
+ *  received date(s); amount/balance/status still come from the invoice row's
+ *  own already-synced columns, never re-summed from this array. */
+type InvoiceWithPaymentDates = Invoice & { payments?: { payment_date: string; amount: number }[] | null };
+
+export async function fetchGstInvoicesForMonth(month: number, year: number): Promise<InvoiceWithPaymentDates[]> {
   const { from, to } = monthDateRange(month, year);
   const { data, error } = await supabase
     .from('invoices')
-    .select('*')
+    .select('*, payments:invoice_payments(payment_date, amount)')
     .eq('invoice_type', 'GST')
     .gte('invoice_date', from)
     .lte('invoice_date', to)
     .order('invoice_date', { ascending: true });
   if (error) throw error;
-  return (data ?? []) as Invoice[];
+  return (data ?? []) as InvoiceWithPaymentDates[];
 }
 
-export function toSalesGstRows(invoices: Invoice[]): SalesGstRow[] {
+function derivePaymentInfo(inv: InvoiceWithPaymentDates): Pick<SalesGstRow, 'paymentStatus' | 'receivedDate' | 'receivedAmount' | 'balanceAmount'> {
+  const receivedAmount = round2(Number(inv.amount_received) || 0);
+  const balanceAmount = round2(Number(inv.balance_amount) || 0);
+
+  if (inv.invoice_status === 'Cancelled') return { paymentStatus: 'Cancelled', receivedDate: '-', receivedAmount, balanceAmount };
+  if (inv.invoice_status === 'Draft') return { paymentStatus: 'Draft', receivedDate: '-', receivedAmount, balanceAmount };
+
+  const paymentStatus: 'Received' | 'Partially Received' | 'Pending' =
+    receivedAmount <= 0 ? 'Pending' : balanceAmount <= 0 ? 'Received' : 'Partially Received';
+
+  const dates = Array.from(new Set((inv.payments ?? []).filter(p => Number(p.amount) > 0).map(p => p.payment_date)))
+    .sort()
+    .map(d => formatDate(d));
+  const receivedDate = dates.length > 0 ? dates.join(', ') : '-';
+
+  return { paymentStatus, receivedDate, receivedAmount, balanceAmount };
+}
+
+export function toSalesGstRows(invoices: InvoiceWithPaymentDates[]): SalesGstRow[] {
   return invoices.map(inv => {
     const gstRatePercent = inv.tax_type === 'igst'
       ? Number(inv.igst_percent) || 0
@@ -159,6 +199,7 @@ export function toSalesGstRows(invoices: Invoice[]): SalesGstRow[] {
       sgst: Number(inv.sgst_amount) || 0,
       igst: Number(inv.igst_amount) || 0,
       status: inv.invoice_status,
+      ...derivePaymentInfo(inv),
       // The "Cancel Invoice" action in Invoices.tsx sets invoice_status to
       // 'Cancelled' - it does NOT set is_cancelled (which is always inserted
       // false and never flipped for this table anywhere in the app). Checking
@@ -204,22 +245,61 @@ export interface PurchaseGstRow {
   itcEligible: boolean;
   itcOverridden: boolean;
   itcReason: string | null;
+  /** Actual collection status derived from purchases.paid_amount/balance_amount
+   *  (kept in sync by the DB's sync_purchase_payment_ledger_to_bank trigger off
+   *  the real purchase_payments ledger). */
+  paymentStatus: 'Paid' | 'Partially Paid' | 'Pending';
+  paidAmount: number;
+  balanceAmount: number;
+  /** Comma-joined, formatted date(s)/mode(s)/reference(s)/bank account(s) across
+   *  every real (non-cancelled) installment - never combined into one value that
+   *  would hide a multi-installment payment's individual details. */
+  paidDate: string;
+  paymentMode: string;
+  referenceNumber: string;
+  bankAccount: string;
 }
 
 interface PurchaseWithVendor extends Purchase {
   vendor: Pick<Vendor, 'id' | 'name' | 'gst_number'> | null;
+  payments?: {
+    payment_date: string;
+    amount: number;
+    payment_mode: string;
+    reference_number: string | null;
+    is_cancelled: boolean;
+    bank_account: { bank_name: string } | null;
+  }[] | null;
 }
 
 export async function fetchPurchasesForMonth(month: number, year: number): Promise<PurchaseWithVendor[]> {
   const { from, to } = monthDateRange(month, year);
   const { data, error } = await supabase
     .from('purchases')
-    .select('*, vendor:vendors(id, name, gst_number)')
+    .select('*, vendor:vendors(id, name, gst_number), payments:purchase_payments(payment_date, amount, payment_mode, reference_number, is_cancelled, bank_account:bank_accounts(bank_name))')
     .gte('purchase_date', from)
     .lte('purchase_date', to)
     .order('purchase_date', { ascending: true });
   if (error) throw error;
   return (data ?? []) as unknown as PurchaseWithVendor[];
+}
+
+function derivePurchasePaymentInfo(p: PurchaseWithVendor): Pick<PurchaseGstRow, 'paymentStatus' | 'paidAmount' | 'balanceAmount' | 'paidDate' | 'paymentMode' | 'referenceNumber' | 'bankAccount'> {
+  const paidAmount = round2(Number(p.paid_amount) || 0);
+  const balanceAmount = round2(Number(p.balance_amount) || 0);
+  const paymentStatus: 'Paid' | 'Partially Paid' | 'Pending' =
+    paidAmount <= 0 ? 'Pending' : balanceAmount <= 0 ? 'Paid' : 'Partially Paid';
+
+  const activePayments = (p.payments ?? []).filter(x => !x.is_cancelled && Number(x.amount) > 0);
+  const uniqueSorted = (values: (string | null | undefined)[]) =>
+    Array.from(new Set(values.filter((v): v is string => !!v)));
+
+  const paidDate = uniqueSorted(activePayments.map(x => x.payment_date)).sort().map(d => formatDate(d)).join(', ') || '-';
+  const paymentMode = uniqueSorted(activePayments.map(x => x.payment_mode)).join(', ') || '-';
+  const referenceNumber = uniqueSorted(activePayments.map(x => x.reference_number)).join(', ') || '-';
+  const bankAccount = uniqueSorted(activePayments.map(x => x.bank_account?.bank_name)).join(', ') || '-';
+
+  return { paymentStatus, paidAmount, balanceAmount, paidDate, paymentMode, referenceNumber, bankAccount };
 }
 
 export interface GstPurchaseItcOverride {
@@ -275,6 +355,7 @@ export function toPurchaseGstRows(
       vendorGstin,
       billNo: p.bill_no,
       billDate: p.purchase_date,
+      ...derivePurchasePaymentInfo(p),
       taxableAmount: Number(p.amount) || 0,
       gstRatePercent: Number(p.gst_rate) || 0,
       cgst, sgst, igst,

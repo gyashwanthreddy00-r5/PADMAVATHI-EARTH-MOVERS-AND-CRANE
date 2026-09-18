@@ -7,7 +7,7 @@ export type RateMasterRateType = 'Hourly' | 'Daily' | 'Both' | 'Weekly' | 'Month
 export type RateMasterStatus = 'Active' | 'Inactive' | 'Closed';
 export type BillStatus = 'Paid' | 'Pending' | 'Partially Paid';
 export type InvoiceStatus = 'Draft' | 'Generated' | 'Paid' | 'Partially Paid' | 'Pending' | 'Cancelled';
-export type PaymentMode = 'Cash' | 'UPI' | 'Bank Transfer' | 'Cheque' | 'NEFT' | 'RTGS' | 'Other';
+export type PaymentMode = 'Cash' | 'UPI' | 'Bank Transfer' | 'Cheque' | 'NEFT' | 'RTGS' | 'Bank' | 'Credit' | 'Other';
 export type AttendanceStatus = 'Present' | 'Absent' | 'Holiday';
 export type MaintenanceType = string;
 
@@ -202,6 +202,9 @@ export interface DieselEntry {
   paid_amount: number;
   pending_amount: number;
   payment_status: BillStatus;
+  payment_mode: PaymentMode | null;
+  payment_reference: string | null;
+  cheque_number: string | null;
   remarks: string | null;
   is_cancelled: boolean;
   created_at: string;
@@ -226,6 +229,9 @@ export interface MaintenanceRecord {
   amount: number;
   paid_amount: number;
   balance: number;
+  payment_mode: PaymentMode | null;
+  payment_reference: string | null;
+  cheque_number: string | null;
   remark: string | null;
   description: string | null;
   is_cancelled: boolean;
@@ -955,6 +961,143 @@ export interface Purchase {
   total_amount: number;
   paid_amount: number;
   balance_amount: number;
+  payment_mode: PaymentMode | null;
+  payment_reference: string | null;
+  cheque_number: string | null;
+  created_by: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface PurchasePayment {
+  id: string;
+  purchase_id: string;
+  amount: number;
+  payment_date: string;
+  payment_mode: PaymentMode;
+  bank_account_id: string | null;
+  reference_number: string | null;
+  cheque_number: string | null;
+  remarks: string | null;
+  is_cancelled: boolean;
+  created_by: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface DieselPayment {
+  id: string;
+  diesel_entry_id: string;
+  amount: number;
+  payment_date: string;
+  payment_mode: PaymentMode;
+  bank_account_id: string | null;
+  reference_number: string | null;
+  cheque_number: string | null;
+  remarks: string | null;
+  is_cancelled: boolean;
+  created_by: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface MaintenancePayment {
+  id: string;
+  maintenance_id: string;
+  amount: number;
+  payment_date: string;
+  payment_mode: PaymentMode;
+  bank_account_id: string | null;
+  reference_number: string | null;
+  cheque_number: string | null;
+  remarks: string | null;
+  is_cancelled: boolean;
+  created_by: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface BankAccount {
+  id: string;
+  bank_name: string;
+  account_holder_name: string | null;
+  account_number: string | null;
+  ifsc_code: string | null;
+  branch_name: string | null;
+  account_type: 'Current' | 'Savings' | null;
+  opening_balance: number;
+  is_default: boolean;
+  is_active: boolean;
+  created_by: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface BankTransaction {
+  id: string;
+  bank_account_id: string;
+  transaction_date: string;
+  transaction_type: 'Credit' | 'Debit';
+  payment_mode: PaymentMode;
+  particulars: string;
+  category: string | null;
+  description: string | null;
+  customer_id: string | null;
+  supplier_id: string | null;
+  invoice_id: string | null;
+  purchase_id: string | null;
+  reference_number: string | null;
+  cheque_number: string | null;
+  utr_number: string | null;
+  amount: number;
+  voucher_type: 'Receipt' | 'Payment' | 'Contra' | null;
+  voucher_no: string | null;
+  source_module: string;
+  source_table: string | null;
+  source_record_id: string | null;
+  is_cancelled: boolean;
+  created_by: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface SalaryPayment {
+  id: string;
+  employee_id: string | null;
+  salary_month: string;
+  amount: number;
+  payment_date: string;
+  payment_mode: PaymentMode;
+  reference_number: string | null;
+  cheque_number: string | null;
+  bank_account_id: string | null;
+  remarks: string | null;
+  is_cancelled: boolean;
+  created_by: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export type OtherExpenseCategory =
+  | 'Repairs'
+  | 'Rent'
+  | 'Electricity'
+  | 'Bank Charges'
+  | 'Internet'
+  | 'Transport Expenses'
+  | 'Other';
+
+export interface OtherExpense {
+  id: string;
+  expense_date: string;
+  category: OtherExpenseCategory;
+  particulars: string;
+  amount: number;
+  payment_mode: PaymentMode;
+  reference_number: string | null;
+  cheque_number: string | null;
+  remarks: string | null;
+  is_cancelled: boolean;
   created_by: string | null;
   created_at: string;
   updated_at: string;

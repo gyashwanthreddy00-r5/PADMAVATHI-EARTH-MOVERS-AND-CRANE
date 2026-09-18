@@ -13,9 +13,10 @@ interface Props {
 
 type GstTypeFilter = 'All' | 'cgst_sgst' | 'igst' | 'no_tax';
 type B2Filter = 'All' | 'B2B' | 'B2C';
+type PaymentStatusFilter = 'All' | SalesGstRow['paymentStatus'];
 
-const STATUS_VARIANT: Record<string, 'green' | 'red' | 'blue' | 'amber' | 'gray'> = {
-  Paid: 'green', Pending: 'red', 'Partially Paid': 'amber', Generated: 'blue', Draft: 'gray', Cancelled: 'gray',
+const PAYMENT_STATUS_VARIANT: Record<SalesGstRow['paymentStatus'], 'green' | 'red' | 'blue' | 'amber' | 'gray'> = {
+  Received: 'green', Pending: 'red', 'Partially Received': 'amber', Draft: 'gray', Cancelled: 'gray',
 };
 
 export default function SalesGst({ rows, monthLabel, company }: Props) {
@@ -24,6 +25,7 @@ export default function SalesGst({ rows, monthLabel, company }: Props) {
   const [gstinSearch, setGstinSearch] = useState('');
   const [gstType, setGstType] = useState<GstTypeFilter>('All');
   const [b2Filter, setB2Filter] = useState<B2Filter>('All');
+  const [paymentStatusFilter, setPaymentStatusFilter] = useState<PaymentStatusFilter>('All');
 
   const filtered = useMemo(() => {
     let r = rows;
@@ -32,8 +34,9 @@ export default function SalesGst({ rows, monthLabel, company }: Props) {
     if (gstinSearch.trim()) { const q = gstinSearch.trim().toLowerCase(); r = r.filter(x => (x.customerGstin ?? '').toLowerCase().includes(q)); }
     if (gstType !== 'All') r = r.filter(x => x.taxType === gstType);
     if (b2Filter !== 'All') r = r.filter(x => (x.b2b ? 'B2B' : 'B2C') === b2Filter);
+    if (paymentStatusFilter !== 'All') r = r.filter(x => x.paymentStatus === paymentStatusFilter);
     return r;
-  }, [rows, customer, invoiceSearch, gstinSearch, gstType, b2Filter]);
+  }, [rows, customer, invoiceSearch, gstinSearch, gstType, b2Filter, paymentStatusFilter]);
 
   const counted = filtered.filter(r => r.isCounted);
   const totals = {
@@ -42,9 +45,11 @@ export default function SalesGst({ rows, monthLabel, company }: Props) {
     cgst: counted.reduce((s, r) => s + r.cgst, 0),
     sgst: counted.reduce((s, r) => s + r.sgst, 0),
     igst: counted.reduce((s, r) => s + r.igst, 0),
+    receivedAmount: counted.reduce((s, r) => s + r.receivedAmount, 0),
+    balanceAmount: counted.reduce((s, r) => s + r.balanceAmount, 0),
   };
 
-  const clearFilters = () => { setCustomer(''); setInvoiceSearch(''); setGstinSearch(''); setGstType('All'); setB2Filter('All'); };
+  const clearFilters = () => { setCustomer(''); setInvoiceSearch(''); setGstinSearch(''); setGstType('All'); setB2Filter('All'); setPaymentStatusFilter('All'); };
 
   return (
     <div className="space-y-4">
@@ -73,6 +78,12 @@ export default function SalesGst({ rows, monthLabel, company }: Props) {
             <option value="igst">IGST</option>
             <option value="no_tax">No Tax</option>
           </select>
+          <select className={inputClass()} value={paymentStatusFilter} onChange={e => setPaymentStatusFilter(e.target.value as PaymentStatusFilter)}>
+            <option value="All">Payment Status - All</option>
+            <option value="Received">Received</option>
+            <option value="Partially Received">Partially Received</option>
+            <option value="Pending">Pending</option>
+          </select>
         </div>
         <div className="flex justify-end"><Button variant="secondary" size="sm" onClick={clearFilters}><X className="w-4 h-4" />Clear Filters</Button></div>
       </div>
@@ -85,7 +96,7 @@ export default function SalesGst({ rows, monthLabel, company }: Props) {
             <table className="w-full">
               <thead>
                 <tr className="border-b border-slate-100 bg-slate-50/90">
-                  {['Sl No', 'Invoice Number', 'Invoice Date', 'Customer Name', 'Customer GSTIN', 'Place of Supply', 'Invoice Value', 'Taxable Value', 'GST Rate', 'CGST', 'SGST', 'IGST', 'Status'].map(h => (
+                  {['Sl No', 'Invoice Number', 'Invoice Date', 'Customer Name', 'Customer GSTIN', 'Place of Supply', 'Invoice Value', 'Taxable Value', 'GST Rate', 'CGST', 'SGST', 'IGST', 'Payment Status', 'Received Date', 'Received Amount', 'Balance Amount'].map(h => (
                     <th key={h} className="text-left px-3 py-2.5 text-xs font-bold text-slate-500 uppercase tracking-wider whitespace-nowrap">{h}</th>
                   ))}
                 </tr>
@@ -105,7 +116,10 @@ export default function SalesGst({ rows, monthLabel, company }: Props) {
                     <td className="px-3 py-2.5 text-sm text-slate-600 text-right tabular-nums whitespace-nowrap">{formatCurrency(r.cgst)}</td>
                     <td className="px-3 py-2.5 text-sm text-slate-600 text-right tabular-nums whitespace-nowrap">{formatCurrency(r.sgst)}</td>
                     <td className="px-3 py-2.5 text-sm text-slate-600 text-right tabular-nums whitespace-nowrap">{formatCurrency(r.igst)}</td>
-                    <td className="px-3 py-2.5 whitespace-nowrap"><StatusBadge status={r.status} variant={STATUS_VARIANT[r.status]} /></td>
+                    <td className="px-3 py-2.5 whitespace-nowrap"><StatusBadge status={r.paymentStatus} variant={PAYMENT_STATUS_VARIANT[r.paymentStatus]} /></td>
+                    <td className="px-3 py-2.5 text-sm text-slate-600 whitespace-nowrap">{r.receivedDate}</td>
+                    <td className="px-3 py-2.5 text-sm text-emerald-700 text-right tabular-nums whitespace-nowrap">{formatCurrency(r.receivedAmount)}</td>
+                    <td className={`px-3 py-2.5 text-sm text-right tabular-nums whitespace-nowrap font-medium ${r.balanceAmount > 0 ? 'text-red-600' : 'text-slate-500'}`}>{formatCurrency(r.balanceAmount)}</td>
                   </tr>
                 ))}
               </tbody>
@@ -119,6 +133,9 @@ export default function SalesGst({ rows, monthLabel, company }: Props) {
                   <td className="px-3 py-2.5 text-sm text-slate-800 text-right tabular-nums">{formatCurrency(totals.sgst)}</td>
                   <td className="px-3 py-2.5 text-sm text-slate-800 text-right tabular-nums">{formatCurrency(totals.igst)}</td>
                   <td></td>
+                  <td></td>
+                  <td className="px-3 py-2.5 text-sm text-emerald-700 text-right tabular-nums">{formatCurrency(totals.receivedAmount)}</td>
+                  <td className="px-3 py-2.5 text-sm text-red-600 text-right tabular-nums">{formatCurrency(totals.balanceAmount)}</td>
                 </tr>
               </tfoot>
             </table>

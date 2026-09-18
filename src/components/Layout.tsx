@@ -56,6 +56,7 @@ const nav: NavSection[] = [
       { key: 'purchase', label: 'purchase', icon: ShoppingCart, path: '/purchase' },
       { key: 'maintenance', label: 'maintenance', icon: Wrench, path: '/maintenance' },
       { key: 'emi', label: 'emiVehicles', icon: CreditCard, path: '/emi' },
+      { key: 'salary-payments', label: 'salaryPayments', icon: Wallet, path: '/salary-payments' },
     ],
   },
   {
@@ -90,6 +91,12 @@ const nav: NavSection[] = [
     title: 'gst',
     items: [
       { key: 'gst', label: 'gst', icon: Landmark, path: '/gst' },
+    ],
+  },
+  {
+    title: 'bank',
+    items: [
+      { key: 'bank', label: 'bank', icon: Landmark, path: '/bank' },
     ],
   },
   {
