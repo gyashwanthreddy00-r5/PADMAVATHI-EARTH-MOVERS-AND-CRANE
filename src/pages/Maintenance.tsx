@@ -5,12 +5,20 @@ import { useSettings } from '@/context/SettingsContext';
 import { useToast } from '@/components/ui/Toast';
 import { DataTable, type Column } from '@/components/ui/DataTable';
 import { Modal, ConfirmDialog, StatusBadge, Button, Field, inputClass, LoadingSpinner } from '@/components/ui/common';
-import { SearchableSelect } from '@/components/ui/SearchableSelect';
-import { Plus, Pencil, Trash2, Download, Filter, Columns3, X } from 'lucide-react';
+import { Plus, Pencil, Trash2, Download, Filter, Columns3, X, IndianRupee } from 'lucide-react';
 import { formatCurrency, formatDate, todayISO, monthName } from '@/lib/utils';
 import { exportToXlsxWithCompany } from '@/lib/exportXlsx';
 import { DatePicker } from '@/components/ui/DatePicker';
-import type { MaintenanceRecord, MaintenanceWithRelations, Vehicle, MaintenanceTypeConfig } from '@/types';
+import type { MaintenanceRecord, MaintenanceWithRelations, Vehicle, MaintenanceTypeConfig, MaintenancePayment, BankAccount, PaymentMode } from '@/types';
+
+const emptyMaintenancePaymentForm = {
+  amount: '',
+  payment_date: todayISO(),
+  payment_mode: 'Cash' as PaymentMode,
+  bank_account_id: '',
+  reference_number: '',
+  remarks: '',
+};
 
 const COLUMN_KEYS = ['sl_no', 'date', 'vehicle', 'maintenance_type', 'remark', 'total_amount', 'paid_amount', 'balance'] as const;
 type ColumnKey = typeof COLUMN_KEYS[number];
@@ -54,8 +62,15 @@ export default function Maintenance() {
   const [visibleColumns, setVisibleColumns] = useState<Set<ColumnKey>>(() => loadVisibleColumns());
 
   const [form, setForm] = useState<Partial<MaintenanceRecord>>({
-    maintenance_date: todayISO(), vehicle_id: '', maintenance_type: '', amount: null as number | null, paid_amount: null as number | null, remark: '',
+    maintenance_date: todayISO(), maintenance_type: '', amount: null as number | null, remark: '',
   });
+
+  const [bankAccounts, setBankAccounts] = useState<BankAccount[]>([]);
+  const [paymentTarget, setPaymentTarget] = useState<MaintenanceRecord | null>(null);
+  const [paymentHistory, setPaymentHistory] = useState<MaintenancePayment[]>([]);
+  const [paymentForm, setPaymentForm] = useState(emptyMaintenancePaymentForm);
+  const [savingPayment, setSavingPayment] = useState(false);
+  const [deletePaymentId, setDeletePaymentId] = useState<string | null>(null);
 
   const [filters, setFilters] = useState({
     from: '',
@@ -71,14 +86,16 @@ export default function Maintenance() {
 
   const fetchAll = useCallback(async () => {
     setLoading(true);
-    const [mRes, vRes, mtRes] = await Promise.all([
+    const [mRes, vRes, mtRes, bRes] = await Promise.all([
       supabase.from('maintenance').select('*, vehicle:vehicles(id,registration_number,type)').order('maintenance_date', { ascending: false }).eq('is_cancelled', false),
       supabase.from('vehicles').select('*').order('registration_number'),
       supabase.from('maintenance_types').select('*').order('sort_order', { ascending: true }),
+      supabase.from('bank_accounts').select('*').eq('is_active', true).order('is_default', { ascending: false }).order('bank_name'),
     ]);
     setRecords((mRes.data ?? []) as MaintenanceWithRelations[]);
     setVehicles((vRes.data ?? []) as Vehicle[]);
     setMaintTypes((mtRes.data ?? []) as MaintenanceTypeConfig[]);
+    setBankAccounts((bRes.data ?? []) as BankAccount[]);
     setLoading(false);
   }, []);
 
@@ -124,8 +141,8 @@ export default function Maintenance() {
   const openAdd = () => {
     setEditing(null);
     setForm({
-      maintenance_date: todayISO(), vehicle_id: '', maintenance_type: activeTypes[0]?.name ?? '',
-      amount: null as number | null, paid_amount: null as number | null, remark: '',
+      maintenance_date: todayISO(), maintenance_type: activeTypes[0]?.name ?? '',
+      amount: null as number | null, remark: '',
     });
     setModalOpen(true);
   };
@@ -138,16 +155,20 @@ export default function Maintenance() {
   const save = async () => {
     if (!form.maintenance_type) { show(`${t('maintenanceType')} - ${t('required')}`, 'error'); return; }
     const totalAmount = form.amount === null ? 0 : Number(form.amount);
-    const paidAmount = form.paid_amount === null ? 0 : Number(form.paid_amount);
-    if (paidAmount > totalAmount) { show(t('paidAmountExceedsTotal'), 'error'); return; }
     setSaving(true);
+    // paid_amount/balance are now owned by the maintenance_payments ledger
+    // (see "Record Payment") - balance here only needs to recompute against
+    // whatever has already been paid so far when the bill amount changes.
+    const alreadyPaid = editing?.paid_amount ?? 0;
     const payload = {
       maintenance_date: form.maintenance_date,
-      vehicle_id: form.vehicle_id,
+      // No Vehicle Number field in this form - preserve an existing record's
+      // vehicle_id untouched when editing (openEdit copies it into form via
+      // {...m}), and leave a brand new entry unlinked (null).
+      vehicle_id: form.vehicle_id ?? null,
       maintenance_type: form.maintenance_type,
       amount: totalAmount,
-      paid_amount: paidAmount,
-      balance: totalAmount - paidAmount,
+      balance: totalAmount - alreadyPaid,
       remark: form.remark ?? null,
     };
     if (editing) {
@@ -168,6 +189,64 @@ export default function Maintenance() {
     if (error) show(t('deleteError'), 'error');
     else { show(t('deleteSuccess'), 'success'); fetchAll(); }
     setDeleteId(null);
+  };
+
+  // ---------------- Payment ledger (one row per actual installment) ----------------
+
+  const fetchPaymentHistory = async (maintenanceId: string) => {
+    const { data } = await supabase.from('maintenance_payments').select('*').eq('maintenance_id', maintenanceId).eq('is_cancelled', false).order('payment_date', { ascending: false }).order('created_at', { ascending: false });
+    setPaymentHistory((data ?? []) as MaintenancePayment[]);
+  };
+
+  const openRecordPayment = (m: MaintenanceRecord) => {
+    setPaymentTarget(m);
+    setPaymentForm({ ...emptyMaintenancePaymentForm, bank_account_id: bankAccounts.find(a => a.is_default)?.id ?? bankAccounts[0]?.id ?? '' });
+    fetchPaymentHistory(m.id);
+  };
+
+  const refreshMaintenanceRow = async (id: string) => {
+    const { data } = await supabase.from('maintenance').select('*, vehicle:vehicles(id,registration_number,type)').eq('id', id).single();
+    if (!data) return;
+    const updated = data as MaintenanceWithRelations;
+    setRecords(prev => prev.map(m => m.id === id ? updated : m));
+    setPaymentTarget(prev => prev && prev.id === id ? updated : prev);
+  };
+
+  const saveRecordPayment = async () => {
+    if (!paymentTarget) return;
+    const amount = Number(paymentForm.amount) || 0;
+    const balance = Number(paymentTarget.balance) || 0;
+    if (amount <= 0) { show('Enter a valid amount greater than 0.', 'error'); return; }
+    if (amount > balance + 0.01) { show(`Payment cannot exceed the outstanding balance of ${formatCurrency(balance)}.`, 'error'); return; }
+    if (paymentForm.payment_mode !== 'Cash' && !paymentForm.bank_account_id) { show('Select a Bank Account.', 'error'); return; }
+    setSavingPayment(true);
+    const { data: { user } } = await supabase.auth.getUser();
+    const isCheque = paymentForm.payment_mode === 'Cheque';
+    const { error } = await supabase.from('maintenance_payments').insert({
+      maintenance_id: paymentTarget.id,
+      amount,
+      payment_date: paymentForm.payment_date,
+      payment_mode: paymentForm.payment_mode,
+      bank_account_id: paymentForm.payment_mode === 'Cash' ? null : paymentForm.bank_account_id,
+      reference_number: paymentForm.reference_number.trim() || null,
+      cheque_number: isCheque ? (paymentForm.reference_number.trim() || null) : null,
+      remarks: paymentForm.remarks.trim() || null,
+      created_by: user?.id ?? null,
+    });
+    if (error) { show(error.message, 'error'); setSavingPayment(false); return; }
+    show('Payment recorded.', 'success');
+    setPaymentForm({ ...emptyMaintenancePaymentForm, bank_account_id: paymentForm.bank_account_id });
+    await Promise.all([fetchPaymentHistory(paymentTarget.id), refreshMaintenanceRow(paymentTarget.id)]);
+    setSavingPayment(false);
+  };
+
+  const cancelPayment = async () => {
+    if (!deletePaymentId || !paymentTarget) return;
+    const { error } = await supabase.from('maintenance_payments').update({ is_cancelled: true }).eq('id', deletePaymentId);
+    if (error) { show(error.message, 'error'); setDeletePaymentId(null); return; }
+    show('Payment cancelled.', 'success');
+    await Promise.all([fetchPaymentHistory(paymentTarget.id), refreshMaintenanceRow(paymentTarget.id)]);
+    setDeletePaymentId(null);
   };
 
   const clearFilters = () => setFilters({ from: '', to: '', month: 0, year: 0, vehicle_id: '', maintenance_type: '', payment_status: '' });
@@ -251,6 +330,7 @@ export default function Maintenance() {
       key: 'actions', header: t('actions'), align: 'center',
       render: m => (
         <div className="flex justify-center gap-1">
+          <button onClick={() => openRecordPayment(m)} className="p-1.5 text-slate-500 hover:text-emerald-600 hover:bg-emerald-50 rounded-md" title="Record Payment"><IndianRupee className="w-4 h-4" /></button>
           <button onClick={() => openEdit(m)} className="p-1.5 text-slate-500 hover:text-blue-600 hover:bg-blue-50 rounded-md"><Pencil className="w-4 h-4" /></button>
           <button onClick={() => setDeleteId(m.id)} className="p-1.5 text-slate-500 hover:text-red-600 hover:bg-red-50 rounded-md"><Trash2 className="w-4 h-4" /></button>
         </div>
@@ -385,18 +465,6 @@ export default function Maintenance() {
           <Field label={t('date')} required>
             <DatePicker value={form.maintenance_date ?? ''} onChange={v => setForm(f => ({ ...f, maintenance_date: v }))} />
           </Field>
-          <Field label={t('vehicleNumber')}>
-            <SearchableSelect
-              value={form.vehicle_id ?? ''}
-              onChange={val => setForm(f => ({ ...f, vehicle_id: val }))}
-              placeholder="Optional"
-              searchPlaceholder="Search vehicle number..."
-              options={vehicles.map(v => ({
-                value: v.id,
-                label: `${v.registration_number} (${v.type})`,
-              }))}
-            />
-          </Field>
           <Field label={t('maintenanceType')} required>
             <select className={inputClass()} value={form.maintenance_type ?? ''} onChange={e => setForm(f => ({ ...f, maintenance_type: e.target.value }))}>
               <option value="">-</option>
@@ -412,21 +480,116 @@ export default function Maintenance() {
           <Field label={t('totalAmount')} required>
             <input type="number" step="0.01" min="0" className={inputClass()} value={form.amount ?? ''} onChange={e => setForm(f => ({ ...f, amount: e.target.value === '' ? null : Number(e.target.value) }))} />
           </Field>
-          <Field label={t('paidAmount')}>
-            <input type="number" step="0.01" min="0" className={inputClass()} value={form.paid_amount ?? ''} onChange={e => setForm(f => ({ ...f, paid_amount: e.target.value === '' ? null : Number(e.target.value) }))} />
-          </Field>
+          <div className="sm:col-span-2">
+            <div className="flex justify-between items-center bg-slate-50 rounded-lg px-4 py-2.5 border border-slate-200">
+              <span className="text-sm font-medium text-slate-600">{t('paidAmount')}</span>
+              <span className="text-lg font-bold text-emerald-600">{formatCurrency(editing?.paid_amount ?? 0)}</span>
+            </div>
+          </div>
           <div className="sm:col-span-2">
             <div className="flex justify-between items-center bg-slate-50 rounded-lg px-4 py-2.5 border border-slate-200">
               <span className="text-sm font-medium text-slate-600">{t('balance')}</span>
-              <span className={`text-lg font-bold ${(form.amount ?? 0) - (form.paid_amount ?? 0) > 0 ? 'text-red-600' : 'text-emerald-600'}`}>
-                {formatCurrency((form.amount ?? 0) - (form.paid_amount ?? 0))}
+              <span className={`text-lg font-bold ${(form.amount ?? 0) - (editing?.paid_amount ?? 0) > 0 ? 'text-red-600' : 'text-emerald-600'}`}>
+                {formatCurrency((form.amount ?? 0) - (editing?.paid_amount ?? 0))}
               </span>
             </div>
           </div>
+          {!editing && (
+            <p className="sm:col-span-2 text-xs text-slate-400">Payments are recorded separately - use the ₹ Record Payment action on the maintenance list once this entry is saved.</p>
+          )}
         </div>
       </Modal>
 
       <ConfirmDialog open={!!deleteId} onClose={() => setDeleteId(null)} onConfirm={handleDelete} title={t('delete')} message={t('confirmDelete')} confirmText={t('delete')} danger />
+
+      {/* Record Payment modal - one maintenance_payments row per actual installment */}
+      <Modal
+        open={!!paymentTarget}
+        onClose={() => setPaymentTarget(null)}
+        title="Record Payment"
+        size="md"
+        closeOnBackdropClick={false}
+        footer={<><Button variant="secondary" onClick={() => setPaymentTarget(null)}>{t('cancel')}</Button><Button onClick={saveRecordPayment} disabled={savingPayment}>{savingPayment ? t('saving') : t('save')}</Button></>}
+      >
+        {paymentTarget && (
+          <div className="space-y-4">
+            <div className="p-3 bg-slate-50 rounded-lg text-sm grid grid-cols-3 gap-2">
+              <div><span className="text-slate-500 block text-xs">{t('totalAmount')}</span><b>{formatCurrency(paymentTarget.amount)}</b></div>
+              <div><span className="text-slate-500 block text-xs">{t('paidAmount')}</span><b className="text-emerald-600">{formatCurrency(paymentTarget.paid_amount)}</b></div>
+              <div><span className="text-slate-500 block text-xs">{t('balance')}</span><b className={paymentTarget.balance > 0 ? 'text-red-600' : 'text-emerald-600'}>{formatCurrency(paymentTarget.balance)}</b></div>
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <Field label={t('amount')} required>
+                <input type="number" step="0.01" min="0" className={inputClass()} value={paymentForm.amount} onChange={e => setPaymentForm(f => ({ ...f, amount: e.target.value }))} placeholder="0" />
+              </Field>
+              <Field label={t('date')} required>
+                <DatePicker value={paymentForm.payment_date} onChange={v => setPaymentForm(f => ({ ...f, payment_date: v }))} />
+              </Field>
+              <Field label={t('paymentMode')}>
+                <select className={inputClass()} value={paymentForm.payment_mode} onChange={e => setPaymentForm(f => ({ ...f, payment_mode: e.target.value as PaymentMode }))}>
+                  <option value="Cash">Cash</option>
+                  <option value="Bank Transfer">Bank Transfer</option>
+                  <option value="UPI">UPI</option>
+                  <option value="Cheque">Cheque</option>
+                </select>
+              </Field>
+              {paymentForm.payment_mode !== 'Cash' && (
+                <Field label="Bank Account" required>
+                  <select className={inputClass()} value={paymentForm.bank_account_id} onChange={e => setPaymentForm(f => ({ ...f, bank_account_id: e.target.value }))}>
+                    <option value="">Select Bank Account</option>
+                    {bankAccounts.map(a => <option key={a.id} value={a.id}>{a.bank_name}</option>)}
+                  </select>
+                </Field>
+              )}
+              <Field label={t('referenceNumber')}>
+                <input className={inputClass()} value={paymentForm.reference_number} onChange={e => setPaymentForm(f => ({ ...f, reference_number: e.target.value }))} placeholder="UPI Ref / Cheque No" />
+              </Field>
+            </div>
+
+            <div>
+              <p className="text-xs font-bold uppercase tracking-wide text-slate-500 mb-2">Payment History</p>
+              {paymentHistory.length === 0 ? (
+                <p className="text-sm text-slate-400">No payments recorded yet.</p>
+              ) : (
+                <table className="w-full text-sm border border-slate-200 rounded-lg overflow-hidden">
+                  <thead className="bg-slate-50">
+                    <tr>
+                      <th className="text-left px-3 py-1.5 font-medium text-slate-600">{t('date')}</th>
+                      <th className="text-left px-3 py-1.5 font-medium text-slate-600">{t('paymentMode')}</th>
+                      <th className="text-left px-3 py-1.5 font-medium text-slate-600">{t('referenceNumber')}</th>
+                      <th className="text-right px-3 py-1.5 font-medium text-slate-600">{t('amount')}</th>
+                      <th className="w-8"></th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {paymentHistory.map(pay => (
+                      <tr key={pay.id} className="border-t border-slate-100">
+                        <td className="px-3 py-1.5">{formatDate(pay.payment_date)}</td>
+                        <td className="px-3 py-1.5">{pay.payment_mode}</td>
+                        <td className="px-3 py-1.5">{pay.reference_number ?? pay.cheque_number ?? '-'}</td>
+                        <td className="px-3 py-1.5 text-right font-medium">{formatCurrency(pay.amount)}</td>
+                        <td className="px-3 py-1.5 text-center">
+                          <button onClick={() => setDeletePaymentId(pay.id)} className="p-1 text-slate-400 hover:text-red-600"><X className="w-3.5 h-3.5" /></button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
+            </div>
+          </div>
+        )}
+      </Modal>
+
+      <ConfirmDialog
+        open={!!deletePaymentId}
+        onClose={() => setDeletePaymentId(null)}
+        onConfirm={cancelPayment}
+        title="Cancel Payment"
+        message="This payment will be cancelled and its linked Bank transaction reversed."
+        confirmText="Cancel Payment"
+        danger
+      />
     </div>
   );
 }

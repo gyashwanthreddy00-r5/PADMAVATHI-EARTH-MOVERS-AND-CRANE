@@ -42,6 +42,8 @@ const PoOrdersReport = lazy(() => import('@/pages/PoOrdersReport'));
 const PurchaseReport = lazy(() => import('@/pages/PurchaseReport'));
 const DailyVehicleReport = lazy(() => import('@/pages/DailyVehicleReport'));
 const Gst = lazy(() => import('@/pages/Gst/Gst'));
+const Bank = lazy(() => import('@/pages/Bank'));
+const SalaryPayments = lazy(() => import('@/pages/SalaryPayments'));
 
 function AppContent() {
   const { session, profile, loading, allowedPages, isAdmin, isOwner } = useAuth();
@@ -132,6 +134,8 @@ function AppContent() {
       case '/reports/po-orders': return <PoOrdersReport />;
       case '/reports/purchase': return <PurchaseReport />;
       case '/gst': return <Gst />;
+      case '/bank': return <Bank />;
+      case '/salary-payments': return <SalaryPayments />;
       default: return (isAdmin || isOwner) ? <Dashboard onNavigate={navigate} /> : <StaffDashboard onNavigate={navigate} />;
     }
   };

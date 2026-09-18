@@ -27,7 +27,7 @@ import {
 } from '@/lib/reminderCalc';
 import type {
   InvoiceWithRelations, InvoiceItem, InvoicePayment,
-  Customer, InvoiceSettings, PaymentMode, InvoiceStatus, RateMaster, VehicleType, Vehicle,
+  Customer, InvoiceSettings, InvoiceStatus, RateMaster, VehicleType, Vehicle,
   InvoiceReminder, ReminderSettings,
 } from '@/types';
 
@@ -188,7 +188,7 @@ export default function Invoices({ initialTab = 'list' }: InvoicesProps = {}) {
   // (see recordCompanyPayment) instead of asking which invoice to pay.
   const [companyPaymentModal, setCompanyPaymentModal] = useState<{ customerId: string; customerName: string; outstandingInvoices: StatementRow[]; totalOutstanding: number } | null>(null);
   const [recordingCompanyPayment, setRecordingCompanyPayment] = useState(false);
-  const [companyPaymentForm, setCompanyPaymentForm] = useState({ amount: null as number | null, payment_date: todayISO(), payment_mode: 'Cash' as PaymentMode, reference: '', remarks: '' });
+  const [companyPaymentForm, setCompanyPaymentForm] = useState({ amount: null as number | null, payment_date: todayISO(), reference: '', remarks: '' });
   const [invoiceSearch, setInvoiceSearch] = useState('');
   // Click-to-open list of vehicles for a multi-vehicle invoice row - stores that
   // row's invoice id, or null when no popup is open. Closed by any outside click.
@@ -873,7 +873,7 @@ export default function Invoices({ initialTab = 'list' }: InvoicesProps = {}) {
     setCompanyPaymentModal({ customerId, customerName: cust?.name ?? '-', outstandingInvoices, totalOutstanding });
     // Amount Received is always manual entry - never pre-filled with the outstanding
     // balance (that figure is shown above purely as information).
-    setCompanyPaymentForm({ amount: null, payment_date: todayISO(), payment_mode: 'Cash', reference: '', remarks: '' });
+    setCompanyPaymentForm({ amount: null, payment_date: todayISO(), reference: '', remarks: '' });
   };
 
   // Records one customer_payments header row, then FIFO-allocates the amount across
@@ -896,7 +896,9 @@ export default function Invoices({ initialTab = 'list' }: InvoicesProps = {}) {
     const { data: header, error: headerErr } = await supabase.from('customer_payments').insert({
       customer_id: companyPaymentModal.customerId,
       payment_date: companyPaymentForm.payment_date,
-      payment_mode: companyPaymentForm.payment_mode,
+      // Company payments are always a receipt into the bank - never
+      // literal cash - so this is fixed rather than user-selected.
+      payment_mode: 'Credit',
       amount: amt,
       reference: companyPaymentForm.reference || null,
       notes: companyPaymentForm.remarks || null,
@@ -918,7 +920,7 @@ export default function Invoices({ initialTab = 'list' }: InvoicesProps = {}) {
         invoice_id: a.invoice_id,
         amount: a.amount,
         payment_date: companyPaymentForm.payment_date,
-        payment_mode: companyPaymentForm.payment_mode,
+        payment_mode: 'Credit',
         reference: companyPaymentForm.reference || null,
         remarks: companyPaymentForm.remarks || null,
         customer_payment_id: header.id,
@@ -926,25 +928,15 @@ export default function Invoices({ initialTab = 'list' }: InvoicesProps = {}) {
     );
     if (payErr) { show(payErr.message, 'error'); setRecordingCompanyPayment(false); return; }
 
-    for (const a of allocations) {
-      const inv = a.row.inv;
-      const payable = inv.discount_enabled ? Number(inv.final_payable_amount ?? inv.grand_total) : Number(inv.grand_total);
-      const newReceived = round2(Number(inv.amount_received) + a.amount);
-      const newBalance = round2(payable - newReceived);
-      const newStatus: InvoiceStatus = newBalance <= 0 ? 'Paid' : 'Partially Paid';
-      const { error: invErr } = await supabase.from('invoices').update({
-        amount_received: newReceived,
-        balance_amount: Math.max(0, newBalance),
-        invoice_status: newStatus,
-        payment_status: newStatus,
-      }).eq('id', inv.id);
-      if (invErr) show(invErr.message, 'error');
-    }
+    // Each inserted invoice_payments row above triggers the DB's
+    // sync_invoice_payment_to_bank trigger, which recomputes this invoice's
+    // amount_received/balance_amount/invoice_status/payment_status directly
+    // from the invoice_payments ledger - no client-side update needed here.
 
     show(`Payment of ${formatCurrency(amt)} recorded and allocated across ${allocations.length} invoice${allocations.length === 1 ? '' : 's'}.`, 'success');
     setCompanyPaymentModal(null);
     setRecordingCompanyPayment(false);
-    setCompanyPaymentForm({ amount: null, payment_date: todayISO(), payment_mode: 'Cash', reference: '', remarks: '' });
+    setCompanyPaymentForm({ amount: null, payment_date: todayISO(), reference: '', remarks: '' });
     fetchAll();
   };
 
@@ -2178,20 +2170,11 @@ export default function Invoices({ initialTab = 'list' }: InvoicesProps = {}) {
               <Field label="Payment Date" required>
                 <DatePicker value={companyPaymentForm.payment_date} onChange={v => setCompanyPaymentForm(f => ({ ...f, payment_date: v }))} />
               </Field>
-              <Field label="Payment Mode">
-                <select className={inputClass()} value={companyPaymentForm.payment_mode} onChange={e => setCompanyPaymentForm(f => ({ ...f, payment_mode: e.target.value as PaymentMode }))}>
-                  <option value="Cash">Cash</option>
-                  <option value="UPI">UPI</option>
-                  <option value="Bank Transfer">Bank Transfer</option>
-                  <option value="Cheque">Cheque</option>
-                  <option value="NEFT">NEFT</option>
-                  <option value="RTGS">RTGS</option>
-                  <option value="Other">Other</option>
-                </select>
-              </Field>
-              <Field label="Reference Number">
-                <input className={inputClass()} value={companyPaymentForm.reference} onChange={e => setCompanyPaymentForm(f => ({ ...f, reference: e.target.value }))} placeholder="UPI Ref / Transaction ID / Cheque No (optional)" />
-              </Field>
+              <div className="col-span-2">
+                <Field label="Reference Number">
+                  <input className={inputClass()} value={companyPaymentForm.reference} onChange={e => setCompanyPaymentForm(f => ({ ...f, reference: e.target.value }))} placeholder="Bank transaction / UTR / cheque reference (optional)" />
+                </Field>
+              </div>
               <div className="col-span-2">
                 <Field label="Notes">
                   <input className={inputClass()} value={companyPaymentForm.remarks} onChange={e => setCompanyPaymentForm(f => ({ ...f, remarks: e.target.value }))} placeholder="Optional" />

@@ -418,14 +418,11 @@ export default function CashBills() {
       });
       if (payErr) { show('Failed to record payment.', 'error'); return; }
 
-      const newTotalPaid = Math.round((totalPaid + paymentForm.amount) * 100) / 100;
-      const newBal = calcBalance(payable, newTotalPaid);
-      const payStatus = calcPayStatus(newTotalPaid, payable);
+      // amount_received/balance_amount/invoice_status/payment_status are now
+      // recomputed by the DB's sync_invoice_payment_to_bank trigger straight
+      // from the invoice_payments ledger. Only the display-only "last payment
+      // mode/reference" fields on the invoice row still need a client update.
       const { error: invErr } = await supabase.from('invoices').update({
-        amount_received: newTotalPaid,
-        balance_amount: newBal,
-        invoice_status: payStatus === 'Paid' ? 'Paid' : payStatus === 'Partial' ? 'Partially Paid' : 'Pending',
-        payment_status: payStatus === 'Paid' ? 'Paid' : payStatus === 'Partial' ? 'Partially Paid' : 'Pending',
         payment_mode: paymentForm.payment_mode,
         payment_reference: paymentForm.reference || null,
       }).eq('id', paymentModal.id);

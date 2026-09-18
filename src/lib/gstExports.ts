@@ -22,30 +22,32 @@ const EMPTY_ADJUSTMENTS: GstManualAdjustments = {
 };
 
 function salesHeaders(): string[] {
-  return ['Sl No', 'Invoice Number', 'Invoice Date', 'Customer Name', 'Customer GSTIN', 'Place of Supply', 'B2B/B2C', 'Invoice Value', 'Taxable Value', 'GST Rate %', 'CGST', 'SGST', 'IGST', 'Status'];
+  return ['Sl No', 'Invoice Number', 'Invoice Date', 'Customer Name', 'Customer GSTIN', 'Place of Supply', 'B2B/B2C', 'Invoice Value', 'Taxable Value', 'GST Rate %', 'CGST', 'SGST', 'IGST', 'Payment Status', 'Received Date', 'Received Amount', 'Balance Amount'];
 }
 function salesDataRows(rows: SalesGstRow[]): (string | number)[][] {
   return rows.map((r, i) => [
     i + 1, r.invoiceNumber ?? '-', formatDate(r.invoiceDate), r.customerName ?? '-', r.customerGstin ?? '-',
-    r.placeOfSupply ?? '-', r.b2b ? 'B2B' : 'B2C', r.invoiceValue, r.taxableValue, r.gstRatePercent, r.cgst, r.sgst, r.igst, r.status,
+    r.placeOfSupply ?? '-', r.b2b ? 'B2B' : 'B2C', r.invoiceValue, r.taxableValue, r.gstRatePercent, r.cgst, r.sgst, r.igst,
+    r.paymentStatus, r.receivedDate, r.receivedAmount, r.balanceAmount,
   ]);
 }
 function salesTotalRow(rows: SalesGstRow[]): (string | number)[] {
   const counted = rows.filter(r => r.isCounted);
-  return ['', '', '', '', '', '', 'Total', sum(counted, 'invoiceValue'), sum(counted, 'taxableValue'), '', sum(counted, 'cgst'), sum(counted, 'sgst'), sum(counted, 'igst'), ''];
+  return ['', '', '', '', '', '', 'Total', sum(counted, 'invoiceValue'), sum(counted, 'taxableValue'), '', sum(counted, 'cgst'), sum(counted, 'sgst'), sum(counted, 'igst'), '', '', sum(counted, 'receivedAmount'), sum(counted, 'balanceAmount')];
 }
 
 function purchaseHeaders(): string[] {
-  return ['Sl No', 'Vendor Name', 'Vendor GSTIN', 'Bill Number', 'Bill Date', 'Taxable Amount', 'GST Rate %', 'CGST', 'SGST', 'IGST', 'Total Amount', 'ITC Eligible', 'ITC Not Eligible'];
+  return ['Sl No', 'Vendor Name', 'Vendor GSTIN', 'Bill Number', 'Bill Date', 'Taxable Amount', 'GST Rate %', 'CGST', 'SGST', 'IGST', 'Total Amount', 'ITC Eligible', 'ITC Not Eligible', 'Payment Status', 'Paid Date', 'Paid Amount', 'Balance Amount', 'Payment Mode', 'Reference Number', 'Bank Account'];
 }
 function purchaseDataRows(rows: PurchaseGstRow[]): (string | number)[][] {
   return rows.map((r, i) => [
     i + 1, r.vendorName, r.vendorGstin ?? '-', r.billNo ?? '-', formatDate(r.billDate), r.taxableAmount, r.gstRatePercent,
     r.cgst, r.sgst, r.igst, r.totalAmount, r.itcEligible ? 'Yes' : '-', r.itcEligible ? '-' : 'Yes',
+    r.paymentStatus, r.paidDate, r.paidAmount, r.balanceAmount, r.paymentMode, r.referenceNumber, r.bankAccount,
   ]);
 }
 function purchaseTotalRow(rows: PurchaseGstRow[]): (string | number)[] {
-  return ['', '', '', '', 'Total', sum(rows, 'taxableAmount'), '', sum(rows, 'cgst'), sum(rows, 'sgst'), sum(rows, 'igst'), sum(rows, 'totalAmount'), '', ''];
+  return ['', '', '', '', 'Total', sum(rows, 'taxableAmount'), '', sum(rows, 'cgst'), sum(rows, 'sgst'), sum(rows, 'igst'), sum(rows, 'totalAmount'), '', '', '', '', sum(rows, 'paidAmount'), sum(rows, 'balanceAmount'), '', '', ''];
 }
 
 function sum<T>(rows: T[], key: keyof T): number {

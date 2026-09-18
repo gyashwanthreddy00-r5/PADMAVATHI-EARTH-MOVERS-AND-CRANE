@@ -6,10 +6,19 @@ import { useSettings } from '@/context/SettingsContext';
 import { DataTable, type Column } from '@/components/ui/DataTable';
 import { Modal, ConfirmDialog, StatusBadge, Button, Field, inputClass, LoadingSpinner, EmptyState } from '@/components/ui/common';
 import { DatePicker } from '@/components/ui/DatePicker';
-import { Plus, Pencil, Trash2, Fuel, CheckSquare, Square, Search, Share2, Layers, List } from 'lucide-react';
+import { Plus, Pencil, Trash2, Fuel, CheckSquare, Square, Search, Share2, Layers, List, IndianRupee, X } from 'lucide-react';
 import { formatCurrency, formatDate, todayISO } from '@/lib/utils';
 import { exportToXlsxWithCompany } from '@/lib/exportXlsx';
-import type { DieselEntry, DieselWithRelations, DieselDistribution, DieselDistributionWithRelations, Vehicle, BillStatus } from '@/types';
+import type { DieselEntry, DieselWithRelations, DieselDistribution, DieselDistributionWithRelations, Vehicle, DieselPayment, BankAccount, PaymentMode } from '@/types';
+
+const emptyDieselPaymentForm = {
+  amount: '',
+  payment_date: todayISO(),
+  payment_mode: 'Cash' as PaymentMode,
+  bank_account_id: '',
+  reference_number: '',
+  remarks: '',
+};
 
 type DistTab = 'purchases' | 'distributions';
 
@@ -42,10 +51,15 @@ export default function Diesel() {
     pump_name: '',
     quantity_liters: null as number | null,
     rate_per_liter: null as number | null,
-    paid_amount: null as number | null,
-    additional_payment: null as number | null,
     remarks: '',
   });
+
+  const [bankAccounts, setBankAccounts] = useState<BankAccount[]>([]);
+  const [paymentTarget, setPaymentTarget] = useState<DieselEntry | null>(null);
+  const [paymentHistory, setPaymentHistory] = useState<DieselPayment[]>([]);
+  const [paymentForm, setPaymentForm] = useState(emptyDieselPaymentForm);
+  const [savingPayment, setSavingPayment] = useState(false);
+  const [deletePaymentId, setDeletePaymentId] = useState<string | null>(null);
 
   // Distribution form
   const [dForm, setDForm] = useState({
@@ -60,14 +74,16 @@ export default function Diesel() {
 
   const fetchAll = async () => {
     setLoading(true);
-    const [pRes, dRes, vRes] = await Promise.all([
+    const [pRes, dRes, vRes, bRes] = await Promise.all([
       supabase.from('diesel_entries').select('*, vehicle:vehicles(id,registration_number,type)').order('diesel_date', { ascending: false }).eq('is_cancelled', false),
       supabase.from('diesel_distributions').select('*, vehicle:vehicles(id,registration_number,type)').order('distribution_date', { ascending: false }).eq('is_cancelled', false),
       supabase.from('vehicles').select('*').order('registration_number'),
+      supabase.from('bank_accounts').select('*').eq('is_active', true).order('is_default', { ascending: false }).order('bank_name'),
     ]);
     setPurchases((pRes.data ?? []) as DieselWithRelations[]);
     setDistributions((dRes.data ?? []) as DieselDistributionWithRelations[]);
     setVehicles((vRes.data ?? []) as Vehicle[]);
+    setBankAccounts((bRes.data ?? []) as BankAccount[]);
     setLoading(false);
   };
 
@@ -92,16 +108,15 @@ export default function Diesel() {
     () => Math.round((Number(pForm.quantity_liters) || 0) * (Number(pForm.rate_per_liter) || 0) * 100) / 100,
     [pForm.quantity_liters, pForm.rate_per_liter],
   );
-  const effectivePaid = useMemo(() => {
-    const base = Number(pForm.paid_amount) || 0;
-    const extra = Number(pForm.additional_payment) || 0;
-    return Math.round((base + extra) * 100) / 100;
-  }, [pForm.paid_amount, pForm.additional_payment]);
+  // paid_amount is now owned by the diesel_payments ledger (see "Record
+  // Payment") - when editing, this reflects whatever has already been paid
+  // so far; for a brand new entry nothing has been paid yet.
+  const alreadyPaid = editingPurchase?.paid_amount ?? 0;
   const purchaseBalance = useMemo(
-    () => Math.max(0, Math.round((purchaseTotal - effectivePaid) * 100) / 100),
-    [purchaseTotal, effectivePaid],
+    () => Math.max(0, Math.round((purchaseTotal - alreadyPaid) * 100) / 100),
+    [purchaseTotal, alreadyPaid],
   );
-  const purchaseStatus: BillStatus = purchaseBalance <= 0 && effectivePaid > 0 ? 'Paid' : effectivePaid > 0 ? 'Partially Paid' : 'Pending';
+  const purchaseStatus = alreadyPaid <= 0 ? 'Pending' : purchaseBalance <= 0 ? 'Paid' : 'Partially Paid';
 
   // Distribution calculations
   const effectiveQuantities = useMemo(() => {
@@ -140,8 +155,6 @@ export default function Diesel() {
       pump_name: '',
       quantity_liters: null,
       rate_per_liter: settings?.diesel_rate ?? null,
-      paid_amount: null,
-      additional_payment: null,
       remarks: '',
     });
     setPurchaseOpen(true);
@@ -154,8 +167,6 @@ export default function Diesel() {
       pump_name: p.pump_name ?? '',
       quantity_liters: p.quantity_liters,
       rate_per_liter: p.rate_per_liter,
-      paid_amount: p.paid_amount,
-      additional_payment: null,
       remarks: p.remarks ?? '',
     });
     setPurchaseOpen(true);
@@ -165,8 +176,6 @@ export default function Diesel() {
     if (savingPurchase) return;
     if (pForm.quantity_liters == null || Number(pForm.quantity_liters) <= 0) { show(t('quantityLiters') + ' - ' + t('required'), 'error'); return; }
     if (pForm.rate_per_liter == null || Number(pForm.rate_per_liter) <= 0) { show(t('ratePerLiter') + ' - ' + t('required'), 'error'); return; }
-    const paid = effectivePaid;
-    if (paid > purchaseTotal) { show(t('paidAmountExceedsTotal'), 'error'); return; }
 
     setSavingPurchase(true);
     const payload = {
@@ -175,7 +184,6 @@ export default function Diesel() {
       quantity_liters: Number(pForm.quantity_liters),
       rate_per_liter: Number(pForm.rate_per_liter),
       total_amount: purchaseTotal,
-      paid_amount: paid,
       pending_amount: purchaseBalance,
       payment_status: purchaseStatus,
       remarks: pForm.remarks || null,
@@ -208,6 +216,63 @@ export default function Diesel() {
     if (error) show(t('deleteError'), 'error');
     else { show(t('deleteSuccess'), 'success'); fetchAll(); }
     setDeletePurchaseId(null);
+  };
+
+  // ---------------- Payment ledger (one row per actual installment) ----------------
+
+  const fetchPaymentHistory = async (dieselEntryId: string) => {
+    const { data } = await supabase.from('diesel_payments').select('*').eq('diesel_entry_id', dieselEntryId).eq('is_cancelled', false).order('payment_date', { ascending: false }).order('created_at', { ascending: false });
+    setPaymentHistory((data ?? []) as DieselPayment[]);
+  };
+
+  const openRecordPayment = (p: DieselEntry) => {
+    setPaymentTarget(p);
+    setPaymentForm({ ...emptyDieselPaymentForm, bank_account_id: bankAccounts.find(a => a.is_default)?.id ?? bankAccounts[0]?.id ?? '' });
+    fetchPaymentHistory(p.id);
+  };
+
+  const refreshDieselEntry = async (id: string) => {
+    const { data } = await supabase.from('diesel_entries').select('*, vehicle:vehicles(id,registration_number,type)').eq('id', id).single();
+    if (!data) return;
+    const updated = data as DieselWithRelations;
+    setPurchases(prev => prev.map(p => p.id === id ? updated : p));
+    setPaymentTarget(prev => prev && prev.id === id ? updated : prev);
+  };
+
+  const saveRecordPayment = async () => {
+    if (!paymentTarget) return;
+    const amount = Number(paymentForm.amount) || 0;
+    if (amount <= 0) { show('Enter a valid amount greater than 0.', 'error'); return; }
+    if (amount > paymentTarget.pending_amount + 0.01) { show(`Payment cannot exceed the outstanding balance of ${formatCurrency(paymentTarget.pending_amount)}.`, 'error'); return; }
+    if (paymentForm.payment_mode !== 'Cash' && !paymentForm.bank_account_id) { show('Select a Bank Account.', 'error'); return; }
+    setSavingPayment(true);
+    const { data: { user } } = await supabase.auth.getUser();
+    const isCheque = paymentForm.payment_mode === 'Cheque';
+    const { error } = await supabase.from('diesel_payments').insert({
+      diesel_entry_id: paymentTarget.id,
+      amount,
+      payment_date: paymentForm.payment_date,
+      payment_mode: paymentForm.payment_mode,
+      bank_account_id: paymentForm.payment_mode === 'Cash' ? null : paymentForm.bank_account_id,
+      reference_number: paymentForm.reference_number.trim() || null,
+      cheque_number: isCheque ? (paymentForm.reference_number.trim() || null) : null,
+      remarks: paymentForm.remarks.trim() || null,
+      created_by: user?.id ?? null,
+    });
+    if (error) { show(error.message, 'error'); setSavingPayment(false); return; }
+    show('Payment recorded.', 'success');
+    setPaymentForm({ ...emptyDieselPaymentForm, bank_account_id: paymentForm.bank_account_id });
+    await Promise.all([fetchPaymentHistory(paymentTarget.id), refreshDieselEntry(paymentTarget.id)]);
+    setSavingPayment(false);
+  };
+
+  const cancelPayment = async () => {
+    if (!deletePaymentId || !paymentTarget) return;
+    const { error } = await supabase.from('diesel_payments').update({ is_cancelled: true }).eq('id', deletePaymentId);
+    if (error) { show(error.message, 'error'); setDeletePaymentId(null); return; }
+    show('Payment cancelled.', 'success');
+    await Promise.all([fetchPaymentHistory(paymentTarget.id), refreshDieselEntry(paymentTarget.id)]);
+    setDeletePaymentId(null);
   };
 
   // Distribution handlers
@@ -378,6 +443,7 @@ export default function Diesel() {
       key: 'actions', header: t('actions'), align: 'center',
       render: d => (
         <div className="flex justify-center gap-1">
+          <button onClick={() => openRecordPayment(d)} className="p-1.5 text-slate-500 hover:text-emerald-600 hover:bg-emerald-50 rounded-md" title="Record Payment"><IndianRupee className="w-4 h-4" /></button>
           <button onClick={() => openPurchaseEdit(d)} className="p-1.5 text-slate-500 hover:text-blue-600 hover:bg-blue-50 rounded-md"><Pencil className="w-4 h-4" /></button>
           <button onClick={() => setDeletePurchaseId(d.id)} className="p-1.5 text-slate-500 hover:text-red-600 hover:bg-red-50 rounded-md"><Trash2 className="w-4 h-4" /></button>
         </div>
@@ -506,14 +572,6 @@ export default function Diesel() {
               </div>
               {settings?.diesel_rate && <p className="text-xs text-slate-400 mt-1">Default from Settings: ₹{settings.diesel_rate}/L</p>}
             </Field>
-            <Field label={t('paidAmount')}>
-              <input type="number" step="0.01" className={inputClass()} value={pForm.paid_amount ?? ''} onChange={e => setPForm(f => ({ ...f, paid_amount: e.target.value === '' ? null : Number(e.target.value) }))} placeholder="0.00" disabled={!!editingPurchase} />
-            </Field>
-            {editingPurchase && (
-              <Field label="Additional Payment">
-                <input type="number" step="0.01" className={inputClass()} value={pForm.additional_payment ?? ''} onChange={e => setPForm(f => ({ ...f, additional_payment: e.target.value === '' ? null : Number(e.target.value) }))} placeholder="Enter additional payment amount" />
-              </Field>
-            )}
             <Field label={t('remarks')}>
               <input className={inputClass()} value={pForm.remarks} onChange={e => setPForm(f => ({ ...f, remarks: e.target.value }))} placeholder="Optional notes" />
             </Field>
@@ -528,7 +586,7 @@ export default function Diesel() {
               </div>
               <div>
                 <span className="text-slate-500 block text-xs">{t('paidAmount')}</span>
-                <span className="font-semibold text-emerald-600">{formatCurrency(effectivePaid)}</span>
+                <span className="font-semibold text-emerald-600">{formatCurrency(alreadyPaid)}</span>
               </div>
               <div>
                 <span className="text-slate-500 block text-xs">{t('balanceAmount')}</span>
@@ -539,6 +597,9 @@ export default function Diesel() {
               <StatusBadge status={purchaseStatus} />
             </div>
           </div>
+          {!editingPurchase && (
+            <p className="text-xs text-slate-400">Payments are recorded separately - use the ₹ Record Payment action on the purchase list once this entry is saved.</p>
+          )}
         </div>
       </Modal>
 
@@ -730,6 +791,95 @@ export default function Diesel() {
 
       <ConfirmDialog open={!!deletePurchaseId} onClose={() => setDeletePurchaseId(null)} onConfirm={handleDeletePurchase} title={t('delete')} message={t('confirmDelete')} confirmText={t('delete')} danger />
       <ConfirmDialog open={!!deleteDistId} onClose={() => setDeleteDistId(null)} onConfirm={handleDeleteDist} title={t('delete')} message={t('confirmDelete')} confirmText={t('delete')} danger />
+
+      {/* Record Payment modal - one diesel_payments row per actual installment */}
+      <Modal
+        open={!!paymentTarget}
+        onClose={() => setPaymentTarget(null)}
+        title="Record Payment"
+        size="md"
+        closeOnBackdropClick={false}
+        footer={<><Button variant="secondary" onClick={() => setPaymentTarget(null)}>{t('cancel')}</Button><Button onClick={saveRecordPayment} disabled={savingPayment}>{savingPayment ? t('saving') : t('save')}</Button></>}
+      >
+        {paymentTarget && (
+          <div className="space-y-4">
+            <div className="p-3 bg-slate-50 rounded-lg text-sm grid grid-cols-3 gap-2">
+              <div><span className="text-slate-500 block text-xs">{t('totalDieselAmount')}</span><b>{formatCurrency(paymentTarget.total_amount)}</b></div>
+              <div><span className="text-slate-500 block text-xs">{t('paidAmount')}</span><b className="text-emerald-600">{formatCurrency(paymentTarget.paid_amount)}</b></div>
+              <div><span className="text-slate-500 block text-xs">{t('balanceAmount')}</span><b className={paymentTarget.pending_amount > 0 ? 'text-red-600' : 'text-emerald-600'}>{formatCurrency(paymentTarget.pending_amount)}</b></div>
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <Field label={t('amount')} required>
+                <input type="number" step="0.01" min="0" className={inputClass()} value={paymentForm.amount} onChange={e => setPaymentForm(f => ({ ...f, amount: e.target.value }))} placeholder="0" />
+              </Field>
+              <Field label={t('date')} required>
+                <DatePicker value={paymentForm.payment_date} onChange={v => setPaymentForm(f => ({ ...f, payment_date: v }))} />
+              </Field>
+              <Field label={t('paymentMode')}>
+                <select className={inputClass()} value={paymentForm.payment_mode} onChange={e => setPaymentForm(f => ({ ...f, payment_mode: e.target.value as PaymentMode }))}>
+                  <option value="Cash">Cash</option>
+                  <option value="Bank Transfer">Bank Transfer</option>
+                  <option value="UPI">UPI</option>
+                  <option value="Cheque">Cheque</option>
+                </select>
+              </Field>
+              {paymentForm.payment_mode !== 'Cash' && (
+                <Field label="Bank Account" required>
+                  <select className={inputClass()} value={paymentForm.bank_account_id} onChange={e => setPaymentForm(f => ({ ...f, bank_account_id: e.target.value }))}>
+                    <option value="">Select Bank Account</option>
+                    {bankAccounts.map(a => <option key={a.id} value={a.id}>{a.bank_name}</option>)}
+                  </select>
+                </Field>
+              )}
+              <Field label={t('referenceNumber')}>
+                <input className={inputClass()} value={paymentForm.reference_number} onChange={e => setPaymentForm(f => ({ ...f, reference_number: e.target.value }))} placeholder="UPI Ref / Cheque No" />
+              </Field>
+            </div>
+
+            <div>
+              <p className="text-xs font-bold uppercase tracking-wide text-slate-500 mb-2">Payment History</p>
+              {paymentHistory.length === 0 ? (
+                <p className="text-sm text-slate-400">No payments recorded yet.</p>
+              ) : (
+                <table className="w-full text-sm border border-slate-200 rounded-lg overflow-hidden">
+                  <thead className="bg-slate-50">
+                    <tr>
+                      <th className="text-left px-3 py-1.5 font-medium text-slate-600">{t('date')}</th>
+                      <th className="text-left px-3 py-1.5 font-medium text-slate-600">{t('paymentMode')}</th>
+                      <th className="text-left px-3 py-1.5 font-medium text-slate-600">{t('referenceNumber')}</th>
+                      <th className="text-right px-3 py-1.5 font-medium text-slate-600">{t('amount')}</th>
+                      <th className="w-8"></th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {paymentHistory.map(pay => (
+                      <tr key={pay.id} className="border-t border-slate-100">
+                        <td className="px-3 py-1.5">{formatDate(pay.payment_date)}</td>
+                        <td className="px-3 py-1.5">{pay.payment_mode}</td>
+                        <td className="px-3 py-1.5">{pay.reference_number ?? pay.cheque_number ?? '-'}</td>
+                        <td className="px-3 py-1.5 text-right font-medium">{formatCurrency(pay.amount)}</td>
+                        <td className="px-3 py-1.5 text-center">
+                          <button onClick={() => setDeletePaymentId(pay.id)} className="p-1 text-slate-400 hover:text-red-600"><X className="w-3.5 h-3.5" /></button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
+            </div>
+          </div>
+        )}
+      </Modal>
+
+      <ConfirmDialog
+        open={!!deletePaymentId}
+        onClose={() => setDeletePaymentId(null)}
+        onConfirm={cancelPayment}
+        title="Cancel Payment"
+        message="This payment will be cancelled and its linked Bank transaction reversed."
+        confirmText="Cancel Payment"
+        danger
+      />
     </div>
   );
 }

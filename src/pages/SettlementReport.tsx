@@ -353,22 +353,9 @@ export default function SettlementReport() {
       return;
     }
 
-    const newReceived = Math.round((received + paymentForm.amount) * 100) / 100;
-    const newBalance = Math.max(0, Math.round((payable - newReceived) * 100) / 100);
-    const newStatus: InvoiceStatus = newBalance <= 0 ? 'Paid' : 'Partially Paid';
-
-    const { error: invErr } = await supabase.from('invoices').update({
-      amount_received: newReceived,
-      balance_amount: newBalance,
-      invoice_status: newStatus,
-      payment_status: newStatus === 'Paid' ? 'Paid' : 'Pending',
-    }).eq('id', paymentModal.id);
-
-    if (invErr) {
-      show('Payment was saved but the invoice could not be updated: ' + invErr.message, 'error');
-      setSaving(false);
-      return;
-    }
+    // The DB's sync_invoice_payment_to_bank trigger recomputes this invoice's
+    // amount_received/balance_amount/invoice_status/payment_status directly
+    // from the invoice_payments ledger - no client-side update needed here.
 
     show('Payment recorded successfully', 'success');
     setPaymentModal(null);
@@ -1188,6 +1175,7 @@ export default function SettlementReport() {
                   <option value="Cash">Cash</option>
                   <option value="UPI">UPI</option>
                   <option value="Bank Transfer">Bank Transfer</option>
+                  <option value="Bank">Bank</option>
                   <option value="Cheque">Cheque</option>
                   <option value="Other">Other</option>
                 </select>

@@ -95,7 +95,7 @@ export default function Emi() {
       paid_date: todayISO(),
       payment_mode: payMode,
     }).eq('id', payTarget.id);
-    if (error) show(t('saveError'), 'error');
+    if (error) { console.error('EMI mark-paid error:', error); show(error.message || t('saveError'), 'error'); }
     else { show('EMI marked as paid', 'success'); setPayTarget(null); fetchAll(); }
     setPaySaving(false);
   };
