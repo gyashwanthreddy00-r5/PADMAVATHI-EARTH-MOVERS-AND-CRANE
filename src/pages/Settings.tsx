@@ -33,26 +33,28 @@ export default function SettingsPage() {
 
   useEffect(() => { setForm(settings); }, [settings]);
 
+  // Each of these four is a singleton settings row, same shape as company_settings -
+  // ordering by created_at keeps the fetch deterministic if a duplicate ever exists.
   useEffect(() => {
-    supabase.from('invoice_settings').select('*').limit(1).maybeSingle().then(({ data }) => {
+    supabase.from('invoice_settings').select('*').order('created_at', { ascending: true }).limit(1).maybeSingle().then(({ data }) => {
       setInvSettings(data as InvoiceSettings | null);
     });
   }, []);
 
   useEffect(() => {
-    supabase.from('reminder_settings').select('*').limit(1).maybeSingle().then(({ data }) => {
+    supabase.from('reminder_settings').select('*').order('created_at', { ascending: true }).limit(1).maybeSingle().then(({ data }) => {
       setReminderSettings(data as ReminderSettings | null);
     });
   }, []);
 
   useEffect(() => {
-    supabase.from('quotation_email_settings').select('*').limit(1).maybeSingle().then(({ data }) => {
+    supabase.from('quotation_email_settings').select('*').order('created_at', { ascending: true }).limit(1).maybeSingle().then(({ data }) => {
       setQuoEmailSettings(data as QuotationEmailSettings | null);
     });
   }, []);
 
   useEffect(() => {
-    supabase.from('quotation_format_settings').select('*').limit(1).maybeSingle().then(({ data }) => {
+    supabase.from('quotation_format_settings').select('*').order('created_at', { ascending: true }).limit(1).maybeSingle().then(({ data }) => {
       setQuoFormatSettings(data as QuotationFormatSettings | null);
     });
   }, []);
@@ -105,13 +107,26 @@ export default function SettingsPage() {
     gst_enabled: f.gst_enabled,
   });
 
-  // Update if a row already exists (the normal case - one is seeded on initial setup);
-  // insert only when it genuinely doesn't (e.g. that seed row was never created), so a
-  // missing row can never turn every Save button here into a silent no-op.
-  const persistCompanySettings = (f: Settings) =>
-    f.id
-      ? supabase.from('company_settings').update(buildCompanyPayload(f)).eq('id', f.id)
-      : supabase.from('company_settings').insert(buildCompanyPayload(f));
+  // Every settings table on this page (company_settings, invoice_settings,
+  // reminder_settings, quotation_email_settings, quotation_format_settings) is a
+  // singleton row. The locally-held `id` reflects whatever was loaded at fetch time -
+  // if a save fires before that initial load resolves (or from a stale snapshot), `id`
+  // reads as empty even though a row already exists, and blindly inserting creates a
+  // second row (which then makes every future fetch non-deterministic, since these are
+  // all fetched with an unordered `.limit(1)`). Re-checking the live table right before
+  // deciding insert-vs-update closes that race, so a stale/empty local `id` can never
+  // cause a duplicate row.
+  const upsertSingleton = async (table: string, id: string | undefined, payload: Record<string, unknown>) => {
+    if (id) {
+      return supabase.from(table).update(payload).eq('id', id);
+    }
+    const { data: existing } = await supabase.from(table).select('id').order('created_at', { ascending: true }).limit(1).maybeSingle();
+    return existing
+      ? supabase.from(table).update(payload).eq('id', existing.id)
+      : supabase.from(table).insert(payload);
+  };
+
+  const persistCompanySettings = (f: Settings) => upsertSingleton('company_settings', f.id, buildCompanyPayload(f));
 
   const save = async () => {
     if (!form) return;
@@ -194,9 +209,7 @@ export default function SettingsPage() {
       igst_percent: invSettings.igst_percent,
       add_gst_by_default: invSettings.add_gst_by_default,
     };
-    const { error } = invSettings.id
-      ? await supabase.from('invoice_settings').update(payload).eq('id', invSettings.id)
-      : await supabase.from('invoice_settings').insert(payload);
+    const { error } = await upsertSingleton('invoice_settings', invSettings.id, payload);
     if (error) show(t('saveError'), 'error');
     else show(t('saveSuccess'), 'success');
     setInvSaving(false);
@@ -217,9 +230,7 @@ export default function SettingsPage() {
       day20_subject: reminderSettings.day20_subject,
       day20_body: reminderSettings.day20_body,
     };
-    const { error } = reminderSettings.id
-      ? await supabase.from('reminder_settings').update(payload).eq('id', reminderSettings.id)
-      : await supabase.from('reminder_settings').insert(payload);
+    const { error } = await upsertSingleton('reminder_settings', reminderSettings.id, payload);
     if (error) show(`Failed to save: ${error.message}`, 'error');
     else show('Reminder settings saved successfully.', 'success');
     setReminderSaving(false);
@@ -236,9 +247,7 @@ export default function SettingsPage() {
       attach_pdf: quoEmailSettings.attach_pdf,
       email_signature: quoEmailSettings.email_signature,
     };
-    const { error } = quoEmailSettings.id
-      ? await supabase.from('quotation_email_settings').update(payload).eq('id', quoEmailSettings.id)
-      : await supabase.from('quotation_email_settings').insert(payload);
+    const { error } = await upsertSingleton('quotation_email_settings', quoEmailSettings.id, payload);
     if (error) show(`Failed to save: ${error.message}`, 'error');
     else show('Quotation email settings saved successfully.', 'success');
     setQuoEmailSaving(false);
@@ -260,9 +269,7 @@ export default function SettingsPage() {
       show_transport: quoFormatSettings.show_transport,
       date_format: quoFormatSettings.date_format,
     };
-    const { error } = quoFormatSettings.id
-      ? await supabase.from('quotation_format_settings').update(payload).eq('id', quoFormatSettings.id)
-      : await supabase.from('quotation_format_settings').insert(payload);
+    const { error } = await upsertSingleton('quotation_format_settings', quoFormatSettings.id, payload);
     if (error) show(`Failed to save: ${error.message}`, 'error');
     else show('Quotation format settings saved successfully.', 'success');
     setQuoFormatSaving(false);

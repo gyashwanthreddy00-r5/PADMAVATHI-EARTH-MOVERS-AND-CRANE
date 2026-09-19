@@ -47,7 +47,13 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
   const [loading, setLoading] = useState(true);
 
   const refresh = async () => {
-    const { data } = await supabase.from('company_settings').select('*').limit(1).maybeSingle();
+    // company_settings is meant to hold exactly one row, but nothing previously
+    // enforced that - a save that raced the initial load (before `id` was known)
+    // could INSERT a second row instead of UPDATE-ing the first. With more than one
+    // row, an unordered fetch returns whichever one Postgres feels like, which reads
+    // as edits randomly "reverting". Ordering by created_at makes the choice
+    // deterministic (always the original row) until the DB-level fix below lands.
+    const { data } = await supabase.from('company_settings').select('*').order('created_at', { ascending: true }).limit(1).maybeSingle();
     setSettings(data ?? defaultSettings);
     setLoading(false);
   };
