@@ -4,6 +4,7 @@ import { formatCurrency, formatDate, type ExportCompanyInfo } from '@/lib/utils'
 import { Search, X, Printer, FileSpreadsheet, FileDown } from 'lucide-react';
 import type { SalesGstRow } from '@/lib/gstReporting';
 import { exportSalesGstExcel, exportSalesGstCsv, printSalesGst } from '@/lib/gstExports';
+import { useLang } from '@/context/LangContext';
 
 interface Props {
   rows: SalesGstRow[];
@@ -20,6 +21,7 @@ const PAYMENT_STATUS_VARIANT: Record<SalesGstRow['paymentStatus'], 'green' | 're
 };
 
 export default function SalesGst({ rows, monthLabel, company }: Props) {
+  const { t } = useLang();
   const [customer, setCustomer] = useState('');
   const [invoiceSearch, setInvoiceSearch] = useState('');
   const [gstinSearch, setGstinSearch] = useState('');
@@ -54,49 +56,49 @@ export default function SalesGst({ rows, monthLabel, company }: Props) {
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-end gap-2">
-        <Button variant="outline" size="sm" onClick={() => printSalesGst(filtered, monthLabel, company)}><Printer className="w-4 h-4" />Print</Button>
-        <Button variant="outline" size="sm" onClick={() => exportSalesGstCsv(filtered, monthLabel)}><FileDown className="w-4 h-4" />Export CSV</Button>
-        <Button variant="outline" size="sm" onClick={() => exportSalesGstExcel(filtered, monthLabel, company)} disabled={filtered.length === 0}><FileSpreadsheet className="w-4 h-4" />Export Excel</Button>
+        <Button variant="outline" size="sm" onClick={() => printSalesGst(filtered, monthLabel, company)}><Printer className="w-4 h-4" />{t('print')}</Button>
+        <Button variant="outline" size="sm" onClick={() => exportSalesGstCsv(filtered, monthLabel)}><FileDown className="w-4 h-4" />{t('exportCsv')}</Button>
+        <Button variant="outline" size="sm" onClick={() => exportSalesGstExcel(filtered, monthLabel, company)} disabled={filtered.length === 0}><FileSpreadsheet className="w-4 h-4" />{t('export')}</Button>
       </div>
 
       <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-4 space-y-3">
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3">
           <div className="relative">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400 pointer-events-none" />
-            <input className={`${inputClass()} pl-9`} placeholder="Customer" value={customer} onChange={e => setCustomer(e.target.value)} />
+            <input className={`${inputClass()} pl-9`} placeholder={t('customerLabel')} value={customer} onChange={e => setCustomer(e.target.value)} />
           </div>
-          <input className={inputClass()} placeholder="Invoice Number" value={invoiceSearch} onChange={e => setInvoiceSearch(e.target.value)} />
-          <input className={inputClass()} placeholder="GSTIN" value={gstinSearch} onChange={e => setGstinSearch(e.target.value)} />
+          <input className={inputClass()} placeholder={t('invoiceNumber')} value={invoiceSearch} onChange={e => setInvoiceSearch(e.target.value)} />
+          <input className={inputClass()} placeholder={t('gstin')} value={gstinSearch} onChange={e => setGstinSearch(e.target.value)} />
           <select className={inputClass()} value={b2Filter} onChange={e => setB2Filter(e.target.value as B2Filter)}>
-            <option value="All">B2B / B2C - All</option>
+            <option value="All">B2B / B2C - {t('all')}</option>
             <option value="B2B">B2B</option>
             <option value="B2C">B2C</option>
           </select>
           <select className={inputClass()} value={gstType} onChange={e => setGstType(e.target.value as GstTypeFilter)}>
-            <option value="All">GST Type - All</option>
-            <option value="cgst_sgst">CGST + SGST</option>
-            <option value="igst">IGST</option>
-            <option value="no_tax">No Tax</option>
+            <option value="All">{t('gstTypeLabel')} - {t('all')}</option>
+            <option value="cgst_sgst">{t('cgstSgst')}</option>
+            <option value="igst">{t('igst')}</option>
+            <option value="no_tax">{t('noTax')}</option>
           </select>
           <select className={inputClass()} value={paymentStatusFilter} onChange={e => setPaymentStatusFilter(e.target.value as PaymentStatusFilter)}>
-            <option value="All">Payment Status - All</option>
-            <option value="Received">Received</option>
-            <option value="Partially Received">Partially Received</option>
-            <option value="Pending">Pending</option>
+            <option value="All">{t('paymentStatus')} - {t('all')}</option>
+            <option value="Received">{t('received')}</option>
+            <option value="Partially Received">{t('partiallyReceived')}</option>
+            <option value="Pending">{t('pending')}</option>
           </select>
         </div>
-        <div className="flex justify-end"><Button variant="secondary" size="sm" onClick={clearFilters}><X className="w-4 h-4" />Clear Filters</Button></div>
+        <div className="flex justify-end"><Button variant="secondary" size="sm" onClick={clearFilters}><X className="w-4 h-4" />{t('clearFilters')}</Button></div>
       </div>
 
       <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
         {filtered.length === 0 ? (
-          <div className="p-12 text-center text-sm text-slate-400">No GST sales invoices found for {monthLabel}.</div>
+          <div className="p-12 text-center text-sm text-slate-400">{t('noGstSalesInvoicesFound').replace('{month}', monthLabel)}</div>
         ) : (
           <div className="overflow-x-auto">
             <table className="w-full">
               <thead>
                 <tr className="border-b border-slate-100 bg-slate-50/90">
-                  {['Sl No', 'Invoice Number', 'Invoice Date', 'Customer Name', 'Customer GSTIN', 'Place of Supply', 'Invoice Value', 'Taxable Value', 'GST Rate', 'CGST', 'SGST', 'IGST', 'Payment Status', 'Received Date', 'Received Amount', 'Balance Amount'].map(h => (
+                  {[t('slNo'), t('invoiceNumber'), t('invoiceDate'), t('customerName'), t('customerGstin'), t('placeOfSupply'), t('invoiceValue'), t('taxableValue'), t('gstRate'), t('cgst'), t('sgst'), t('igst'), t('paymentStatus'), t('receivedDate'), t('receivedAmount'), t('balanceAmount')].map(h => (
                     <th key={h} className="text-left px-3 py-2.5 text-xs font-bold text-slate-500 uppercase tracking-wider whitespace-nowrap">{h}</th>
                   ))}
                 </tr>
@@ -125,7 +127,7 @@ export default function SalesGst({ rows, monthLabel, company }: Props) {
               </tbody>
               <tfoot>
                 <tr className="bg-slate-50 font-semibold border-t-2 border-slate-200">
-                  <td className="px-3 py-2.5 text-sm text-slate-700" colSpan={6}>Total (excludes cancelled / unnumbered)</td>
+                  <td className="px-3 py-2.5 text-sm text-slate-700" colSpan={6}>{t('totalExcludesCancelled')}</td>
                   <td className="px-3 py-2.5 text-sm text-slate-800 text-right tabular-nums">{formatCurrency(totals.invoiceValue)}</td>
                   <td className="px-3 py-2.5 text-sm text-slate-800 text-right tabular-nums">{formatCurrency(totals.taxableValue)}</td>
                   <td></td>

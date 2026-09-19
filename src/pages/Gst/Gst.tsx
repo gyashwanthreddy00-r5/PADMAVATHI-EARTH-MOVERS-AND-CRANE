@@ -3,6 +3,7 @@ import { supabase } from '@/lib/supabase';
 import { useSettings } from '@/context/SettingsContext';
 import { useAuth } from '@/context/AuthContext';
 import { useToast } from '@/components/ui/Toast';
+import { useLang } from '@/context/LangContext';
 import { Button, LoadingSpinner, inputClass, StatusBadge } from '@/components/ui/common';
 import { Landmark, Download, Lock, LockOpen } from 'lucide-react';
 import { classNames } from '@/lib/utils';
@@ -20,6 +21,7 @@ import MonthlySummary from './MonthlySummary';
 import Gstr1 from './Gstr1';
 import Gstr3b from './Gstr3b';
 import ErrorCheck from './ErrorCheck';
+import type { TranslationKey } from '@/lib/i18n';
 
 // Page shell for the GST module - a READ-ONLY reporting layer over the
 // existing `invoices` (invoice_type = 'GST') and `purchases` tables. This
@@ -28,14 +30,14 @@ import ErrorCheck from './ErrorCheck';
 
 type TabKey = 'dashboard' | 'sales' | 'purchase' | 'summary' | 'gstr1' | 'gstr3b' | 'errors';
 
-const TABS: { key: TabKey; label: string }[] = [
-  { key: 'dashboard', label: 'GST Dashboard' },
-  { key: 'sales', label: 'Sales GST' },
-  { key: 'purchase', label: 'Purchase GST' },
-  { key: 'summary', label: 'Monthly Summary' },
-  { key: 'gstr1', label: 'GSTR-1' },
-  { key: 'gstr3b', label: 'GSTR-3B' },
-  { key: 'errors', label: 'Error Check' },
+const TABS: { key: TabKey; labelKey: TranslationKey }[] = [
+  { key: 'dashboard', labelKey: 'gstDashboard' },
+  { key: 'sales', labelKey: 'salesGst' },
+  { key: 'purchase', labelKey: 'purchaseGst' },
+  { key: 'summary', labelKey: 'monthlySummary' },
+  { key: 'gstr1', labelKey: 'gstr1' },
+  { key: 'gstr3b', labelKey: 'gstr3b' },
+  { key: 'errors', labelKey: 'errorCheck' },
 ];
 
 const EMPTY_ADJUSTMENTS: GstManualAdjustments = { reverse_charge_amount: 0, exempt_nil_nongst_amount: 0, interest_amount: 0, late_fee_amount: 0 };
@@ -46,6 +48,7 @@ export default function Gst() {
   const { settings } = useSettings();
   const { user } = useAuth();
   const { show } = useToast();
+  const { t } = useLang();
 
   const [fy, setFy] = useState(currentFinancialYear());
   const months = useMemo(() => monthsInFinancialYear(fy), [fy]);
@@ -97,11 +100,11 @@ export default function Gst() {
           }
         : EMPTY_ADJUSTMENTS);
     } catch (err) {
-      show('Unable to load GST data: ' + (err instanceof Error ? err.message : 'Unknown error'), 'error');
+      show(`${t('unableToLoadGstData')}: ${err instanceof Error ? err.message : t('unknownError')}`, 'error');
     } finally {
       setLoading(false);
     }
-  }, [fy, selected.month, selected.year, settings?.state_code, show]);
+  }, [fy, selected.month, selected.year, settings?.state_code, show, t]);
 
   useEffect(() => { loadMonth(); }, [loadMonth]);
 
@@ -121,9 +124,9 @@ export default function Gst() {
       reviewed_at: next === 'Reviewed' ? new Date().toISOString() : undefined,
       reopened_at: next === 'Not Reviewed' ? new Date().toISOString() : undefined,
     }, { onConflict: 'financial_year,month' });
-    if (error) { show('Unable to update month status: ' + error.message, 'error'); return; }
+    if (error) { show(`${t('unableToUpdateMonthStatus')}: ${error.message}`, 'error'); return; }
     setReviewState(next);
-    show(`Month marked as ${next}. Underlying records are unaffected.`, 'success');
+    show(`${t('monthMarkedAs')} ${next}. ${t('underlyingRecordsUnaffected')}`, 'success');
   }
 
   async function saveAdjustments(next: GstManualAdjustments) {
@@ -132,9 +135,9 @@ export default function Gst() {
       financial_year: fy, month: selected.month, ...next, updated_by: user?.id ?? null,
     }, { onConflict: 'financial_year,month' });
     setSavingAdjustments(false);
-    if (error) { show('Unable to save manual values: ' + error.message, 'error'); return; }
+    if (error) { show(`${t('unableToSaveManualValues')}: ${error.message}`, 'error'); return; }
     setAdjustments(next);
-    show('Manually entered values saved.', 'success');
+    show(t('manuallyEnteredValuesSaved'), 'success');
   }
 
   async function handleDownloadPack() {
@@ -142,7 +145,7 @@ export default function Gst() {
     try {
       await downloadGstAgentPack(salesRows, purchaseRows, summary, issues, adjustments, selectedLabel, companyInfo);
     } catch (err) {
-      show('Unable to build GST Agent Pack: ' + (err instanceof Error ? err.message : 'Unknown error'), 'error');
+      show(`${t('unableToBuildGstAgentPack')}: ${err instanceof Error ? err.message : t('unknownError')}`, 'error');
     } finally {
       setPackBusy(false);
     }
@@ -156,24 +159,24 @@ export default function Gst() {
     <div className="space-y-4">
       <div className="flex items-center justify-between flex-wrap gap-3">
         <div>
-          <h2 className="text-lg font-bold text-slate-800 flex items-center gap-2"><Landmark className="w-5 h-5 text-blue-600" />GST</h2>
-          <p className="text-sm text-slate-500">Read-only monthly GST preparation for your GST agent - reads existing GST Billing and Purchase data, files nothing.</p>
+          <h2 className="text-lg font-bold text-slate-800 flex items-center gap-2"><Landmark className="w-5 h-5 text-blue-600" />{t('gst')}</h2>
+          <p className="text-sm text-slate-500">{t('gstReadOnlyDescription')}</p>
         </div>
         <Button onClick={handleDownloadPack} disabled={packBusy || loading}>
-          <Download className="w-4 h-4" />{packBusy ? 'Building Pack...' : 'Download GST Agent Pack'}
+          <Download className="w-4 h-4" />{packBusy ? t('buildingPack') : t('downloadGstAgentPack')}
         </Button>
       </div>
 
       {/* Top bar: Financial Year / Month / GSTIN / Company Name */}
       <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-4 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3 items-end">
         <label className="block">
-          <span className="block text-xs font-semibold text-slate-500 mb-1">Financial Year</span>
+          <span className="block text-xs font-semibold text-slate-500 mb-1">{t('financialYear')}</span>
           <select className={inputClass()} value={fy} onChange={e => setFy(e.target.value)}>
             {recentFinancialYears().map(y => <option key={y} value={y}>{y}</option>)}
           </select>
         </label>
         <label className="block">
-          <span className="block text-xs font-semibold text-slate-500 mb-1">Month</span>
+          <span className="block text-xs font-semibold text-slate-500 mb-1">{t('month')}</span>
           <select
             className={inputClass()}
             value={`${selected.month}-${selected.year}`}
@@ -186,11 +189,11 @@ export default function Gst() {
           </select>
         </label>
         <div>
-          <span className="block text-xs font-semibold text-slate-500 mb-1">GSTIN</span>
+          <span className="block text-xs font-semibold text-slate-500 mb-1">{t('gstin')}</span>
           <p className="text-sm font-medium text-slate-800 py-2">{settings?.gstin ?? '-'}</p>
         </div>
         <div className="lg:col-span-2">
-          <span className="block text-xs font-semibold text-slate-500 mb-1">Company Name</span>
+          <span className="block text-xs font-semibold text-slate-500 mb-1">{t('companyName')}</span>
           <p className="text-sm font-medium text-slate-800 py-2 truncate" title={settings?.company_name}>{settings?.company_name ?? '-'}</p>
         </div>
       </div>
@@ -198,34 +201,34 @@ export default function Gst() {
       {/* Monthly status */}
       <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-4 flex items-center justify-between flex-wrap gap-3">
         <div className="flex items-center gap-3">
-          <span className="text-xs font-semibold text-slate-500">Monthly Status:</span>
+          <span className="text-xs font-semibold text-slate-500">{t('monthlyStatus')}:</span>
           <StatusBadge status={reviewState} variant={reviewVariant[reviewState]} />
         </div>
         <div className="flex items-center gap-2">
           {reviewState !== 'Under Review' && reviewState !== 'Reviewed' && (
-            <Button variant="outline" size="sm" onClick={() => saveReviewState('Under Review')}>Start Review</Button>
+            <Button variant="outline" size="sm" onClick={() => saveReviewState('Under Review')}>{t('startReview')}</Button>
           )}
           {reviewState !== 'Reviewed' && (
-            <Button variant="secondary" size="sm" onClick={() => saveReviewState('Reviewed')}><Lock className="w-3.5 h-3.5" />Mark Reviewed</Button>
+            <Button variant="secondary" size="sm" onClick={() => saveReviewState('Reviewed')}><Lock className="w-3.5 h-3.5" />{t('markReviewed')}</Button>
           )}
           {reviewState === 'Reviewed' && (
-            <Button variant="outline" size="sm" onClick={() => saveReviewState('Not Reviewed')}><LockOpen className="w-3.5 h-3.5" />Reopen Month</Button>
+            <Button variant="outline" size="sm" onClick={() => saveReviewState('Not Reviewed')}><LockOpen className="w-3.5 h-3.5" />{t('reopenMonth')}</Button>
           )}
         </div>
       </div>
 
       {/* Tabs */}
       <div className="border-b border-slate-200 flex flex-wrap gap-1">
-        {TABS.map(t => (
+        {TABS.map(tabItem => (
           <button
-            key={t.key}
-            onClick={() => setTab(t.key)}
+            key={tabItem.key}
+            onClick={() => setTab(tabItem.key)}
             className={classNames(
               'px-3.5 py-2 text-sm font-semibold rounded-t-lg transition-colors',
-              tab === t.key ? 'bg-white border border-b-0 border-slate-200 text-blue-700' : 'text-slate-500 hover:text-slate-700',
+              tab === tabItem.key ? 'bg-white border border-b-0 border-slate-200 text-blue-700' : 'text-slate-500 hover:text-slate-700',
             )}
           >
-            {t.label}
+            {t(tabItem.labelKey)}
           </button>
         ))}
       </div>
