@@ -28,7 +28,7 @@ import {
 import type {
   InvoiceWithRelations, InvoiceItem, InvoicePayment,
   Customer, InvoiceSettings, InvoiceStatus, RateMaster, VehicleType, Vehicle,
-  InvoiceReminder, ReminderSettings,
+  InvoiceReminder, ReminderSettings, PaymentMode, BankAccount,
 } from '@/types';
 
 type Step = 'list' | 'step1' | 'step2';
@@ -188,7 +188,8 @@ export default function Invoices({ initialTab = 'list' }: InvoicesProps = {}) {
   // (see recordCompanyPayment) instead of asking which invoice to pay.
   const [companyPaymentModal, setCompanyPaymentModal] = useState<{ customerId: string; customerName: string; outstandingInvoices: StatementRow[]; totalOutstanding: number } | null>(null);
   const [recordingCompanyPayment, setRecordingCompanyPayment] = useState(false);
-  const [companyPaymentForm, setCompanyPaymentForm] = useState({ amount: null as number | null, payment_date: todayISO(), reference: '', remarks: '' });
+  const [companyPaymentForm, setCompanyPaymentForm] = useState({ amount: null as number | null, payment_date: todayISO(), reference: '', remarks: '', payment_mode: 'Bank' as PaymentMode, bank_account_id: '' });
+  const [bankAccounts, setBankAccounts] = useState<BankAccount[]>([]);
   const [invoiceSearch, setInvoiceSearch] = useState('');
   // Click-to-open list of vehicles for a multi-vehicle invoice row - stores that
   // row's invoice id, or null when no popup is open. Closed by any outside click.
@@ -343,6 +344,11 @@ export default function Invoices({ initialTab = 'list' }: InvoicesProps = {}) {
   }, [show, t, FULL_INVOICE_SELECT]);
 
   useEffect(() => { fetchAll(); }, [fetchAll]);
+
+  useEffect(() => {
+    supabase.from('bank_accounts').select('*').eq('is_active', true).order('is_default', { ascending: false }).order('bank_name')
+      .then(({ data }) => setBankAccounts((data ?? []) as BankAccount[]));
+  }, []);
 
   useEffect(() => {
     if (invoiceSettings) {
@@ -873,7 +879,7 @@ export default function Invoices({ initialTab = 'list' }: InvoicesProps = {}) {
     setCompanyPaymentModal({ customerId, customerName: cust?.name ?? '-', outstandingInvoices, totalOutstanding });
     // Amount Received is always manual entry - never pre-filled with the outstanding
     // balance (that figure is shown above purely as information).
-    setCompanyPaymentForm({ amount: null, payment_date: todayISO(), reference: '', remarks: '' });
+    setCompanyPaymentForm({ amount: null, payment_date: todayISO(), reference: '', remarks: '', payment_mode: 'Bank', bank_account_id: bankAccounts.find(a => a.is_default)?.id ?? bankAccounts[0]?.id ?? '' });
   };
 
   // Records one customer_payments header row, then FIFO-allocates the amount across
@@ -891,14 +897,16 @@ export default function Invoices({ initialTab = 'list' }: InvoicesProps = {}) {
       show(`Payment cannot exceed the outstanding balance of ${formatCurrency(companyPaymentModal.totalOutstanding)}.`, 'error');
       return;
     }
+    if (!companyPaymentForm.bank_account_id) { show('Select a Bank Account.', 'error'); return; }
     setRecordingCompanyPayment(true);
 
     const { data: header, error: headerErr } = await supabase.from('customer_payments').insert({
       customer_id: companyPaymentModal.customerId,
       payment_date: companyPaymentForm.payment_date,
-      // Company payments are always a receipt into the bank - never
-      // literal cash - so this is fixed rather than user-selected.
-      payment_mode: 'Credit',
+      // Company payments are always a receipt into the bank - never literal
+      // cash - so Payment Mode only offers bank-eligible options (see the
+      // form below), matching the ON CONFLICT-safe trigger's Cash-skip check.
+      payment_mode: companyPaymentForm.payment_mode,
       amount: amt,
       reference: companyPaymentForm.reference || null,
       notes: companyPaymentForm.remarks || null,
@@ -920,10 +928,11 @@ export default function Invoices({ initialTab = 'list' }: InvoicesProps = {}) {
         invoice_id: a.invoice_id,
         amount: a.amount,
         payment_date: companyPaymentForm.payment_date,
-        payment_mode: 'Credit',
+        payment_mode: companyPaymentForm.payment_mode,
         reference: companyPaymentForm.reference || null,
         remarks: companyPaymentForm.remarks || null,
         customer_payment_id: header.id,
+        bank_account_id: companyPaymentForm.bank_account_id,
       })),
     );
     if (payErr) { show(payErr.message, 'error'); setRecordingCompanyPayment(false); return; }
@@ -2169,6 +2178,22 @@ export default function Invoices({ initialTab = 'list' }: InvoicesProps = {}) {
               </Field>
               <Field label="Payment Date" required>
                 <DatePicker value={companyPaymentForm.payment_date} onChange={v => setCompanyPaymentForm(f => ({ ...f, payment_date: v }))} />
+              </Field>
+              <Field label="Payment Mode" required>
+                <select className={inputClass()} value={companyPaymentForm.payment_mode} onChange={e => setCompanyPaymentForm(f => ({ ...f, payment_mode: e.target.value as PaymentMode }))}>
+                  <option value="Bank">Bank</option>
+                  <option value="UPI">UPI</option>
+                  <option value="Cheque">Cheque</option>
+                  <option value="NEFT">NEFT</option>
+                  <option value="RTGS">RTGS</option>
+                  <option value="Other">Other</option>
+                </select>
+              </Field>
+              <Field label="Bank Account" required>
+                <select className={inputClass()} value={companyPaymentForm.bank_account_id} onChange={e => setCompanyPaymentForm(f => ({ ...f, bank_account_id: e.target.value }))}>
+                  <option value="">Select Bank Account</option>
+                  {bankAccounts.map(a => <option key={a.id} value={a.id}>{a.bank_name}</option>)}
+                </select>
               </Field>
               <div className="col-span-2">
                 <Field label="Reference Number">

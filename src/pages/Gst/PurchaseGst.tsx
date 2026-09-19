@@ -1,5 +1,8 @@
 import { useMemo, useState } from 'react';
-import { Button, inputClass, StatusBadge } from '@/components/ui/common';
+import { supabase } from '@/lib/supabase';
+import { useAuth } from '@/context/AuthContext';
+import { useToast } from '@/components/ui/Toast';
+import { Button, Field, Modal, inputClass, StatusBadge } from '@/components/ui/common';
 import { formatCurrency, formatDate, type ExportCompanyInfo } from '@/lib/utils';
 import { Search, X, Printer, FileSpreadsheet, FileDown } from 'lucide-react';
 import type { PurchaseGstRow } from '@/lib/gstReporting';
@@ -9,6 +12,7 @@ interface Props {
   rows: PurchaseGstRow[];
   monthLabel: string;
   company: ExportCompanyInfo;
+  onRefresh: () => void;
 }
 
 type ItcFilter = 'All' | 'Eligible' | 'Not Eligible';
@@ -18,11 +22,56 @@ const PAYMENT_STATUS_VARIANT: Record<PurchaseGstRow['paymentStatus'], 'green' | 
   Paid: 'green', Pending: 'red', 'Partially Paid': 'amber',
 };
 
-export default function PurchaseGst({ rows, monthLabel, company }: Props) {
+export default function PurchaseGst({ rows, monthLabel, company, onRefresh }: Props) {
+  const { user } = useAuth();
+  const { show } = useToast();
   const [vendor, setVendor] = useState('');
   const [billSearch, setBillSearch] = useState('');
   const [itcFilter, setItcFilter] = useState<ItcFilter>('All');
   const [paymentStatusFilter, setPaymentStatusFilter] = useState<PurchasePaymentStatusFilter>('All');
+
+  const [overrideTarget, setOverrideTarget] = useState<PurchaseGstRow | null>(null);
+  const [overrideEligible, setOverrideEligible] = useState(true);
+  const [overrideReason, setOverrideReason] = useState('');
+  const [savingOverride, setSavingOverride] = useState(false);
+
+  const openOverride = (row: PurchaseGstRow) => {
+    setOverrideTarget(row);
+    setOverrideEligible(row.itcEligible);
+    setOverrideReason(row.itcReason ?? '');
+  };
+
+  const saveOverride = async () => {
+    if (!overrideTarget) return;
+    if (!overrideEligible && !overrideReason.trim()) {
+      show('A reason is required when marking a purchase as Not Eligible.', 'error');
+      return;
+    }
+    setSavingOverride(true);
+    const { error } = await supabase.from('gst_purchase_itc').upsert({
+      purchase_id: overrideTarget.id,
+      itc_eligible: overrideEligible,
+      reason: overrideReason.trim() || null,
+      set_by: user?.id ?? null,
+      set_at: new Date().toISOString(),
+    }, { onConflict: 'purchase_id' });
+    setSavingOverride(false);
+    if (error) { show('Unable to save ITC override: ' + error.message, 'error'); return; }
+    show('ITC eligibility override saved.', 'success');
+    setOverrideTarget(null);
+    onRefresh();
+  };
+
+  const resetOverride = async () => {
+    if (!overrideTarget) return;
+    setSavingOverride(true);
+    const { error } = await supabase.from('gst_purchase_itc').delete().eq('purchase_id', overrideTarget.id);
+    setSavingOverride(false);
+    if (error) { show('Unable to reset ITC override: ' + error.message, 'error'); return; }
+    show('ITC eligibility reset to automatic.', 'success');
+    setOverrideTarget(null);
+    onRefresh();
+  };
 
   const filtered = useMemo(() => {
     let r = rows;
@@ -112,7 +161,9 @@ export default function PurchaseGst({ rows, monthLabel, company }: Props) {
                     <td className="px-3 py-2.5 text-sm text-slate-600 text-right tabular-nums whitespace-nowrap">{formatCurrency(r.igst)}</td>
                     <td className="px-3 py-2.5 text-sm text-slate-800 text-right tabular-nums whitespace-nowrap">{formatCurrency(r.totalAmount)}</td>
                     <td className="px-3 py-2.5 whitespace-nowrap">
-                      <StatusBadge status={r.itcEligible ? 'Eligible' : 'Not Eligible'} variant={r.itcEligible ? 'green' : 'red'} />
+                      <button onClick={() => openOverride(r)} className="hover:opacity-75 transition-opacity" title="Click to override ITC eligibility for this purchase">
+                        <StatusBadge status={r.itcEligible ? 'Eligible' : 'Not Eligible'} variant={r.itcEligible ? 'green' : 'red'} />
+                      </button>
                       {r.itcOverridden && <span className="ml-1.5 text-[10px] text-slate-400">(manual)</span>}
                     </td>
                     <td className="px-3 py-2.5 whitespace-nowrap"><StatusBadge status={r.paymentStatus} variant={PAYMENT_STATUS_VARIANT[r.paymentStatus]} /></td>
@@ -148,6 +199,48 @@ export default function PurchaseGst({ rows, monthLabel, company }: Props) {
           </div>
         )}
       </div>
+
+      <Modal
+        open={!!overrideTarget}
+        onClose={() => setOverrideTarget(null)}
+        title="Override ITC Eligibility"
+        closeOnBackdropClick={false}
+        footer={
+          <div className="flex justify-between w-full">
+            {overrideTarget?.itcOverridden ? (
+              <Button variant="outline" onClick={resetOverride} disabled={savingOverride}>Reset to Automatic</Button>
+            ) : <span />}
+            <div className="flex gap-2">
+              <Button variant="secondary" onClick={() => setOverrideTarget(null)}>Cancel</Button>
+              <Button onClick={saveOverride} disabled={savingOverride}>{savingOverride ? 'Saving...' : 'Save'}</Button>
+            </div>
+          </div>
+        }
+      >
+        {overrideTarget && (
+          <div className="space-y-4">
+            <div className="p-3 bg-slate-50 rounded-lg text-sm">
+              <p className="font-medium text-slate-800">{overrideTarget.vendorName}</p>
+              <p className="text-slate-500">{overrideTarget.billNo ?? '(no bill no)'} - {formatDate(overrideTarget.billDate)} - GST Amount: {formatCurrency(overrideTarget.gstAmount)}</p>
+              <p className="text-xs text-slate-400 mt-1">Automatic default: Eligible whenever GST was charged on the purchase{overrideTarget.itcOverridden ? ' - currently manually overridden below.' : '.'}</p>
+            </div>
+            <Field label="ITC Eligibility">
+              <select className={inputClass()} value={overrideEligible ? 'Eligible' : 'Not Eligible'} onChange={e => setOverrideEligible(e.target.value === 'Eligible')}>
+                <option value="Eligible">Eligible</option>
+                <option value="Not Eligible">Not Eligible</option>
+              </select>
+            </Field>
+            <Field label="Reason" required={!overrideEligible} hint={!overrideEligible ? 'Required when marking Not Eligible' : 'Optional'}>
+              <input
+                className={inputClass()}
+                value={overrideReason}
+                onChange={e => setOverrideReason(e.target.value)}
+                placeholder="e.g. Blocked credit under Sec 17(5), employee benefit, personal use..."
+              />
+            </Field>
+          </div>
+        )}
+      </Modal>
     </div>
   );
 }
