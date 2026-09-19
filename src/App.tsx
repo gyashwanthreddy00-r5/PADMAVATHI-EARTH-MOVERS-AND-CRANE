@@ -69,6 +69,19 @@ function AppContent() {
     prevUserId.current = currentUserId;
   }, [session?.user?.id]);
 
+  // '/' has no entry in the pages/role_pages permission system - it's an implicit
+  // landing route that always renders Dashboard/StaffDashboard regardless of role.
+  // A restricted role (e.g. GST Agent, scoped to just /gst) has no business seeing
+  // Staff Dashboard at all, so send non-Admin/Owner users straight to their first
+  // actually-permitted page instead of defaulting them onto it.
+  useEffect(() => {
+    if (loading || !session) return;
+    if (isAdmin || isOwner) return;
+    if (path === '/' && allowedPages.length > 0 && !allowedPages.includes('/')) {
+      navigate(allowedPages[0]);
+    }
+  }, [loading, session, isAdmin, isOwner, path, allowedPages]);
+
   if (loading) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-slate-50">
