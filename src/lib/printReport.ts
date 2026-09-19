@@ -76,9 +76,9 @@ export function printReportWithCompany(
   .addr { text-align: center; font-size: 11px; color: #333; margin-top: 2px; }
   h2 { text-align: center; font-size: 15px; letter-spacing: 1px; margin: 16px 0 8px; text-transform: uppercase; }
   .meta { display: flex; justify-content: space-between; font-size: 11px; color: #444; margin-bottom: 10px; flex-wrap: wrap; gap: 8px; }
-  table { width: 100%; border-collapse: collapse; font-size: 10.5px; margin-top: 6px; }
-  th, td { border: 1px solid #999; padding: 4px 6px; text-align: center; }
-  th { background: #d9eaf7; font-weight: 700; text-transform: uppercase; font-size: 9.5px; border: 1px solid #333; }
+  table { width: 100%; border-collapse: collapse; font-size: 10.5px; margin-top: 6px; ${wide ? 'table-layout: fixed;' : ''} }
+  th, td { border: 1px solid #999; padding: ${wide ? '4px 3px' : '4px 6px'}; text-align: center; overflow-wrap: break-word; }
+  th { background: #d9eaf7; font-weight: 700; text-transform: uppercase; font-size: ${wide ? '8px' : '9.5px'}; border: 1px solid #333; }
   tr:nth-child(even) td { background: #fafafa; }
   .total-row td { font-weight: 700; background: #e2f0d9; border-top: 2px solid #333; }
   .page-frame { border: 1.5px solid #000; padding: 8mm; min-height: ${wide ? '178mm' : '265mm'}; -webkit-box-decoration-break: clone; box-decoration-break: clone; }

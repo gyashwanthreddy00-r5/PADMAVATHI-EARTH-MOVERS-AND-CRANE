@@ -234,7 +234,7 @@ export default function Gst() {
         <div>
           {tab === 'dashboard' && <Dashboard summary={summary} salesCount={salesRows.filter(r => r.isCounted).length} purchaseCount={purchaseRows.length} monthLabel={selectedLabel} fy={fy} />}
           {tab === 'sales' && <SalesGst rows={salesRows} monthLabel={selectedLabel} company={companyInfo} />}
-          {tab === 'purchase' && <PurchaseGst rows={purchaseRows} monthLabel={selectedLabel} company={companyInfo} />}
+          {tab === 'purchase' && <PurchaseGst rows={purchaseRows} monthLabel={selectedLabel} company={companyInfo} onRefresh={loadMonth} />}
           {tab === 'summary' && <MonthlySummary summary={summary} />}
           {tab === 'gstr1' && <Gstr1 rows={salesRows} summary={summary} monthLabel={selectedLabel} company={companyInfo} />}
           {tab === 'gstr3b' && <Gstr3b summary={summary} adjustments={adjustments} onSave={saveAdjustments} saving={savingAdjustments} monthLabel={selectedLabel} company={companyInfo} />}

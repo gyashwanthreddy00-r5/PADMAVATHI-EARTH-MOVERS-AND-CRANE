@@ -18,7 +18,7 @@ import { DatePicker } from '@/components/ui/DatePicker';
 import { invoiceDocHTML } from '@/components/InvoiceDocument';
 import type {
   InvoiceWithRelations, InvoiceItem, InvoicePayment,
-  InvoiceSettings, PaymentMode, InvoiceStatus, Customer,
+  InvoiceSettings, PaymentMode, InvoiceStatus, Customer, BankAccount,
 } from '@/types';
 
 type SettlementStatus = 'All' | 'Pending' | 'Partially Paid' | 'Paid' | 'Overdue';
@@ -99,9 +99,11 @@ export default function SettlementReport() {
     payment_mode: 'Cash' as PaymentMode,
     reference: '',
     remarks: '',
+    bank_account_id: '',
   });
   const [saving, setSaving] = useState(false);
   const [emailSending, setEmailSending] = useState(false);
+  const [bankAccounts, setBankAccounts] = useState<BankAccount[]>([]);
 
   const fetchAll = useCallback(async () => {
     setLoading(true);
@@ -128,6 +130,11 @@ export default function SettlementReport() {
   }, [show]);
 
   useEffect(() => { fetchAll(); }, [fetchAll]);
+
+  useEffect(() => {
+    supabase.from('bank_accounts').select('*').eq('is_active', true).order('is_default', { ascending: false }).order('bank_name')
+      .then(({ data }) => setBankAccounts((data ?? []) as BankAccount[]));
+  }, []);
 
   // Build settlement rows with computed balance from payments. Invoices that
   // were started (e.g. via New GST Invoice) but never got a billing entry -
@@ -318,6 +325,7 @@ export default function SettlementReport() {
       payment_mode: 'Cash',
       reference: '',
       remarks: '',
+      bank_account_id: bankAccounts.find(a => a.is_default)?.id ?? bankAccounts[0]?.id ?? '',
     });
   };
 
@@ -335,6 +343,10 @@ export default function SettlementReport() {
       show(`Payment amount cannot exceed the outstanding balance of ${formatCurrency(balance)}.`, 'error');
       return;
     }
+    if (paymentForm.payment_mode !== 'Cash' && !paymentForm.bank_account_id) {
+      show('Select a Bank Account.', 'error');
+      return;
+    }
 
     setSaving(true);
     const { error: payErr } = await supabase.from('invoice_payments').insert({
@@ -345,6 +357,7 @@ export default function SettlementReport() {
       reference: paymentForm.reference || null,
       remarks: paymentForm.remarks || null,
       recorded_by: (await supabase.auth.getUser()).data.user?.email ?? null,
+      bank_account_id: paymentForm.payment_mode === 'Cash' ? null : paymentForm.bank_account_id,
     });
 
     if (payErr) {
@@ -359,7 +372,7 @@ export default function SettlementReport() {
 
     show('Payment recorded successfully', 'success');
     setPaymentModal(null);
-    setPaymentForm({ amount: null, payment_date: todayISO(), payment_mode: 'Cash', reference: '', remarks: '' });
+    setPaymentForm({ amount: null, payment_date: todayISO(), payment_mode: 'Cash', reference: '', remarks: '', bank_account_id: '' });
     setSaving(false);
     await fetchAll();
   };
@@ -1174,12 +1187,19 @@ export default function SettlementReport() {
                 <select className={inputClass()} value={paymentForm.payment_mode} onChange={e => setPaymentForm(f => ({ ...f, payment_mode: e.target.value as PaymentMode }))}>
                   <option value="Cash">Cash</option>
                   <option value="UPI">UPI</option>
-                  <option value="Bank Transfer">Bank Transfer</option>
                   <option value="Bank">Bank</option>
                   <option value="Cheque">Cheque</option>
                   <option value="Other">Other</option>
                 </select>
               </Field>
+              {paymentForm.payment_mode !== 'Cash' && (
+                <Field label="Bank Account" required>
+                  <select className={inputClass()} value={paymentForm.bank_account_id} onChange={e => setPaymentForm(f => ({ ...f, bank_account_id: e.target.value }))}>
+                    <option value="">Select Bank Account</option>
+                    {bankAccounts.map(a => <option key={a.id} value={a.id}>{a.bank_name}</option>)}
+                  </select>
+                </Field>
+              )}
               <Field label={t('referenceNumber')}>
                 <input className={inputClass()} value={paymentForm.reference} onChange={e => setPaymentForm(f => ({ ...f, reference: e.target.value }))} placeholder="UPI Ref / Transaction ID / Cheque No" />
               </Field>

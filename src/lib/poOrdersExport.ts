@@ -103,9 +103,9 @@ export function printPoWorkingData(ctx: PoExportContext, records: PoWorkingRecor
   body { font-family: Arial, Helvetica, sans-serif; padding: 24px; color: #111; }
   .co { text-align: center; font-weight: 800; font-size: 18px; text-transform: uppercase; }
   .addr { text-align: center; font-size: 12px; color: #333; margin-top: 2px; }
-  .meta { display: flex; justify-content: space-between; margin: 16px 0 10px; font-size: 13px; }
-  table { width: 100%; border-collapse: collapse; font-size: 11px; }
-  th, td { border: 1px solid #333; padding: 4px 6px; text-align: center; white-space: nowrap; }
+  .meta { display: flex; justify-content: space-between; flex-wrap: wrap; gap: 8px; margin: 16px 0 10px; font-size: 13px; }
+  table { width: 100%; border-collapse: collapse; font-size: 11px; table-layout: fixed; }
+  th, td { border: 1px solid #333; padding: 4px 6px; text-align: center; overflow-wrap: break-word; }
   th { background: #f2c94c; font-weight: 700; text-transform: uppercase; }
   tr:nth-child(even) td { background: #fafafa; }
   .totals { margin-top: 10px; width: 320px; margin-left: auto; font-size: 13px; }

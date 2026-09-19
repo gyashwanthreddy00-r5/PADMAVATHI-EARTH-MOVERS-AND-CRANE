@@ -14,7 +14,7 @@ import { exportToExcelProfessional } from '@/lib/excelExport';
 import type { MultiVehicleTripFormData, VehicleEntryData } from '@/components/TripEntryForm';
 import { SimpleCashBillForm } from '@/components/SimpleCashBillForm';
 import { DatePicker } from '@/components/ui/DatePicker';
-import type { InvoiceWithRelations, InvoicePayment, PaymentMode, BillStatus } from '@/types';
+import type { InvoiceWithRelations, InvoicePayment, PaymentMode, BillStatus, BankAccount } from '@/types';
 
 type CashPayStatus = 'Unpaid' | 'Partial' | 'Paid';
 
@@ -121,8 +121,9 @@ export default function CashBills() {
   const [deleteInvoice, setDeleteInvoice] = useState<InvoiceWithRelations | null>(null);
   const [savedInvoice, setSavedInvoice] = useState<InvoiceWithRelations | null>(null);
   const [paymentModal, setPaymentModal] = useState<InvoiceWithRelations | null>(null);
-  const [paymentForm, setPaymentForm] = useState({ amount: 0, payment_date: todayISO(), payment_mode: 'Cash' as PaymentMode, reference: '', remarks: '' });
+  const [paymentForm, setPaymentForm] = useState({ amount: 0 as number | null, payment_date: todayISO(), payment_mode: 'Cash' as PaymentMode, reference: '', remarks: '', bank_account_id: '' });
   const [savingPayment, setSavingPayment] = useState(false);
+  const [bankAccounts, setBankAccounts] = useState<BankAccount[]>([]);
 
   const [customerName, setCustomerName] = useState('');
   const [customerPhone, setCustomerPhone] = useState('');
@@ -156,6 +157,11 @@ export default function CashBills() {
   }, [show]);
 
   useEffect(() => { fetchAll(); }, [fetchAll]);
+
+  useEffect(() => {
+    supabase.from('bank_accounts').select('*').eq('is_active', true).order('is_default', { ascending: false }).order('bank_name')
+      .then(({ data }) => setBankAccounts((data ?? []) as BankAccount[]));
+  }, []);
 
   const openAdd = () => {
     setCustomerName('');
@@ -390,7 +396,7 @@ export default function CashBills() {
     const payable = inv.discount_enabled ? Number(inv.final_payable_amount ?? inv.grand_total) : Number(inv.grand_total);
     const bal = calcBalance(payable, totalPaid);
     setPaymentModal(inv);
-    setPaymentForm({ amount: bal, payment_date: todayISO(), payment_mode: 'Cash', reference: '', remarks: '' });
+    setPaymentForm({ amount: bal, payment_date: todayISO(), payment_mode: 'Cash', reference: '', remarks: '', bank_account_id: bankAccounts.find(a => a.is_default)?.id ?? bankAccounts[0]?.id ?? '' });
   };
 
   const recordPayment = async () => {
@@ -398,12 +404,16 @@ export default function CashBills() {
     const totalPaid = (paymentModal.payments ?? []).reduce((s, p) => s + Number(p.amount), 0);
     const payable = paymentModal.discount_enabled ? Number(paymentModal.final_payable_amount ?? paymentModal.grand_total) : Number(paymentModal.grand_total);
     const bal = calcBalance(payable, totalPaid);
-    if (paymentForm.amount <= 0) {
+    if (!paymentForm.amount || paymentForm.amount <= 0) {
       show('Payment amount must be greater than 0.', 'error');
       return;
     }
     if (paymentForm.amount > bal) {
       show(`Payment cannot exceed the outstanding balance of ${formatCurrency(bal)}.`, 'error');
+      return;
+    }
+    if (paymentForm.payment_mode !== 'Cash' && !paymentForm.bank_account_id) {
+      show('Select a Bank Account.', 'error');
       return;
     }
     setSavingPayment(true);
@@ -415,6 +425,7 @@ export default function CashBills() {
         payment_mode: paymentForm.payment_mode,
         reference: paymentForm.reference || null,
         remarks: paymentForm.remarks || null,
+        bank_account_id: paymentForm.payment_mode === 'Cash' ? null : paymentForm.bank_account_id,
       });
       if (payErr) { show('Failed to record payment.', 'error'); return; }
 
@@ -678,10 +689,12 @@ export default function CashBills() {
   .totals .row.grand { font-size: 14px; font-weight: bold; border-top: 1px solid #999; border-bottom: 1px solid #999; padding: 6px 0; margin-top: 4px; }
   .pay-status { margin-top: 6px; padding: 4px 8px; border: 1px solid #d0d0d0; background: #f9f9f9; font-size: 12px; font-weight: bold; text-align: center; text-transform: uppercase; }
   .footer { text-align: center; margin-top: 16px; font-size: 10px; color: #888; border-top: 1px solid #e0e0e0; padding-top: 6px; }
+  .page-frame { border: 1.5px solid #000; padding: 10mm; }
   @media print { body { max-width: none; padding: 6mm; } @page { size: A4; margin: 8mm; } }
 </style>
 </head>
 <body>
+  <div class="page-frame">
   <div class="logo-block"><img src="${getReportLogoUrl()}" alt="logo"/><div class="company-name">${companyName}</div></div>
   <div class="receipt-title">CASH / UPI RECEIPT</div>
   <div class="receipt-meta">
@@ -709,6 +722,7 @@ export default function CashBills() {
   <div class="pay-status">Payment Status: ${statusLabel}</div>
   ${paymentHistorySection}
   <div class="footer">Thank you for your business!</div>
+  </div>
 </body>
 </html>`;
     printInIframe(html);
@@ -784,7 +798,7 @@ export default function CashBills() {
   const totalOutstanding = Math.max(0, totalBilling - totalReceived);
 
   const paymentModalBalance = paymentModal ? calcBalance(getPayableAmount(paymentModal), getTotalPaid(paymentModal)) : 0;
-  const paymentModalNewBalance = paymentModal ? Math.max(0, paymentModalBalance - paymentForm.amount) : 0;
+  const paymentModalNewBalance = paymentModal ? Math.max(0, paymentModalBalance - (paymentForm.amount ?? 0)) : 0;
 
   // New-bill Payment Status breakdown - derived from the pending bill total + discount,
   // never a separate stored figure, so it can never drift from the actual bill amount.
@@ -999,7 +1013,7 @@ export default function CashBills() {
 
             <div className="grid grid-cols-2 gap-3">
               <Field label="Payment Amount" required>
-                <input type="number" step="0.01" min="0" max={paymentModalBalance} className={inputClass()} value={paymentForm.amount} onChange={e => setPaymentForm(f => ({ ...f, amount: Number(e.target.value) || 0 }))} />
+                <input type="number" step="0.01" min="0" max={paymentModalBalance} className={inputClass()} value={paymentForm.amount ?? ''} onChange={e => setPaymentForm(f => ({ ...f, amount: e.target.value === '' ? null : Number(e.target.value) }))} />
               </Field>
               <Field label="Payment Date" required>
                 <DatePicker value={paymentForm.payment_date} onChange={v => setPaymentForm(f => ({ ...f, payment_date: v }))} />
@@ -1008,10 +1022,19 @@ export default function CashBills() {
                 <select className={inputClass()} value={paymentForm.payment_mode} onChange={e => setPaymentForm(f => ({ ...f, payment_mode: e.target.value as PaymentMode }))}>
                   <option value="Cash">Cash</option>
                   <option value="UPI">UPI</option>
-                  <option value="Bank Transfer">Bank Transfer</option>
+                  <option value="Bank">Bank</option>
+                  <option value="Cheque">Cheque</option>
                   <option value="Other">Other</option>
                 </select>
               </Field>
+              {paymentForm.payment_mode !== 'Cash' && (
+                <Field label="Bank Account" required>
+                  <select className={inputClass()} value={paymentForm.bank_account_id} onChange={e => setPaymentForm(f => ({ ...f, bank_account_id: e.target.value }))}>
+                    <option value="">Select Bank Account</option>
+                    {bankAccounts.map(a => <option key={a.id} value={a.id}>{a.bank_name}</option>)}
+                  </select>
+                </Field>
+              )}
               <Field label="Reference / Transaction No.">
                 <input className={inputClass()} value={paymentForm.reference} onChange={e => setPaymentForm(f => ({ ...f, reference: e.target.value }))} placeholder="UPI Ref / Transaction ID" />
               </Field>
@@ -1020,7 +1043,7 @@ export default function CashBills() {
               </Field>
             </div>
 
-            {paymentForm.amount > 0 && (
+            {(paymentForm.amount ?? 0) > 0 && (
               <div className="p-3 bg-blue-50 rounded-lg text-sm space-y-1 border border-blue-100">
                 <div className="flex justify-between"><span className="text-slate-500">Current Balance:</span><span className="font-medium">{formatCurrency(paymentModalBalance)}</span></div>
                 <div className="flex justify-between"><span className="text-slate-500">New Balance:</span><span className={paymentModalNewBalance <= 0 ? 'text-emerald-600 font-bold' : 'text-red-600 font-medium'}>{formatCurrency(paymentModalNewBalance)}</span></div>
