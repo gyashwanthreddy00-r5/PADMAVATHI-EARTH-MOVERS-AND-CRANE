@@ -922,10 +922,10 @@ Deno.serve(async (req: Request) => {
     if (ccEmail) resendBody.cc = ccEmail;
     if (bccEmail) resendBody.bcc = bccEmail;
 
-    // Default CC + Reply-To for every outgoing quotation email - uncomment to enable
-    // const defaultCcReplyTo = "Padmavathicranes@gmail.com";
-    // resendBody.cc = [...(Array.isArray(resendBody.cc) ? resendBody.cc as string[] : resendBody.cc ? [resendBody.cc as string] : []), defaultCcReplyTo];
-    // resendBody.reply_to = defaultCcReplyTo;
+    // Default CC + Reply-To for every outgoing quotation email
+    const defaultCcReplyTo = "Padmavathicranes@gmail.com";
+    resendBody.cc = [...(Array.isArray(resendBody.cc) ? resendBody.cc as string[] : resendBody.cc ? [resendBody.cc as string] : []), defaultCcReplyTo];
+    resendBody.reply_to = defaultCcReplyTo;
 
     const resendResponse = await fetch("https://api.resend.com/emails", {
       method: "POST",

@@ -157,9 +157,9 @@ ${companyName}`;
         subject,
         text: textBody,
         html: emailWrapper,
-        // Default CC + Reply-To for every outgoing PO request email - uncomment to enable
-        // cc: "Padmavathicranes@gmail.com",
-        // reply_to: "Padmavathicranes@gmail.com",
+        // Default CC + Reply-To for every outgoing PO request email
+        cc: "Padmavathicranes@gmail.com",
+        reply_to: "Padmavathicranes@gmail.com",
       }),
     });
 

@@ -230,10 +230,10 @@ GSTIN: ${companyGstin}`;
     };
     if (ccList.length > 0) resendBody.cc = ccList;
 
-    // Default CC + Reply-To for every outgoing invoice email - uncomment to enable
-    // const defaultCcReplyTo = "Padmavathicranes@gmail.com";
-    // resendBody.cc = [...(Array.isArray(resendBody.cc) ? resendBody.cc as string[] : resendBody.cc ? [resendBody.cc as string] : []), defaultCcReplyTo];
-    // resendBody.reply_to = defaultCcReplyTo;
+    // Default CC + Reply-To for every outgoing invoice email
+    const defaultCcReplyTo = "Padmavathicranes@gmail.com";
+    resendBody.cc = [...(Array.isArray(resendBody.cc) ? resendBody.cc as string[] : resendBody.cc ? [resendBody.cc as string] : []), defaultCcReplyTo];
+    resendBody.reply_to = defaultCcReplyTo;
 
     const resendResponse = await fetch("https://api.resend.com/emails", {
       method: "POST",
