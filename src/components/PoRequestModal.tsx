@@ -64,8 +64,8 @@ export function PoRequestModal({ open, onClose, customers, initial }: PoRequestM
     if (!poNumber.trim()) { show('Please enter the current PO Number.', 'error'); return; }
     if (currentBalance !== '' && !(Number(currentBalance) >= 0)) { show('Current PO Balance must be a valid amount.', 'error'); return; }
     if (requiredInvoiceAmount !== '' && !(Number(requiredInvoiceAmount) >= 0)) { show('Required Invoice Amount must be a valid amount.', 'error'); return; }
-    const additional = Number(additionalAmount);
-    if (!additionalAmount || !(additional > 0)) { show('Please enter the additional PO amount required.', 'error'); return; }
+    if (additionalAmount !== '' && !(Number(additionalAmount) >= 0)) { show('Additional PO Amount Required must be a valid amount.', 'error'); return; }
+    const additional = Number(additionalAmount) || 0;
     if (!selectedCustomer.email) {
       show('Customer email address is not configured. Please update Customer Master before sending the PO request.', 'error');
       return;
@@ -137,7 +137,7 @@ export function PoRequestModal({ open, onClose, customers, initial }: PoRequestM
             <input type="number" min="0" step="0.01" className={inputClass()} value={requiredInvoiceAmount} onChange={e => setRequiredInvoiceAmount(e.target.value)} placeholder="0.00" />
           </Field>
         </div>
-        <Field label="Additional PO Amount Required" required hint="Enter the amount to request — this is not auto-calculated.">
+        <Field label="Additional PO Amount Required" hint="Enter the amount to request — this is not auto-calculated.">
           <input type="number" min="0" step="0.01" className={inputClass()} value={additionalAmount} onChange={e => setAdditionalAmount(e.target.value)} placeholder="Enter amount" />
         </Field>
         {customerId && !selectedCustomer?.email && (

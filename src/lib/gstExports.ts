@@ -145,6 +145,33 @@ function downloadCsv(filename: string, headers: string[], rows: (string | number
 // GSTR-1 preparation PDF summary (also used inside the Agent Pack)
 // ------------------------------------------------------------
 
+// jsPDF's built-in fonts (Helvetica) have no glyph for '₹' (Rupee sign) - it
+// silently renders as a broken/missing character. All amounts drawn natively via
+// jsPDF (this file only - HTML-based exports like printReport.ts are unaffected)
+// use a plain "Rs." prefix instead, with proper Indian comma grouping and fixed
+// 2-decimal precision (also fixes raw floating-point values like 44197.46000000001
+// showing up verbatim when a number was previously passed through String()).
+function pdfCurrency(n: number): string {
+  return 'Rs. ' + (Number(n) || 0).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+
+// Sales row shape (see salesHeaders/salesDataRows/salesTotalRow above): amount
+// columns that need pdfCurrency formatting for the PDF specifically. Excel/CSV/Print
+// exports keep raw numbers or their own formatting and are untouched by this.
+const SALES_AMOUNT_COLUMNS = new Set([7, 8, 10, 11, 12, 15, 16]);
+
+function formatSalesRowForPdf(row: (string | number)[]): string[] {
+  return row.map((v, i) => (SALES_AMOUNT_COLUMNS.has(i) && v !== '' ? pdfCurrency(Number(v)) : String(v)));
+}
+
+// autoTable's `columnStyles` only reliably right-aligns body/foot cells - header
+// cells need the halign set directly on each head cell object, otherwise the
+// header text stays left-aligned while the values below it sit at the right
+// edge of the same (wide) column, reading as misaligned.
+function rightAlignedHeadRow(headers: string[], rightAlignedIndexes: Set<number>): ({ content: string; styles: { halign: 'right' } } | string)[] {
+  return headers.map((h, i) => (rightAlignedIndexes.has(i) ? { content: h, styles: { halign: 'right' as const } } : h));
+}
+
 function buildInvoiceSummaryPdf(rows: SalesGstRow[], summary: GstMonthlySummary, monthLabel: string, company: ExportCompanyInfo): jsPDF {
   const doc = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a4' });
   doc.setFontSize(14);
@@ -154,14 +181,17 @@ function buildInvoiceSummaryPdf(rows: SalesGstRow[], summary: GstMonthlySummary,
   doc.setFontSize(12);
   doc.text(`GST Invoice Summary - ${monthLabel}`, 14, 29);
 
+  const amountColumnStyles = Object.fromEntries([...SALES_AMOUNT_COLUMNS].map(i => [i, { halign: 'right' as const }]));
+
   autoTable(doc, {
     startY: 34,
-    head: [salesHeaders()],
-    body: salesDataRows(rows).map(r => r.map(String)),
-    foot: [salesTotalRow(rows).map(String)],
+    head: [rightAlignedHeadRow(salesHeaders(), SALES_AMOUNT_COLUMNS)],
+    body: salesDataRows(rows).map(formatSalesRowForPdf),
+    foot: [formatSalesRowForPdf(salesTotalRow(rows))],
     styles: { fontSize: 7, cellPadding: 1.5 },
     headStyles: { fillColor: [217, 234, 247], textColor: [20, 20, 20] },
     footStyles: { fillColor: [226, 240, 217], textColor: [20, 20, 20], fontStyle: 'bold' },
+    columnStyles: amountColumnStyles,
   });
 
   const finalY = (doc as unknown as { lastAutoTable: { finalY: number } }).lastAutoTable.finalY + 8;
@@ -169,10 +199,11 @@ function buildInvoiceSummaryPdf(rows: SalesGstRow[], summary: GstMonthlySummary,
   doc.text('Monthly GST Summary', 14, finalY);
   autoTable(doc, {
     startY: finalY + 3,
-    head: [['Particulars', 'CGST', 'SGST', 'IGST', 'Total']],
-    body: summaryDataRows(summary).map(r => r.map(v => typeof v === 'number' ? formatCurrency(v) : String(v))),
+    head: [rightAlignedHeadRow(['Particulars', 'CGST', 'SGST', 'IGST', 'Total'], new Set([1, 2, 3, 4]))],
+    body: summaryDataRows(summary).map(r => r.map(v => typeof v === 'number' ? pdfCurrency(v) : String(v))),
     styles: { fontSize: 8, cellPadding: 1.5 },
     headStyles: { fillColor: [217, 234, 247], textColor: [20, 20, 20] },
+    columnStyles: { 1: { halign: 'right' }, 2: { halign: 'right' }, 3: { halign: 'right' }, 4: { halign: 'right' } },
   });
 
   return doc;

@@ -264,6 +264,7 @@ export default function Diesel() {
     setPaymentForm({ ...emptyDieselPaymentForm, bank_account_id: paymentForm.bank_account_id });
     await Promise.all([fetchPaymentHistory(paymentTarget.id), refreshDieselEntry(paymentTarget.id)]);
     setSavingPayment(false);
+    setPaymentTarget(null);
   };
 
   const cancelPayment = async () => {
