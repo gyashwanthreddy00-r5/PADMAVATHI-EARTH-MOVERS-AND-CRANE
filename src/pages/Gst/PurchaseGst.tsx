@@ -7,6 +7,7 @@ import { formatCurrency, formatDate, type ExportCompanyInfo } from '@/lib/utils'
 import { Search, X, Printer, FileSpreadsheet, FileDown } from 'lucide-react';
 import type { PurchaseGstRow } from '@/lib/gstReporting';
 import { exportPurchaseGstExcel, exportPurchaseGstCsv, printPurchaseGst } from '@/lib/gstExports';
+import { useLang } from '@/context/LangContext';
 
 interface Props {
   rows: PurchaseGstRow[];
@@ -25,6 +26,7 @@ const PAYMENT_STATUS_VARIANT: Record<PurchaseGstRow['paymentStatus'], 'green' | 
 export default function PurchaseGst({ rows, monthLabel, company, onRefresh }: Props) {
   const { user } = useAuth();
   const { show } = useToast();
+  const { t } = useLang();
   const [vendor, setVendor] = useState('');
   const [billSearch, setBillSearch] = useState('');
   const [itcFilter, setItcFilter] = useState<ItcFilter>('All');
@@ -44,7 +46,7 @@ export default function PurchaseGst({ rows, monthLabel, company, onRefresh }: Pr
   const saveOverride = async () => {
     if (!overrideTarget) return;
     if (!overrideEligible && !overrideReason.trim()) {
-      show('A reason is required when marking a purchase as Not Eligible.', 'error');
+      show(t('reasonRequiredNotEligible'), 'error');
       return;
     }
     setSavingOverride(true);
@@ -56,8 +58,8 @@ export default function PurchaseGst({ rows, monthLabel, company, onRefresh }: Pr
       set_at: new Date().toISOString(),
     }, { onConflict: 'purchase_id' });
     setSavingOverride(false);
-    if (error) { show('Unable to save ITC override: ' + error.message, 'error'); return; }
-    show('ITC eligibility override saved.', 'success');
+    if (error) { show(`${t('unableToSaveItcOverride')}: ${error.message}`, 'error'); return; }
+    show(t('itcOverrideSaved'), 'success');
     setOverrideTarget(null);
     onRefresh();
   };
@@ -67,8 +69,8 @@ export default function PurchaseGst({ rows, monthLabel, company, onRefresh }: Pr
     setSavingOverride(true);
     const { error } = await supabase.from('gst_purchase_itc').delete().eq('purchase_id', overrideTarget.id);
     setSavingOverride(false);
-    if (error) { show('Unable to reset ITC override: ' + error.message, 'error'); return; }
-    show('ITC eligibility reset to automatic.', 'success');
+    if (error) { show(`${t('unableToResetItcOverride')}: ${error.message}`, 'error'); return; }
+    show(t('itcResetToAutomatic'), 'success');
     setOverrideTarget(null);
     onRefresh();
   };
@@ -99,46 +101,46 @@ export default function PurchaseGst({ rows, monthLabel, company, onRefresh }: Pr
     <div className="space-y-4">
       {hasUnspecifiedSplit && (
         <p className="text-xs text-amber-600 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
-          Some rows below have an "UNSPECIFIED" GSTIN split - their CGST/SGST/IGST columns show 0 because the split can't be determined, but their full GST amount is still included in Net GST Payable on the Monthly Summary/Dashboard. See Error Check for the affected bills.
+          {t('unspecifiedSplitNote')}
         </p>
       )}
       <div className="flex items-center justify-end gap-2">
-        <Button variant="outline" size="sm" onClick={() => printPurchaseGst(filtered, monthLabel, company)}><Printer className="w-4 h-4" />Print</Button>
-        <Button variant="outline" size="sm" onClick={() => exportPurchaseGstCsv(filtered, monthLabel)}><FileDown className="w-4 h-4" />Export CSV</Button>
-        <Button variant="outline" size="sm" onClick={() => exportPurchaseGstExcel(filtered, monthLabel, company)} disabled={filtered.length === 0}><FileSpreadsheet className="w-4 h-4" />Export Excel</Button>
+        <Button variant="outline" size="sm" onClick={() => printPurchaseGst(filtered, monthLabel, company)}><Printer className="w-4 h-4" />{t('print')}</Button>
+        <Button variant="outline" size="sm" onClick={() => exportPurchaseGstCsv(filtered, monthLabel)}><FileDown className="w-4 h-4" />{t('exportCsv')}</Button>
+        <Button variant="outline" size="sm" onClick={() => exportPurchaseGstExcel(filtered, monthLabel, company)} disabled={filtered.length === 0}><FileSpreadsheet className="w-4 h-4" />{t('export')}</Button>
       </div>
 
       <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-4 space-y-3">
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
           <div className="relative">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400 pointer-events-none" />
-            <input className={`${inputClass()} pl-9`} placeholder="Vendor" value={vendor} onChange={e => setVendor(e.target.value)} />
+            <input className={`${inputClass()} pl-9`} placeholder={t('vendorLabel')} value={vendor} onChange={e => setVendor(e.target.value)} />
           </div>
-          <input className={inputClass()} placeholder="Bill Number" value={billSearch} onChange={e => setBillSearch(e.target.value)} />
+          <input className={inputClass()} placeholder={t('billNumber')} value={billSearch} onChange={e => setBillSearch(e.target.value)} />
           <select className={inputClass()} value={itcFilter} onChange={e => setItcFilter(e.target.value as ItcFilter)}>
-            <option value="All">ITC Eligible - All</option>
-            <option value="Eligible">Eligible</option>
-            <option value="Not Eligible">Not Eligible</option>
+            <option value="All">{t('itcEligibleLabel')} - {t('all')}</option>
+            <option value="Eligible">{t('eligible')}</option>
+            <option value="Not Eligible">{t('notEligible')}</option>
           </select>
           <select className={inputClass()} value={paymentStatusFilter} onChange={e => setPaymentStatusFilter(e.target.value as PurchasePaymentStatusFilter)}>
-            <option value="All">Payment Status - All</option>
-            <option value="Paid">Paid</option>
-            <option value="Partially Paid">Partially Paid</option>
-            <option value="Pending">Pending</option>
+            <option value="All">{t('paymentStatus')} - {t('all')}</option>
+            <option value="Paid">{t('paid')}</option>
+            <option value="Partially Paid">{t('partiallyPaid')}</option>
+            <option value="Pending">{t('pending')}</option>
           </select>
-          <div className="flex justify-end"><Button variant="secondary" size="sm" onClick={clearFilters}><X className="w-4 h-4" />Clear Filters</Button></div>
+          <div className="flex justify-end"><Button variant="secondary" size="sm" onClick={clearFilters}><X className="w-4 h-4" />{t('clearFilters')}</Button></div>
         </div>
       </div>
 
       <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
         {filtered.length === 0 ? (
-          <div className="p-12 text-center text-sm text-slate-400">No purchases found for {monthLabel}.</div>
+          <div className="p-12 text-center text-sm text-slate-400">{t('noPurchasesFound').replace('{month}', monthLabel)}</div>
         ) : (
           <div className="overflow-x-auto">
             <table className="w-full">
               <thead>
                 <tr className="border-b border-slate-100 bg-slate-50/90">
-                  {['Sl No', 'Vendor Name', 'Vendor GSTIN', 'Purchase Bill No', 'Bill Date', 'Taxable Amount', 'GST Rate', 'CGST', 'SGST', 'IGST', 'Total Amount', 'ITC Eligible', 'Payment Status', 'Paid Date', 'Paid Amount', 'Balance Amount', 'Payment Mode', 'Reference Number', 'Bank Account'].map(h => (
+                  {[t('slNo'), t('vendorName'), t('vendorGstin'), t('purchaseBillNo'), t('billDate'), t('taxableAmount'), t('gstRate'), t('cgst'), t('sgst'), t('igst'), t('totalAmount'), t('itcEligibleLabel'), t('paymentStatus'), t('paidDate'), t('paidAmount'), t('balanceAmount'), t('paymentMode'), t('referenceNumber'), t('bankAccount')].map(h => (
                     <th key={h} className="text-left px-3 py-2.5 text-xs font-bold text-slate-500 uppercase tracking-wider whitespace-nowrap">{h}</th>
                   ))}
                 </tr>
@@ -150,7 +152,7 @@ export default function PurchaseGst({ rows, monthLabel, company, onRefresh }: Pr
                     <td className="px-3 py-2.5 text-sm text-slate-700 whitespace-nowrap">{r.vendorName}</td>
                     <td className="px-3 py-2.5 text-sm text-slate-600 whitespace-nowrap">
                       {r.vendorGstin ?? '-'}
-                      {r.splitBasis === 'unspecified' && <span className="ml-1.5 text-[10px] font-semibold text-amber-600 align-middle">UNSPECIFIED</span>}
+                      {r.splitBasis === 'unspecified' && <span className="ml-1.5 text-[10px] font-semibold text-amber-600 align-middle">{t('unspecifiedLabel')}</span>}
                     </td>
                     <td className="px-3 py-2.5 text-sm font-medium text-blue-700 whitespace-nowrap">{r.billNo ?? '-'}</td>
                     <td className="px-3 py-2.5 text-sm text-slate-600 whitespace-nowrap">{formatDate(r.billDate)}</td>
@@ -161,10 +163,10 @@ export default function PurchaseGst({ rows, monthLabel, company, onRefresh }: Pr
                     <td className="px-3 py-2.5 text-sm text-slate-600 text-right tabular-nums whitespace-nowrap">{formatCurrency(r.igst)}</td>
                     <td className="px-3 py-2.5 text-sm text-slate-800 text-right tabular-nums whitespace-nowrap">{formatCurrency(r.totalAmount)}</td>
                     <td className="px-3 py-2.5 whitespace-nowrap">
-                      <button onClick={() => openOverride(r)} className="hover:opacity-75 transition-opacity" title="Click to override ITC eligibility for this purchase">
+                      <button onClick={() => openOverride(r)} className="hover:opacity-75 transition-opacity" title={t('clickToOverrideItc')}>
                         <StatusBadge status={r.itcEligible ? 'Eligible' : 'Not Eligible'} variant={r.itcEligible ? 'green' : 'red'} />
                       </button>
-                      {r.itcOverridden && <span className="ml-1.5 text-[10px] text-slate-400">(manual)</span>}
+                      {r.itcOverridden && <span className="ml-1.5 text-[10px] text-slate-400">{t('manualLabel')}</span>}
                     </td>
                     <td className="px-3 py-2.5 whitespace-nowrap"><StatusBadge status={r.paymentStatus} variant={PAYMENT_STATUS_VARIANT[r.paymentStatus]} /></td>
                     <td className="px-3 py-2.5 text-sm text-slate-600 whitespace-nowrap">{r.paidDate}</td>
@@ -178,7 +180,7 @@ export default function PurchaseGst({ rows, monthLabel, company, onRefresh }: Pr
               </tbody>
               <tfoot>
                 <tr className="bg-slate-50 font-semibold border-t-2 border-slate-200">
-                  <td className="px-3 py-2.5 text-sm text-slate-700" colSpan={5}>Total</td>
+                  <td className="px-3 py-2.5 text-sm text-slate-700" colSpan={5}>{t('total')}</td>
                   <td className="px-3 py-2.5 text-sm text-slate-800 text-right tabular-nums">{formatCurrency(totals.taxable)}</td>
                   <td></td>
                   <td className="px-3 py-2.5 text-sm text-slate-800 text-right tabular-nums">{formatCurrency(totals.cgst)}</td>
@@ -203,16 +205,16 @@ export default function PurchaseGst({ rows, monthLabel, company, onRefresh }: Pr
       <Modal
         open={!!overrideTarget}
         onClose={() => setOverrideTarget(null)}
-        title="Override ITC Eligibility"
+        title={t('overrideItcEligibility')}
         closeOnBackdropClick={false}
         footer={
           <div className="flex justify-between w-full">
             {overrideTarget?.itcOverridden ? (
-              <Button variant="outline" onClick={resetOverride} disabled={savingOverride}>Reset to Automatic</Button>
+              <Button variant="outline" onClick={resetOverride} disabled={savingOverride}>{t('resetToAutomatic')}</Button>
             ) : <span />}
             <div className="flex gap-2">
-              <Button variant="secondary" onClick={() => setOverrideTarget(null)}>Cancel</Button>
-              <Button onClick={saveOverride} disabled={savingOverride}>{savingOverride ? 'Saving...' : 'Save'}</Button>
+              <Button variant="secondary" onClick={() => setOverrideTarget(null)}>{t('cancel')}</Button>
+              <Button onClick={saveOverride} disabled={savingOverride}>{savingOverride ? t('saving') : t('save')}</Button>
             </div>
           </div>
         }
@@ -221,16 +223,16 @@ export default function PurchaseGst({ rows, monthLabel, company, onRefresh }: Pr
           <div className="space-y-4">
             <div className="p-3 bg-slate-50 rounded-lg text-sm">
               <p className="font-medium text-slate-800">{overrideTarget.vendorName}</p>
-              <p className="text-slate-500">{overrideTarget.billNo ?? '(no bill no)'} - {formatDate(overrideTarget.billDate)} - GST Amount: {formatCurrency(overrideTarget.gstAmount)}</p>
-              <p className="text-xs text-slate-400 mt-1">Automatic default: Eligible whenever GST was charged on the purchase{overrideTarget.itcOverridden ? ' - currently manually overridden below.' : '.'}</p>
+              <p className="text-slate-500">{overrideTarget.billNo ?? t('noBillNo')} - {formatDate(overrideTarget.billDate)} - {t('gstAmount')}: {formatCurrency(overrideTarget.gstAmount)}</p>
+              <p className="text-xs text-slate-400 mt-1">{t('automaticDefaultEligible')}{overrideTarget.itcOverridden ? t('currentlyOverriddenBelow') : '.'}</p>
             </div>
-            <Field label="ITC Eligibility">
+            <Field label={t('itcEligibility')}>
               <select className={inputClass()} value={overrideEligible ? 'Eligible' : 'Not Eligible'} onChange={e => setOverrideEligible(e.target.value === 'Eligible')}>
-                <option value="Eligible">Eligible</option>
-                <option value="Not Eligible">Not Eligible</option>
+                <option value="Eligible">{t('eligible')}</option>
+                <option value="Not Eligible">{t('notEligible')}</option>
               </select>
             </Field>
-            <Field label="Reason" required={!overrideEligible} hint={!overrideEligible ? 'Required when marking Not Eligible' : 'Optional'}>
+            <Field label={t('reasonLabel')} required={!overrideEligible} hint={!overrideEligible ? t('reasonRequiredHint') : t('optionalLabel')}>
               <input
                 className={inputClass()}
                 value={overrideReason}

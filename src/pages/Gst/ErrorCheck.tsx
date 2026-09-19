@@ -3,6 +3,7 @@ import { CheckCircle2, FileSpreadsheet, ShieldAlert } from 'lucide-react';
 import type { ExportCompanyInfo } from '@/lib/utils';
 import type { GstIssue } from '@/lib/gstReporting';
 import { exportGstErrorsExcel } from '@/lib/gstExports';
+import { useLang } from '@/context/LangContext';
 
 interface Props {
   issues: GstIssue[];
@@ -13,6 +14,7 @@ interface Props {
 const SEVERITY_VARIANT: Record<GstIssue['severity'], 'red' | 'amber' | 'green'> = { RED: 'red', ORANGE: 'amber', GREEN: 'green' };
 
 export default function ErrorCheck({ issues, monthLabel, company }: Props) {
+  const { t } = useLang();
   const redCount = issues.filter(i => i.severity === 'RED').length;
   const orangeCount = issues.filter(i => i.severity === 'ORANGE').length;
 
@@ -23,27 +25,31 @@ export default function ErrorCheck({ issues, monthLabel, company }: Props) {
           {issues.length === 0 ? (
             <>
               <CheckCircle2 className="w-5 h-5 text-emerald-500" />
-              <span className="text-sm font-semibold text-emerald-700">No issues found for {monthLabel} - GREEN</span>
+              <span className="text-sm font-semibold text-emerald-700">{t('noIssuesFoundGreen').replace('{month}', monthLabel)}</span>
             </>
           ) : (
             <>
               <ShieldAlert className="w-5 h-5 text-amber-500" />
-              <span className="text-sm font-semibold text-slate-700">{redCount} error{redCount === 1 ? '' : 's'}, {orangeCount} item{orangeCount === 1 ? '' : 's'} to review for {monthLabel}</span>
+              <span className="text-sm font-semibold text-slate-700">
+                {redCount === 1 ? t('errorCountSingular') : t('errorsCountPlural').replace('{count}', String(redCount))}
+                {', '}
+                {(orangeCount === 1 ? t('itemToReviewSingular') : t('itemsToReviewPlural').replace('{count}', String(orangeCount))).replace('{month}', monthLabel)}
+              </span>
             </>
           )}
         </div>
-        <Button variant="outline" size="sm" onClick={() => exportGstErrorsExcel(issues, monthLabel, company)} disabled={issues.length === 0}><FileSpreadsheet className="w-4 h-4" />Export Excel</Button>
+        <Button variant="outline" size="sm" onClick={() => exportGstErrorsExcel(issues, monthLabel, company)} disabled={issues.length === 0}><FileSpreadsheet className="w-4 h-4" />{t('export')}</Button>
       </div>
-      <p className="text-xs text-slate-400">Read-only check - this never modifies GST Billing or Purchase records, it only flags rows for your review.</p>
+      <p className="text-xs text-slate-400">{t('readOnlyCheckNote')}</p>
 
       {issues.length === 0 ? (
-        <EmptyState message="No issues found for this month." icon={CheckCircle2} />
+        <EmptyState message={t('noIssuesFoundThisMonth')} icon={CheckCircle2} />
       ) : (
         <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
           <table className="w-full">
             <thead>
               <tr className="border-b border-slate-100 bg-slate-50/90">
-                {['Severity', 'Source', 'Reference', 'Issue'].map(h => (
+                {[t('severityLabel'), t('sourceLabel'), t('reference'), t('issueLabel')].map(h => (
                   <th key={h} className="text-left px-3 py-2.5 text-xs font-bold text-slate-500 uppercase tracking-wider whitespace-nowrap">{h}</th>
                 ))}
               </tr>
