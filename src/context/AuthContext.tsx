@@ -150,13 +150,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         } else if (ownerRole || roleIds.length > 0) {
           const { data: pageData } = await supabase
             .from('role_pages')
-            .select('pages!inner(path, is_active)')
+            .select('pages!inner(path, is_active, sort_order)')
             .in('role_id', roleIds);
 
-          const paths = ((pageData as Array<{ pages: { path: string; is_active: boolean } }> | null) ?? [])
+          const rows = ((pageData as Array<{ pages: { path: string; is_active: boolean; sort_order: number } }> | null) ?? [])
             .filter(rp => rp.pages.is_active)
-            .map(rp => rp.pages.path);
-          setAllowedPages([...new Set(paths)]);
+            .sort((a, b) => a.pages.sort_order - b.pages.sort_order);
+          setAllowedPages([...new Set(rows.map(rp => rp.pages.path))]);
         } else {
           setAllowedPages([]);
         }
